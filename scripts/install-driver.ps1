@@ -15,6 +15,8 @@
 #>
 param([switch]$Reinstall, [string]$Log)
 $ErrorActionPreference = 'Stop'
+# pnputil writes in the console's OEM code page; decode it as such so localized output logs correctly.
+[Console]::OutputEncoding = [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
 $Subject = 'CN=tca-neo-bridge driver (single use)'
 $Files = 'neohid.dll', 'neohid.inf', 'neohid.cat'
 
