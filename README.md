@@ -52,22 +52,22 @@ TCA Sidestick + Quadrant ─► TCA-NEO bridge (tray app) ─► virtual NEO dri
 
 ### Mapping tab
 
-The left side shows the TCA sidestick, quadrant and grips. The right side shows a T.Flight Hotas NEO with buttons 1–15 and the POV hat, labelled with their ACE COMBAT 8 actions.
+The header shows the daemon status and, while emulating, whether the TCA is open, whether HidHide hides it and whether the virtual NEO exists. The left panel shows the TCA sidestick (switch **L / R** for a left- or right-hand setup) and quadrant, the middle one a T.Flight Hotas NEO with its numbered buttons and POV hat. Below them, a table lists NEO buttons 1–15 with their ACE COMBAT 8 actions and the TCA controls that feed each one.
 
 - **Click a TCA control,** or press it while emulating. Its current NEO targets light up.
-- **Click NEO buttons or POV arrows** to build its new mapping. Yellow ring means added, red dashed ring means removed. Then choose **Record mapping**. Changes apply immediately, even while emulating.
-- **With nothing selected,** clicking a NEO control highlights every TCA control that feeds it.
-- **Under *Other inputs*,** set the **sidestick hat** to drive either the **Camera** (the NEO mini-stick, the default) or **Mapped controls**. In Mapped mode, its four directions can be mapped like buttons, and the camera gets no input.
+- **Click NEO buttons or POV arrows** to build its new mapping. Blue ring means kept, yellow ring means added, red dashed ring means removed. Then choose **Record mapping**. Changes apply immediately, even while emulating.
+- **With nothing selected,** clicking a NEO control or a row of the NEO button table highlights every TCA control that feeds it.
+- **Under *Other TCA inputs*,** set the **sidestick hat** to drive either the **Camera** (the NEO mini-stick, the default) or **Mapped controls**. In Mapped mode, its four directions can be mapped like buttons, and the camera gets no input.
 - **Recorded corrections** keeps a log of every change you record.
 
 ### Axes and settings tab
 
 | Setting | Meaning |
 | --- | --- |
-| Stick deadzone, camera strength | Applied to roll/pitch/twist and to the camera respectively. |
+| Stick deadzone, camera strength | Applied to roll/pitch/twist and to the camera respectively. Each has a number field and a slider. |
 | Quadrant throttle lever | Left or right lever. It shares the throttle with the sidestick slider; the last one moved takes over. |
 | Invert | Per axis. |
-| High-G from split levers | While one quadrant lever is at or above the *forward* threshold and the other at or below the *back* threshold, NEO 5 (High-G) is held. The throttle follows the forward lever. A live readout shows both lever positions. |
+| High-G from split levers | While one quadrant lever is at or above the *forward* threshold and the other at or below the *back* threshold, NEO 5 (High-G) is held. The throttle follows the forward lever. While emulating, live bars show both lever positions against the saved thresholds. |
 
 ### Default mapping
 

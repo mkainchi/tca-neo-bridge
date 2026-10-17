@@ -7,7 +7,7 @@ use neo_daemon::ffi;
 use neo_daemon::hidhide::Hiding;
 use neo_daemon::neo;
 use neo_daemon::protocol;
-use neo_daemon::shared::{Shared, Status};
+use neo_daemon::shared::{Links, Shared, Status};
 use neo_daemon::tca::{self, HidApi, Reader, Role};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -210,9 +210,11 @@ fn validation_session_streams_without_hidhide_or_tca() {
     let (deps, _) = deps(None, dir);
     let (notify, count) = counter();
     let session = Emulation::start(&deps, shared.clone(), Source::Validation, notify).unwrap();
+    assert_eq!(*shared.links.lock().unwrap(), Some(Links { source: "validation", hidden: false, tca: false, virtual_neo: true }));
     wait_until(|| state().frames.len() > 3);
     drop(session);
     assert_eq!((shared.status(), count.load(Ordering::SeqCst)), (Status::Idle, 1));
+    assert_eq!(*shared.links.lock().unwrap(), None);
     assert_eq!(protocol::parse(state().frames.last().unwrap()), Some(neo::neutral()));
 }
 
@@ -227,6 +229,7 @@ fn tca_session_maps_hot_reloads_and_releases_on_disconnect() {
     let (notify, _) = counter();
     let session = Emulation::start(&deps, shared.clone(), Source::Tca, notify).unwrap();
     assert!(dir.join("hidhide-session.json").exists());
+    assert_eq!(*shared.links.lock().unwrap(), Some(Links { source: "tca", hidden: true, tca: true, virtual_neo: true }));
     std::thread::sleep(Duration::from_millis(10)); // no reports yet: neutral, nothing pressed
     assert!(shared.pressed.lock().unwrap().is_empty());
     {

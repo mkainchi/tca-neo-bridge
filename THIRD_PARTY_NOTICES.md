@@ -28,7 +28,7 @@ These crates are used under the MIT license, whose terms are:
 
 ### Device diagrams
 
-The TCA diagrams in `daemon/web/device/` and the NEO schematic `daemon/web/neo.svg` are original drawings made with geometric primitives for this project (MIT). They contain no manufacturer artwork, photographs or logos.
+The TCA sidestick (right- and left-hand setups) and quadrant diagrams and the NEO diagram in `daemon/web/device/` are vector drawings made for this project (MIT). They contain no embedded images, manufacturer artwork, photographs or logos.
 
 ## Build and test only (not shipped)
 

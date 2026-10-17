@@ -2,7 +2,7 @@
 use crate::device::{DeviceApi, PipeServer, SoftwareDevice};
 use crate::hidhide::Hiding;
 use crate::neo::{self, Mapper};
-use crate::shared::{Shared, Status};
+use crate::shared::{Links, Shared, Status};
 use crate::tca::{self, HidApi, Reader};
 use crate::validation;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -107,6 +107,8 @@ impl Emulation {
         if let Err(error) = acquire(deps, source, &mut resources) {
             return Err(resources.release().err().unwrap_or(error));
         }
+        let tca = source == Source::Tca;
+        *shared.links.lock().unwrap() = Some(Links { source: if tca { "tca" } else { "validation" }, hidden: tca, tca, virtual_neo: true });
         let stop = Arc::new(AtomicBool::new(false));
         let (thread_stop, period) = (stop.clone(), deps.period);
         let thread = std::thread::spawn(move || {
@@ -114,6 +116,7 @@ impl Emulation {
             shared.pressed.lock().unwrap().clear();
             *shared.levers.lock().unwrap() = None;
             let released = resources.release();
+            *shared.links.lock().unwrap() = None;
             shared.set_status(match outcome.and(released) {
                 Ok(()) => Status::Idle,
                 Err(error) => Status::Error(error),

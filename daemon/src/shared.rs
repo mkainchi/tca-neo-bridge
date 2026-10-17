@@ -1,5 +1,6 @@
 //! State shared by the tray, the emulation loop and the configuration page.
 use crate::config::{self, Config};
+use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
 
@@ -28,6 +29,19 @@ impl Status {
     }
 }
 
+/// What the running session holds, for the page's status pills; None while idle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Links {
+    /// "tca" or "validation".
+    pub source: &'static str,
+    /// HidHide hides the TCA from other applications.
+    pub hidden: bool,
+    /// Both TCA devices are open.
+    pub tca: bool,
+    /// The virtual NEO software device exists.
+    pub virtual_neo: bool,
+}
+
 pub struct Shared {
     pub config_path: PathBuf,
     /// Generation counter lets the emulation loop hot-reload without locking every frame.
@@ -36,6 +50,7 @@ pub struct Shared {
     /// Latest quadrant lever positions (left, right) while emulating from the TCA.
     pub levers: Mutex<Option<[f64; 2]>>,
     pub status: Mutex<Status>,
+    pub links: Mutex<Option<Links>>,
     /// Private diagnostics (status changes, panics). Never contains device paths or serials.
     pub log: Option<PathBuf>,
 }
@@ -49,7 +64,7 @@ pub fn append(path: &std::path::Path, text: &str) {
 
 impl Shared {
     pub fn new(config_path: PathBuf, config: Config) -> Self {
-        Self { config_path, config: RwLock::new((0, config)), pressed: Mutex::new(Vec::new()), levers: Mutex::new(None), status: Mutex::new(Status::Idle), log: None }
+        Self { config_path, config: RwLock::new((0, config)), pressed: Mutex::new(Vec::new()), levers: Mutex::new(None), status: Mutex::new(Status::Idle), links: Mutex::new(None), log: None }
     }
 
     pub fn with_log(mut self, path: PathBuf) -> Self {

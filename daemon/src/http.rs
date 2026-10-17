@@ -12,16 +12,15 @@ use std::time::Duration;
 pub const INDEX: &str = include_str!("../web/index.html");
 pub const SCRIPT: &str = include_str!("../web/app.js");
 pub const STYLE: &str = include_str!("../web/style.css");
-/// Static files: page assets, the NEO schematic and the TCA diagrams.
-pub const ASSETS: [(&str, &str, &str); 8] = [
+/// Static files: the page and its device diagrams.
+pub const ASSETS: [(&str, &str, &str); 7] = [
     ("/", "text/html; charset=utf-8", INDEX),
     ("/app.js", "text/javascript; charset=utf-8", SCRIPT),
     ("/style.css", "text/css; charset=utf-8", STYLE),
-    ("/neo.svg", "image/svg+xml", include_str!("../web/neo.svg")),
-    ("/device/sidestick.svg", "image/svg+xml", include_str!("../web/device/sidestick.svg")),
-    ("/device/sidestick-grip.svg", "image/svg+xml", include_str!("../web/device/sidestick-grip.svg")),
+    ("/device/neo.svg", "image/svg+xml", include_str!("../web/device/neo.svg")),
+    ("/device/sidestick-right.svg", "image/svg+xml", include_str!("../web/device/sidestick-right.svg")),
+    ("/device/sidestick-left.svg", "image/svg+xml", include_str!("../web/device/sidestick-left.svg")),
     ("/device/quadrant.svg", "image/svg+xml", include_str!("../web/device/quadrant.svg")),
-    ("/device/quadrant-grip.svg", "image/svg+xml", include_str!("../web/device/quadrant-grip.svg")),
 ];
 const LIMIT: usize = 65536;
 
@@ -96,7 +95,7 @@ pub fn handle(request: &Request, shared: &Shared, port: u16, token: &str) -> Res
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/api/config") => {
             let (_, current) = shared.config();
-            json_reply(200, json!({"config": current, "defaults": config::defaults(), "status": shared.status().label()}))
+            json_reply(200, json!({"config": current, "defaults": config::defaults(), "status": shared.status().label(), "links": *shared.links.lock().unwrap(), "profile": shared.config_path.display().to_string()}))
         }
         ("PUT", "/api/config") => match config::parse(&request.body).and_then(|c| shared.save(c)) {
             Ok(()) => json_reply(200, json!({"saved": true, "running": shared.status().running()})),
@@ -110,7 +109,7 @@ pub fn handle(request: &Request, shared: &Shared, port: u16, token: &str) -> Res
             Ok(count) => json_reply(200, json!({"saved": count})),
             Err(error) => json_reply(400, json!({"error": error})),
         },
-        ("GET", "/api/live") => json_reply(200, json!({"pressed": *shared.pressed.lock().unwrap(), "levers": *shared.levers.lock().unwrap(), "status": shared.status().label()})),
+        ("GET", "/api/live") => json_reply(200, json!({"pressed": *shared.pressed.lock().unwrap(), "levers": *shared.levers.lock().unwrap(), "status": shared.status().label(), "links": *shared.links.lock().unwrap()})),
         _ => json_reply(404, json!({"error": "Unknown request."})),
     }
 }

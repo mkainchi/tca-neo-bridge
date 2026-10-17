@@ -1,6 +1,6 @@
 use neo_daemon::config;
 use neo_daemon::http::{self, Request, Server};
-use neo_daemon::shared::{Shared, Status};
+use neo_daemon::shared::{Links, Shared, Status};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -55,10 +55,11 @@ fn routes_assets_tokens_and_host_checks() {
         let response = get(path, "");
         assert_eq!((response.status, response.body.as_str()), (200, body), "{path}");
     }
-    assert_eq!(get("/device/sidestick.svg", "").content_type, "image/svg+xml");
-    assert!(get("/neo.svg", "").body.contains("T.Flight Hotas NEO"));
-    assert!(get("/device/quadrant.svg", "").body.contains("TCA Quadrant"));
-    assert_eq!(http::handle(&request("POST", "/neo.svg", "", ""), &shared, 8000, "secret").status, 404);
+    assert_eq!(get("/device/sidestick-right.svg", "").content_type, "image/svg+xml");
+    assert!(get("/device/sidestick-left.svg", "").body.contains("left-hand setup"));
+    assert!(get("/device/neo.svg", "").body.contains("T.Flight HOTAS NEO"));
+    assert!(get("/device/quadrant.svg", "").body.contains("TCA A320 quadrant"));
+    assert_eq!(http::handle(&request("POST", "/device/neo.svg", "", ""), &shared, 8000, "secret").status, 404);
     assert_eq!(get("/api/config", "wrong").status, 403);
     assert_eq!(get("/api/nothing", "secret").status, 404);
     let mut foreign = request("GET", "/", "", "");
@@ -68,10 +69,14 @@ fn routes_assets_tokens_and_host_checks() {
     assert_eq!(config.status, 200);
     let value = json(&config.body);
     assert_eq!(value["status"], "Idle");
+    assert_eq!(value["links"], serde_json::Value::Null);
+    assert!(value["profile"].as_str().unwrap().ends_with("config.json"));
     assert_eq!(value["config"], value["defaults"]);
     shared.pressed.lock().unwrap().push("s5".into());
     shared.set_status(Status::Emulating);
-    assert_eq!(json(&get("/api/live", "secret").body), serde_json::json!({"pressed": ["s5"], "levers": null, "status": "Emulating"}));
+    assert_eq!(json(&get("/api/live", "secret").body), serde_json::json!({"pressed": ["s5"], "levers": null, "status": "Emulating", "links": null}));
+    *shared.links.lock().unwrap() = Some(Links { source: "tca", hidden: true, tca: true, virtual_neo: true });
+    assert_eq!(json(&get("/api/live", "secret").body)["links"], serde_json::json!({"source": "tca", "hidden": true, "tca": true, "virtual_neo": true}));
     *shared.levers.lock().unwrap() = Some([0.25, 1.0]);
     assert_eq!(json(&get("/api/live", "secret").body)["levers"], serde_json::json!([0.25, 1.0]));
 }

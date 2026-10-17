@@ -20,7 +20,7 @@ function fakeApi(overrides = {}) {
     calls,
     get: vi.fn(async (path) => {
       calls.push(['GET', path]);
-      if (path === '/api/config') return { config: defaults(), defaults: defaults(), status: 'Idle' };
+      if (path === '/api/config') return { config: defaults(), defaults: defaults(), status: 'Idle', links: null, profile: 'C:\\neo\\data\\config.json' };
       if (path === '/api/labels') return { labels: [{ label: 'Old', sources: ['s3'], mapping: 'Nothing → NEO 3 (Weapon select)' }] };
       return { pressed: [], status: 'Idle' };
     }),
@@ -40,6 +40,9 @@ const tca = (key) => document.querySelector(`[data-source="${key}"]`);
 const neo = (id) => document.querySelector(`[data-neo="${id}"]`);
 const pressed = (element) => element.getAttribute('aria-pressed');
 const fire = (element) => element.dispatchEvent(new Event('input', { bubbles: true }));
+const radio = (name, value) => document.querySelector(`input[name=${name}][value=${value}]`);
+const choose = (name, value, event = 'change') => { radio(name, value).checked = true; radio(name, value).dispatchEvent(new Event(event, { bubbles: true })); };
+const row = (id) => document.querySelector(`[data-row="${id}"]`);
 
 beforeEach(() => {
   document.documentElement.innerHTML = html.replace(/^<!doctype html>/i, '');
@@ -73,6 +76,25 @@ group('helpers', () => {
     expect(app.sourcesFor(config, 'pov-up')).toEqual(['s11']);
   });
 
+  it('shortens sources, lists changes and reports the split rule', () => {
+    expect(['s6', 'q12', 'hat-up'].map(app.short)).toEqual(['S6', 'Q12', 'Hat up']);
+    expect(app.diff({ buttons: [1, 2], pov: 'up' }, { buttons: [2, 3], pov: 'down' })).toEqual([
+      ['add', 'Adds NEO 3 (Weapon select)'], ['remove', 'Removes NEO 1 (Gun)'], ['add', 'Adds NEO POV down'], ['remove', 'Removes NEO POV up'],
+    ]);
+    expect(app.diff({ buttons: [], pov: null }, { buttons: [], pov: null })).toEqual([]);
+    expect(app.diff({ buttons: [], pov: 'up' }, { buttons: [], pov: null })).toEqual([['remove', 'Removes NEO POV up']]);
+    expect(app.splitActive([0.8, 0.1], { enabled: true, forward: 0.75, back: 0.25 })).toBe(true);
+    expect(app.splitActive([0.8, 0.3], { enabled: true, forward: 0.75, back: 0.25 })).toBe(false);
+  });
+
+  it('turns the daemon status and session links into header pills', () => {
+    const full = { source: 'tca', hidden: true, tca: true, virtual_neo: true };
+    expect(app.pills('Emulating', full)).toEqual({ status: 'ok', tca: ['ok', 'TCA: sidestick + quadrant open'], hidhide: ['ok', 'HidHide: TCA hidden'], neo: ['ok', 'Virtual NEO present'] });
+    expect(app.pills('Emulating', { source: 'validation', hidden: false, tca: false, virtual_neo: true })).toEqual({ status: 'ok', tca: ['busy', 'Source: validation stream'], hidhide: ['off', 'HidHide: not needed'], neo: ['ok', 'Virtual NEO present'] });
+    expect(app.pills('Idle', null)).toEqual({ status: 'off', tca: ['off', 'TCA: not open'], hidhide: ['off', 'HidHide: off'], neo: ['off', 'Virtual NEO: absent'] });
+    expect(['Starting', 'Stopping', 'Error: x', 'unreachable. Reopen', 'unavailable (x)'].map((t) => app.pills(t, null).status)).toEqual(['busy', 'busy', 'fault', 'fault', 'fault']);
+  });
+
   it('client sends the token and surfaces server errors', async () => {
     const fetchImpl = vi.fn(async (_path, options) => ({
       ok: options.method === 'GET',
@@ -87,22 +109,47 @@ group('helpers', () => {
 });
 
 group('mapping tab', () => {
-  it('builds diagrams, chips, NEO hotspots and the legend', async () => {
+  it('builds diagrams, chips, NEO hotspots, the NEO table and the axes', async () => {
     await page();
-    expect(document.querySelectorAll('[data-source]')).toHaveLength(52);
+    expect(document.querySelectorAll('[data-source]')).toHaveLength(53);
+    expect(document.querySelectorAll('[data-source="q3"]')).toHaveLength(2);
     expect(tca('q12').getAttribute('aria-label')).toBe('Quadrant detent state 12');
+    expect(tca('s5').style.getPropertyValue('--x')).toBe('7.179%');
     expect(document.querySelectorAll('[data-neo]')).toHaveLength(20);
     expect(neo('b5').getAttribute('aria-label')).toBe('NEO 5 (High-G)');
     expect(neo('b16').disabled).toBe(true);
     expect(neo('pov-up').querySelector('svg')).not.toBeNull();
-    expect(neo('b5').style.getPropertyValue('--x')).toBe('44.4%');
-    expect($('neo-legend').textContent).toContain('5 High-G · 6 Autopilot');
+    expect(neo('b5').style.getPropertyValue('--x')).toBe('43.234%');
+    expect(neo('b5').style.getPropertyValue('--w')).toBe('5.611%');
+    expect(document.querySelectorAll('[data-row]')).toHaveLength(16);
+    expect(row('b7').textContent).toBe('7FlaresS6 · Q2');
+    expect(row('b13').querySelector('.action').classList.contains('none')).toBe(true);
+    expect(row('pov').querySelector('.fed').textContent).toBe('U: S11');
+    expect($('axes').textContent).toContain('ZLeft quadrant lever or sidestick sliderThrottle');
+    expect($('axes').textContent).toContain('Rx / RySidestick hatCamera');
+    expect($('profile-path').textContent).toBe('C:\\neo\\data\\config.json');
     expect($('selected-name').textContent).toBe('Nothing selected');
+    expect($('compare').hidden).toBe(true);
     expect($('deselect').disabled).toBe(true);
     expect($('recorded-count').textContent).toBe('1');
-    $('handedness').value = 'left';
-    $('handedness').dispatchEvent(new Event('change'));
-    expect($('sidestick-frame').dataset.hand).toBe('left');
+    expect($('recorded-empty').hidden).toBe(true);
+    expect($('recorded').textContent).toContain('Old→ NEO 3 (Weapon select)was Nothing');
+    expect($('pill-tca').textContent).toBe('TCA: not open');
+    choose('hand', 'left');
+    expect($('stick-img').getAttribute('src')).toBe('device/sidestick-left.svg');
+    expect($('hand-caption').textContent).toBe('Left-hand setup');
+    expect(tca('s5').style.getPropertyValue('--x')).toBe('92.308%');
+    expect(document.querySelectorAll('#stick-spots [data-source]')).toHaveLength(17);
+    choose('hand', 'right');
+    expect($('stick-img').alt).toBe('TCA Sidestick, top view, right-hand setup, numbered controls 1 to 17');
+  });
+
+  it('loads without a profile path and keeps the placeholder', async () => {
+    const api = fakeApi();
+    const original = api.get;
+    api.get = vi.fn(async (path) => (path === '/api/config' ? { config: defaults(), defaults: defaults(), status: 'Idle' } : original(path)));
+    await page(api);
+    expect($('profile-path').textContent).toBe('config.json');
   });
 
   it('selecting a TCA control lights its NEO mapping; NEO clicks build a new one', async () => {
@@ -112,18 +159,26 @@ group('mapping tab', () => {
     expect($('selected-name').textContent).toBe('Sidestick button 6');
     expect($('mapped-now').textContent).toBe('NEO 7 (Flares)');
     expect($('mapped-new').textContent).toBe('Unchanged');
-    expect(neo('b7').classList.contains('current')).toBe(true);
+    expect($('selected-kind').textContent).toBe('TCA source');
+    expect($('compare').hidden).toBe(false);
+    expect(neo('b7').classList.contains('kept')).toBe(true);
     expect(pressed(neo('b7'))).toBe('true');
     expect($('record').disabled).toBe(true);
+    expect($('neo-context').dataset.mode).toBe('sel');
     neo('b6').click();
     expect(neo('b6').classList.contains('added')).toBe(true);
+    expect(row('b6').classList.contains('is-new')).toBe(true);
     neo('b7').click();
     expect(pressed(neo('b7'))).toBe('false');
+    expect(neo('b7').classList.contains('removed')).toBe(true);
+    expect($('diff').textContent).toBe('Adds NEO 6 (Autopilot)Removes NEO 7 (Flares)');
+    expect($('neo-context-text').textContent).toBe('Mapping of Sidestick button 6 → NEO 6 (Autopilot)');
     neo('pov-down').click();
     expect($('mapped-new').textContent).toBe('NEO 6 (Autopilot), NEO POV down');
     neo('pov-down').click();
     expect(p.proposal.pov).toBeNull();
     neo('pov-left').click();
+    expect(row('pov').classList.contains('is-new')).toBe(true);
     expect($('record').disabled).toBe(false);
     $('revert').click();
     expect($('mapped-new').textContent).toBe('Unchanged');
@@ -135,12 +190,21 @@ group('mapping tab', () => {
     await page();
     neo('b7').click();
     expect($('selected-name').textContent).toBe('NEO 7 (Flares)');
-    expect($('mapped-now').textContent).toBe('From Sidestick button 6, Quadrant button 2');
-    expect(tca('s6').classList.contains('linked')).toBe(true);
+    expect($('link-heading').textContent).toBe('Selected NEO control');
+    expect($('mapped-now-label').textContent).toBe('Fed by');
+    expect($('mapped-new').hidden).toBe(true);
+    expect($('mapped-now').textContent).toBe('Sidestick button 6, Quadrant button 2');
+    expect($('neo-context-text').textContent).toBe('Inspecting NEO 7 (Flares) · fed by S6 · Q2');
+    expect(tca('s6').classList.contains('is-feed')).toBe(true);
     expect(pressed(neo('b7'))).toBe('true');
+    expect(row('b7').classList.contains('is-sel')).toBe(true);
     expect($('deselect').disabled).toBe(false);
-    neo('b14').click();
+    row('b14').click();
     expect($('mapped-now').textContent).toBe('No TCA control');
+    expect($('neo-context-text').textContent).toBe('Inspecting NEO 14 · fed by nothing');
+    neo('pov-up').click();
+    expect(row('pov').classList.contains('is-sel')).toBe(true);
+    neo('b14').click();
     neo('b14').click();
     expect($('selected-name').textContent).toBe('Nothing selected');
   });
@@ -216,15 +280,17 @@ group('sidestick hat', () => {
     expect(tca('hat-up').textContent).toBe('Up');
     expect(tca('hat-up').disabled).toBe(true);
     expect(tca('hat-up').title).toBe('Set the hat to Mapped controls to map it');
-    expect($('hat-mode').value).toBe('camera');
+    expect(radio('hat', 'camera').checked).toBe(true);
+    expect($('axes').textContent).toContain('Sidestick hatCamera');
     p.live({ pressed: ['hat-up'], status: 'Emulating' });
     expect(p.selected).toBeNull();
-    $('hat-mode').value = 'mapped';
-    $('hat-mode').dispatchEvent(new Event('change'));
+    choose('hat', 'mapped');
     await vi.waitFor(() => expect($('link-status').textContent).toBe('The hat now sends its mapped controls; the camera mini-stick gets no input.'));
     expect(api.calls.at(-1)[2].hat).toBe('mapped');
     expect(tca('hat-up').disabled).toBe(false);
     expect(tca('hat-up').title).toBe('Sidestick hat up');
+    expect($('hat-hint').textContent).toBe('Each direction maps like a button; the camera gets no input.');
+    expect($('axes').textContent).toContain('No source (hat is mapped)Camera');
     p.live({ pressed: [], status: 'Emulating' });
     p.live({ pressed: ['hat-up'], status: 'Emulating' });
     expect(p.selected).toBe('hat-up');
@@ -236,7 +302,8 @@ group('sidestick hat', () => {
     // Reverse lookup includes hat sources.
     $('deselect').click();
     neo('pov-up').click();
-    expect($('mapped-now').textContent).toBe('From Sidestick button 11, Sidestick hat up');
+    expect($('mapped-now').textContent).toBe('Sidestick button 11, Sidestick hat up');
+    expect(row('pov').querySelector('.fed').textContent).toBe('U: S11 · Hat up');
     // Back to camera with a hat direction selected: the selection is cleared.
     tca('hat-up').click();
     api.put = vi.fn(async () => ({ saved: true, running: true }));
@@ -259,7 +326,7 @@ group('sidestick hat', () => {
     const p = await page(api);
     await p.setHat('mapped');
     expect($('link-status').textContent).toBe('Not saved: The profile could not be saved.');
-    expect($('hat-mode').value).toBe('camera');
+    expect(radio('hat', 'camera').checked).toBe(true);
     expect(p.busy).toBe(false);
   });
 });
@@ -267,17 +334,23 @@ group('sidestick hat', () => {
 group('live input', () => {
   it('lights held controls and the hat, and selects new presses on the mapping tab', async () => {
     const p = await page();
-    p.live({ pressed: [], status: 'Emulating' });
-    expect($('live-input').textContent).toBe('Now sending: nothing');
+    p.live({ pressed: [], status: 'Idle' });
+    expect($('live-input').textContent).toBe('Start emulation to see presses.');
+    const links = { source: 'tca', hidden: true, tca: true, virtual_neo: true };
+    p.live({ pressed: [], status: 'Emulating', links });
+    expect($('live-input').textContent).toBe('Nothing pressed');
+    expect($('live-input').dataset.active).toBe('false');
     expect($('daemon-status').textContent).toBe('Daemon: Emulating');
-    p.live({ pressed: ['s5', 'hat-up-right'], status: 'Emulating' });
-    expect($('live-input').textContent).toBe('Now sending: Sidestick button 5, Sidestick hat up-right');
+    expect($('pill-status').dataset.state).toBe('ok');
+    expect($('pill-hidhide').textContent).toBe('HidHide: TCA hidden');
+    p.live({ pressed: ['s5', 'hat-up', 'hat-right'], status: 'Emulating', links });
+    expect($('live-input').textContent).toBe('Now sending: Sidestick button 5, Sidestick hat up, Sidestick hat right');
+    expect($('live-input').dataset.active).toBe('true');
     expect(tca('s5').classList.contains('held')).toBe(true);
-    expect(document.querySelector('.hat[data-hat=up]').classList.contains('held')).toBe(true);
-    expect(document.querySelector('.hat[data-hat=right]').classList.contains('held')).toBe(true);
-    expect(document.querySelector('.hat[data-hat=down]').classList.contains('held')).toBe(false);
+    expect(tca('hat-up').classList.contains('held')).toBe(true);
+    expect(tca('hat-down').classList.contains('held')).toBe(false);
     expect(p.selected).toBe('s5');
-    p.live({ pressed: ['s5', 'hat-up-right'], status: 'Emulating' }); // held: no reselection
+    p.live({ pressed: ['s5', 'hat-up', 'hat-right'], status: 'Emulating' }); // held: no reselection
     tca('q1').click();
     p.live({ pressed: ['s5'], status: 'Emulating' });
     expect(p.selected).toBe('q1');
@@ -316,10 +389,23 @@ group('split-lever High-G', () => {
     expect($('split-forward').value).toBe('95');
     expect($('split-back').value).toBe('5');
     expect($('split-enabled').checked).toBe(true);
+    expect($('lever-rails').hidden).toBe(true);
+    expect($('lever-state').textContent).toBe('Not split');
     p.live({ pressed: [], levers: [1, 0], status: 'Emulating' });
     expect($('lever-live').textContent).toBe('Left lever 100% · Right lever 0% · High-G active');
+    expect($('lever-rails').hidden).toBe(false);
+    expect($('lever-rails').style.getPropertyValue('--fw')).toBe('95%');
+    expect($('needle-left').style.getPropertyValue('--pos')).toBe('100%');
+    expect([$('value-left').dataset.zone, $('value-right').dataset.zone]).toEqual(['forward', 'back']);
+    expect($('lever-state').textContent).toBe('High-G active · NEO 5 held');
+    expect($('lever-state').dataset.active).toBe('true');
+    p.live({ pressed: [], levers: [0.5, 0.5], status: 'Emulating' });
+    expect($('value-left').dataset.zone).toBe('middle');
+    expect($('lever-state').textContent).toBe('Not split');
+    p.saved.split_high_g.enabled = false;
     p.live({ pressed: [], levers: null, status: 'Idle' });
     expect($('lever-live').textContent).toBe('Lever positions appear here during emulation.');
+    expect($('lever-state').textContent).toBe('Rule off');
   });
 
   it('validates and saves the thresholds and the switch', async () => {
@@ -342,6 +428,7 @@ group('split-lever High-G', () => {
     await p.save();
     expect(api.calls.at(-1)[2].split_high_g).toEqual({ enabled: false, forward: 0.8, back: 0.1 });
     expect(p.saved.split_high_g.forward).toBe(0.8);
+    expect($('lever-state').textContent).toBe('Rule off');
   });
 });
 
@@ -364,8 +451,25 @@ group('tabs and settings', () => {
   it('edits, validates, saves and resets settings', async () => {
     const api = fakeApi();
     const p = await page(api);
-    $('lever').value = 'right';
-    fire($('lever'));
+    choose('lever', 'right', 'input');
+    expect($('deadzone-range').value).toBe('4');
+    expect($('deadzone-text').textContent).toBe('Ignored band ±4%');
+    $('deadzone-range').value = '12';
+    fire($('deadzone-range'));
+    expect($('deadzone').value).toBe('0.12');
+    expect($('deadzone-band').style.getPropertyValue('--band')).toBe('12%');
+    $('camera').value = '0.5';
+    fire($('camera'));
+    expect($('camera-range').value).toBe('50');
+    $('split-forward-range').value = '70';
+    fire($('split-forward-range'));
+    expect($('split-forward').value).toBe('70');
+    $('split-back').value = '20';
+    fire($('split-back'));
+    expect($('split-back-range').value).toBe('20');
+    $('deadzone').value = 'x';
+    fire($('deadzone'));
+    expect($('deadzone-text').textContent).toBe('Ignored band ±0%');
     $('invert-yaw').checked = true;
     fire($('invert-yaw'));
     fire($('deadzone'));
@@ -376,6 +480,7 @@ group('tabs and settings', () => {
     expect($('deadzone-error').textContent).toBe('Enter a number from 0 to below 1.');
     expect($('camera-error').textContent).toBe('Enter a number from 0 to 1.');
     expect($('dirty').textContent).toBe('Fix the highlighted fields, then save.');
+    expect($('dirty').dataset.state).toBe('error');
     $('deadzone').value = '-1';
     $('camera').value = '0.5';
     await p.save();
@@ -387,6 +492,7 @@ group('tabs and settings', () => {
     await p.save();
     expect(api.calls.at(-1)[2]).toMatchObject({ deadzone: 0.1, camera_strength: 1, throttle_lever: 'right', invert: { yaw: true } });
     expect($('dirty').textContent).toBe('Saved.');
+    expect($('dirty').dataset.state).toBe('saved');
     expect(p.saved.throttle_lever).toBe('right');
     api.put = vi.fn(async () => ({ saved: true, running: true }));
     $('profile').dispatchEvent(new Event('submit', { cancelable: true }));
@@ -396,7 +502,8 @@ group('tabs and settings', () => {
     expect($('dirty').textContent).toBe('Not saved: Deadzone must be at least 0 and below 1.');
     expect($('save').disabled).toBe(false);
     $('reset').click();
-    expect($('lever').value).toBe('left');
+    expect(radio('lever', 'left').checked).toBe(true);
+    expect($('dirty').dataset.state).toBe('dirty');
     expect($('dirty').textContent).toBe('Unsaved: defaults, including every mapping. Save settings to apply.');
   });
 });
