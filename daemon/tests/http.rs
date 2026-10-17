@@ -142,7 +142,12 @@ fn live_server_serves_rejects_and_stops() {
     let mut text = String::new();
     let _ = stream.read_to_string(&mut text);
     assert!(text.is_empty() || text.starts_with("HTTP/1.1 400"));
-    // Client that closes without sending anything.
-    drop(TcpStream::connect(("127.0.0.1", server.port)).unwrap());
+    // Client that closes without sending anything; waiting for the reply guarantees the
+    // zero-length read is served before the server shuts down.
+    let mut stream = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+    stream.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut text = String::new();
+    stream.read_to_string(&mut text).unwrap();
+    assert!(text.starts_with("HTTP/1.1 400"), "{text}");
     drop(server);
 }
