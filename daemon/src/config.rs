@@ -94,8 +94,8 @@ pub struct Config {
 
 /// Default profile: the mapping recorded on the Mapping tab on 17 October 2026. Sidestick 1–15 send the
 /// same-numbered NEO buttons; quadrant grips 1–2 High-G; ENG switches 3–4 and button 6 Autopilot; 5 Radar;
-/// mode selector 7–8 Flares/View. No POV source; the hat drives the camera. Throttle inverted; split-lever
-/// High-G at 75% / 25% (the settings tuned on the real quadrant).
+/// mode selector 7–8 Flares/View. No POV source; the hat drives the camera. Throttle not inverted
+/// (checked in AC8); split-lever High-G at 75% / 25% (the settings tuned on the real quadrant).
 pub fn defaults() -> Config {
     let buttons = [
         ("s1", 1), ("s2", 2), ("s3", 3), ("s4", 4), ("s5", 5), ("s6", 6), ("s7", 7), ("s8", 8),
@@ -109,7 +109,7 @@ pub fn defaults() -> Config {
         throttle_lever: Lever::Left,
         hat: HatMode::Camera,
         split_high_g: SplitHighG::default(),
-        invert: Invert { throttle: true, ..Invert::default() },
+        invert: Invert::default(),
         buttons: buttons.iter().map(|(k, v)| (k.to_string(), vec![*v])).collect(),
         pov: BTreeMap::new(),
     }

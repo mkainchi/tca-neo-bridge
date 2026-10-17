@@ -87,9 +87,9 @@ fn default_profile_maps_sidestick_numbers_and_recorded_quadrant_controls() {
         let (_, buttons, _) = fields(&mapper.convert(Some(&neutral_stick()), Some(&quadrant(32768, 32768, &[button]))));
         assert_eq!(buttons, 1 << (neo - 1), "quadrant {button}");
     }
-    // Tuned settings: throttle inverted, split High-G at 75% / 25%.
+    // Tuned settings: no axis inverted (checked in AC8), split High-G at 75% / 25%.
     let defaults = config::defaults();
-    assert!(defaults.invert.throttle && !defaults.invert.roll && !defaults.invert.pitch && !defaults.invert.yaw);
+    assert!(!defaults.invert.throttle && !defaults.invert.roll && !defaults.invert.pitch && !defaults.invert.yaw);
     assert_eq!((defaults.split_high_g.enabled, defaults.split_high_g.forward, defaults.split_high_g.back), (true, 0.75, 0.25));
     // Sidestick 16/17 and the remaining quadrant inputs are unmapped; no control sends the POV; the hat is camera.
     let (axes, buttons, hat) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 0, &[16, 17])), Some(&quadrant(32768, 32768, &[9, 31]))));
@@ -113,7 +113,7 @@ fn split_levers_hold_high_g_and_the_throttle_follows_the_forward_lever() {
     // Just outside either threshold: no High-G.
     assert_eq!(fields(&mapper.convert(Some(&neutral), Some(&quadrant(forward - 2, 0, &[])))).1, 0);
     assert_eq!(fields(&mapper.convert(Some(&neutral), Some(&quadrant(full, back + 2, &[])))).1, 0);
-    // The user's profile: throttle inverted, thresholds 75% / 25%. The split throttle still follows the forward
+    // Throttle inverted, thresholds 75% / 25%: the split throttle still follows the forward
     // (higher-reading) lever and is inverted exactly like the normal throttle, never the back lever's idle.
     let mut cfg = research();
     cfg.invert.throttle = true;

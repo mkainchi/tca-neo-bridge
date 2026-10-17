@@ -234,8 +234,8 @@ fn tca_session_maps_hot_reloads_and_releases_on_disconnect() {
         s.reads.insert(0, [Read::Data(stick_report(1, 0))].into());
         s.reads.insert(1, [Read::Data(quadrant_report(65535))].into());
     }
-    // Left lever full forward, default inverted throttle: NEO Z 0.
-    let pressed_report = |button: u16| neo::input_report([0, 32768, 0, 32768, 32768, 32768, 32768], button, 8);
+    // Left lever full forward, default (not inverted) throttle: NEO Z full.
+    let pressed_report = |button: u16| neo::input_report([0, 32768, 65535, 32768, 32768, 32768, 32768], button, 8);
     wait_until(|| state().frames.iter().any(|f| protocol::parse(f) == Some(pressed_report(1))));
     assert_eq!(*shared.pressed.lock().unwrap(), ["s1"]);
     assert_eq!(*shared.levers.lock().unwrap(), Some([1.0, 32768.0 / 65535.0]));

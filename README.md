@@ -79,7 +79,7 @@ The left side shows the TCA sidestick, quadrant and grips. The right side shows 
 | Quadrant button 5 | 9 | Radar |
 | Quadrant mode selector (7, 8) | 7, 8 | Flares, View |
 | Sidestick stick, twist | X/Y, Rz | Roll/pitch, yaw |
-| Left quadrant lever or sidestick slider | Z (inverted) | Throttle |
+| Left quadrant lever or sidestick slider | Z | Throttle |
 | Sidestick hat | Rx/Ry mini-stick | Camera |
 | Levers split (one ≥ 75 %, other ≤ 25 %) | 5 | High-G |
 
