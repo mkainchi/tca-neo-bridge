@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1060" viewBox="0 0 1000 1060" role="img" aria-labelledby="title">
+<title id="title">T.Flight Hotas NEO: original schematic of the stick head and the throttle/stick base</title>
+<desc>Original flat schematic drawn from the published control numbering; no manufacturer artwork or logos. Numbered controls are supplied by the configuration page.</desc>
+<g fill="none" stroke-linejoin="round" stroke-linecap="round">
+  <!-- Stick head, top view -->
+  <g id="head" stroke="#7f98a8" stroke-width="4">
+    <path d="M370 96 C410 78 590 78 630 96 C690 124 724 214 716 300 C708 362 610 404 500 410 C390 404 292 362 284 300 C276 214 310 124 370 96 Z" fill="#1b2733"/>
+    <path d="M440 330 L560 330 L548 404 C534 409 466 409 452 404 Z" fill="#141e28"/>
+    <path d="M284 230 C262 236 250 256 252 278 C254 300 266 314 286 316" fill="#141e28"/>
+  </g>
+  <g id="pov" stroke="#bdccd7" stroke-width="5">
+    <circle cx="380" cy="190" r="34" fill="#141e28"/>
+    <path d="M380 166 L380 214 M356 190 L404 190"/>
+  </g>
+  <g id="mini-stick" stroke="#bdccd7" stroke-width="4">
+    <circle cx="520" cy="170" r="30" fill="#141e28"/>
+    <circle cx="520" cy="170" r="13" fill="#2a3a48"/>
+  </g>
+  <path d="M552 170 L728 170" stroke="#658091" stroke-width="2" stroke-dasharray="4 6"/>
+  <g id="head-buttons" stroke="#bdccd7" stroke-width="4" fill="#141e28">
+    <ellipse cx="500" cy="282" rx="36" ry="28"/>
+    <ellipse cx="622" cy="236" rx="30" ry="40"/>
+  </g>
+  <!-- Base, throttle and stick, side elevation -->
+  <g id="base" stroke="#7f98a8" stroke-width="4">
+    <path d="M70 1010 L70 890 C70 852 98 832 140 832 L860 832 C902 832 930 852 930 890 L930 1010 Z" fill="#1b2733"/>
+    <path d="M70 900 L930 900" stroke="#3b4f5e"/>
+  </g>
+  <g id="throttle" stroke="#7f98a8" stroke-width="4">
+    <path d="M250 832 L300 690 L360 690 L380 832 Z" fill="#141e28"/>
+    <path d="M190 560 C200 530 330 520 380 548 C410 566 418 640 404 720 C398 750 380 770 350 772 L232 772 C206 770 192 748 190 720 Z" fill="#1b2733"/>
+    <path d="M200 610 C232 600 262 600 290 612" stroke="#bdccd7" stroke-width="5"/>
+  </g>
+  <g id="stick" stroke="#7f98a8" stroke-width="4">
+    <path d="M650 832 L650 760 C650 740 662 730 680 730 L720 730 C738 730 750 740 750 760 L750 832 Z" fill="#141e28"/>
+    <path d="M666 730 L666 600 C666 584 678 576 700 576 C722 576 734 584 734 600 L734 730" fill="#1b2733"/>
+    <path d="M630 576 C632 520 660 492 700 490 C740 492 768 520 770 576 Z" fill="#1b2733"/>
+    <path d="M610 690 C640 710 760 710 790 690" stroke="#bdccd7" stroke-width="3" stroke-dasharray="10 8"/>
+    <path d="M790 690 L778 678 M790 690 L776 698" stroke="#bdccd7" stroke-width="3"/>
+  </g>
+  <g id="base-buttons" stroke="#bdccd7" stroke-width="3" fill="#141e28">
+    <circle cx="360" cy="950" r="15"/><circle cx="480" cy="950" r="15"/><circle cx="420" cy="985" r="15"/>
+    <circle cx="610" cy="905" r="15"/><circle cx="790" cy="905" r="15"/><circle cx="700" cy="955" r="15"/>
+  </g>
+</g>
+<g fill="#bdccd7" font-family="system-ui, sans-serif" font-size="26" font-weight="600">
+  <text x="40" y="52">Stick head · top view</text>
+  <text x="40" y="482">Throttle and base · side view</text>
+</g>
+<g fill="#93a8b6" font-family="system-ui, sans-serif" font-size="20">
+  <text x="740" y="164">Mini-stick</text><text x="740" y="190">camera (Rx/Ry)</text>
+  <text x="130" y="604" text-anchor="end">Rocker</text>
+  <text x="800" y="726">Twist (Rz)</text>
+  <text x="140" y="808">Throttle (Z)</text>
+  <text x="700" y="470" text-anchor="middle">Stick (X/Y)</text>
+  <text x="700" y="1042" text-anchor="middle">16 not in the NEO report</text>
+</g>
+</svg>

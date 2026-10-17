@@ -1,0 +1,73 @@
+;
+; neohid.inf - TCA-NEO bridge UMDF2 HID minidriver (virtual T.Flight Hotas NEO personality).
+; Derived from Microsoft Windows-driver-samples hid/vhidmini2 VhidminiUm.inx (MS-PL).
+; The device is created on demand by neo-daemon (SwDeviceCreate, hardware ID neohid\NeoVirtualHid).
+; Requires MsHidUmdf.inf (Windows build 22000 or later).
+;
+[Version]
+Signature="$WINDOWS NT$"
+Class=HIDClass
+ClassGuid={745a17a0-74d3-11d0-b6fe-00a0c90f57da}
+Provider=%ProviderString%
+DriverVer=10/17/2026,0.1.0.0
+CatalogFile=neohid.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir=13
+
+[SourceDisksNames]
+1=%DiskDescription%,,,
+
+[SourceDisksFiles]
+neohid.dll=1
+
+[Manufacturer]
+%ManufacturerString%=NeoResearch,NT$ARCH$.10.0...22000
+
+[NeoResearch.NT$ARCH$.10.0...22000]
+%DeviceDesc%=NeoHid,neohid\NeoVirtualHid
+
+[NeoHid.NT]
+CopyFiles=NeoHidCopy
+Include=MsHidUmdf.inf
+Needs=MsHidUmdf.NT
+Include=WUDFRD.inf
+Needs=WUDFRD_LowerFilter.NT
+
+[NeoHid.NT.hw]
+Include=MsHidUmdf.inf
+Needs=MsHidUmdf.NT.hw
+Include=WUDFRD.inf
+Needs=WUDFRD_LowerFilter.NT.hw
+
+[NeoHid.NT.Services]
+Include=MsHidUmdf.inf
+Needs=MsHidUmdf.NT.Services
+Include=WUDFRD.inf
+Needs=WUDFRD_LowerFilter.NT.Services
+
+[NeoHid.NT.Filters]
+Include=WUDFRD.inf
+Needs=WUDFRD_LowerFilter.NT.Filters
+
+[NeoHid.NT.Wdf]
+UmdfService="neohid",NeoHid_Install
+UmdfServiceOrder=neohid
+UmdfKernelModeClientPolicy=AllowKernelModeClients
+UmdfFileObjectPolicy=AllowNullAndUnknownFileObjects
+UmdfMethodNeitherAction=Copy
+UmdfFsContextUsePolicy=CanUseFsContext2
+
+[NeoHid_Install]
+UmdfLibraryVersion=$UMDFVERSION$
+ServiceBinary="%13%\neohid.dll"
+
+[NeoHidCopy]
+neohid.dll
+
+[Strings]
+ProviderString="TCA-NEO bridge"
+ManufacturerString="TCA-NEO bridge"
+DiskDescription="neohid installation files"
+DeviceDesc="Virtual NEO HID (TCA-NEO bridge)"

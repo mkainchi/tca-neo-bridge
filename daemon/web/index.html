@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TCA-NEO bridge configuration</title>
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<main id="neo-app">
+  <header class="top">
+    <div>
+      <h1>TCA-NEO bridge</h1>
+      <p id="daemon-status" role="status" aria-live="polite">Loading…</p>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Configuration sections">
+      <button id="tab-mapping" role="tab" type="button" aria-selected="true" aria-controls="panel-mapping">Mapping</button>
+      <button id="tab-settings" role="tab" type="button" aria-selected="false" aria-controls="panel-settings" tabindex="-1">Axes and settings</button>
+    </div>
+  </header>
+
+  <section id="panel-mapping" role="tabpanel" aria-labelledby="tab-mapping" class="mapping">
+    <section class="tca" aria-labelledby="tca-heading">
+      <div class="column-head">
+        <h2 id="tca-heading">TCA Sidestick and Quadrant</h2>
+        <label class="hand" for="handedness">Sidestick base
+          <select id="handedness"><option value="right">Right-handed · R</option><option value="left">Left-handed · L</option></select>
+        </label>
+      </div>
+      <p class="hint">Click a control, or press it during emulation. Its NEO mapping lights up on the right.</p>
+      <div class="tca-views">
+        <figure>
+          <div class="frame sidestick-frame" id="sidestick-frame" data-hand="right">
+            <img src="device/sidestick.svg" alt="TCA Sidestick, top view" width="1920" height="1080">
+            <button class="ctl" data-source="s3" type="button">3</button><button class="ctl" data-source="s4" type="button">4</button>
+            <button class="ctl" data-source="s5" type="button">5</button><button class="ctl" data-source="s6" type="button">6</button>
+            <button class="ctl" data-source="s7" type="button">7</button><button class="ctl" data-source="s8" type="button">8</button>
+            <button class="ctl" data-source="s9" type="button">9</button><button class="ctl" data-source="s10" type="button">10</button>
+            <button class="ctl" data-source="s11" type="button">11</button><button class="ctl" data-source="s12" type="button">12</button>
+            <button class="ctl" data-source="s13" type="button">13</button><button class="ctl" data-source="s14" type="button">14</button>
+            <button class="ctl" data-source="s15" type="button">15</button><button class="ctl" data-source="s16" type="button">16</button>
+            <span class="hat" data-hat="up" aria-hidden="true"></span><span class="hat" data-hat="right" aria-hidden="true"></span>
+            <span class="hat" data-hat="down" aria-hidden="true"></span><span class="hat" data-hat="left" aria-hidden="true"></span>
+          </div>
+          <figcaption>Sidestick · hat directions are under Other inputs</figcaption>
+        </figure>
+        <figure>
+          <div class="frame quadrant-frame">
+            <img src="device/quadrant.svg" alt="TCA Quadrant Eng 1 and 2, engine panel" width="1920" height="1080">
+            <button class="ctl" data-source="q3" type="button">3</button><button class="ctl" data-source="q4" type="button">4</button>
+            <button class="ctl" data-source="q5" type="button">5</button><button class="ctl" data-source="q6" type="button">6</button>
+            <button class="ctl" data-source="q7" type="button">7</button><button class="ctl" data-source="q8" type="button">8</button>
+          </div>
+          <figcaption>Quadrant · 7 and 8 share the mode selector</figcaption>
+        </figure>
+      </div>
+      <div class="grips">
+        <figure>
+          <div class="frame grip-frame stick-grip">
+            <img src="device/sidestick-grip.svg" alt="Sidestick grip, side view" width="152" height="125">
+            <button class="ctl" data-source="s1" type="button">1</button><button class="ctl" data-source="s2" type="button">2</button>
+          </div>
+          <figcaption>Grip · side</figcaption>
+        </figure>
+        <figure>
+          <div class="frame grip-frame quadrant-grip">
+            <img src="device/quadrant-grip.svg" alt="Quadrant lever grips, front view" width="145" height="115">
+            <button class="ctl" data-source="q1" type="button">1</button><button class="ctl" data-source="q2" type="button">2</button>
+          </div>
+          <figcaption>Levers · front</figcaption>
+        </figure>
+        <div class="extras">
+          <h3>Other inputs</h3>
+          <div class="hat-head">
+            <p class="chips-label">Sidestick hat</p>
+            <label class="hand" for="hat-mode">Drives
+              <select id="hat-mode"><option value="camera">Camera (NEO mini-stick)</option><option value="mapped">Mapped controls</option></select>
+            </label>
+          </div>
+          <div id="extra-hat" class="chips"></div>
+          <p class="chips-label">Sidestick</p>
+          <div id="extra-sidestick" class="chips"></div>
+          <p class="chips-label">Quadrant detent states</p>
+          <div id="extra-detents" class="chips"></div>
+          <p class="chips-label">Quadrant add-on inputs</p>
+          <div id="extra-addons" class="chips"></div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="link" aria-labelledby="link-heading">
+      <h2 id="link-heading">Selected control</h2>
+      <p id="selected-name" class="selected-name">Nothing selected</p>
+      <dl class="compare">
+        <dt>Mapped now</dt><dd id="mapped-now">—</dd>
+        <dt>New mapping</dt><dd id="mapped-new">—</dd>
+      </dl>
+      <p id="link-help" class="hint">Select a TCA control, then click NEO buttons or a POV direction to build its mapping.</p>
+      <div class="actions">
+        <button id="record" class="primary" type="button" disabled>Record mapping</button>
+        <button id="revert" type="button" disabled>Undo changes</button>
+        <button id="deselect" type="button" disabled>Deselect</button>
+      </div>
+      <p id="link-status" role="status" aria-live="polite"></p>
+      <h3>Live input</h3>
+      <p id="live-input" class="live-input">Start emulation to see presses.</p>
+      <h3>Recorded corrections <span id="recorded-count" class="count">0</span></h3>
+      <ol id="recorded" class="recorded"></ol>
+    </aside>
+
+    <section class="neo" aria-labelledby="neo-heading">
+      <div class="column-head"><h2 id="neo-heading">T.Flight Hotas NEO</h2></div>
+      <p class="hint">Ringed: mapped now. Filled: new mapping, with a yellow ring when added and a red dashed ring when removed. Names follow the AC8 reference.</p>
+      <div class="frame neo-frame" id="neo-frame">
+        <img src="neo.svg" alt="T.Flight Hotas NEO schematic" width="1000" height="1060">
+      </div>
+      <p id="neo-legend" class="legend"></p>
+    </section>
+  </section>
+
+  <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" class="settings" hidden>
+    <form id="profile" novalidate>
+      <h2>Flight axes</h2>
+      <label for="deadzone">Stick deadzone (0 to 0.99)</label>
+      <input id="deadzone" name="deadzone" type="number" min="0" max="0.99" step="0.01" inputmode="decimal" aria-describedby="deadzone-error">
+      <p id="deadzone-error" class="error" role="alert"></p>
+      <label for="camera">Camera strength (0 to 1)</label>
+      <input id="camera" name="camera" type="number" min="0" max="1" step="0.05" inputmode="decimal" aria-describedby="camera-error">
+      <p id="camera-error" class="error" role="alert"></p>
+      <label for="lever">Quadrant throttle lever</label>
+      <select id="lever" name="lever">
+        <option value="left">Left lever (shares throttle with the sidestick slider)</option>
+        <option value="right">Right lever (shares throttle with the sidestick slider)</option>
+      </select>
+      <fieldset>
+        <legend>Invert</legend>
+        <label class="inline"><input type="checkbox" id="invert-roll"> Roll</label>
+        <label class="inline"><input type="checkbox" id="invert-pitch"> Pitch</label>
+        <label class="inline"><input type="checkbox" id="invert-yaw"> Yaw (twist)</label>
+        <label class="inline"><input type="checkbox" id="invert-throttle"> Throttle</label>
+      </fieldset>
+      <fieldset>
+        <legend>High-G from split levers</legend>
+        <label class="inline"><input type="checkbox" id="split-enabled"> Hold NEO 5 (High-G) while one quadrant lever is forward and the other back</label>
+        <label for="split-forward">Forward lever at least (% of travel)</label>
+        <input id="split-forward" type="number" min="0" max="100" step="1" inputmode="numeric" aria-describedby="split-forward-error">
+        <p id="split-forward-error" class="error" role="alert"></p>
+        <label for="split-back">Other lever at most (% of travel)</label>
+        <input id="split-back" type="number" min="0" max="100" step="1" inputmode="numeric" aria-describedby="split-back-error">
+        <p id="split-back-error" class="error" role="alert"></p>
+        <p class="hint">Either lever can be the forward one (the higher reading below; full stop reads 0%). While split, the throttle follows it, with the same inversion as normal.</p>
+        <p id="lever-live" class="live-input">Lever positions appear here during emulation.</p>
+      </fieldset>
+      <div class="save-area">
+        <p id="dirty" role="status" aria-live="polite"></p>
+        <button id="save" class="primary" type="submit">Save settings</button>
+        <button id="reset" type="button">Reset everything to defaults</button>
+      </div>
+    </form>
+  </section>
+</main>
+</body>
+</html>

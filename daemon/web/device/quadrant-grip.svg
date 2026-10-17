@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="145" height="115" viewBox="0 0 145 115" role="img" aria-labelledby="title">
+<title id="title">Quadrant lever grip front view: two outer buttons</title>
+<desc>Original measured vector diagram; simplified materials and no manufacturer logos. Numbered controls are supplied by the configuration page.</desc>
+
+<g id="lever-grips" stroke="#20282e" stroke-width="2.2" stroke-linejoin="round">
+<path d="M16 56 L59 66 L59 113 L26 102 L26 57 M82 70 L121 79 L121 113 L84 113 Z" fill="#e5eaee"/>
+<path d="M19 7 L65 17 L68 68 L17 57 Z" fill="#f6f8f9"/>
+<ellipse cx="18" cy="32" rx="15" ry="26" fill="#f6f8f9"/>
+<ellipse cx="18" cy="32" rx="11" ry="25" fill="none"/>
+<path d="M62 18 L125 29 L125 79 L62 68 Z" fill="#f6f8f9"/>
+<ellipse cx="61" cy="43" rx="15" ry="26" fill="#f6f8f9"/>
+<ellipse cx="61" cy="43" rx="11" ry="25" fill="none"/>
+<path d="M64 18 L69 19 M64 68 L69 69" fill="none"/>
+<ellipse cx="70" cy="45" rx="14" ry="26" fill="#f6f8f9"/>
+<ellipse cx="70" cy="45" rx="10" ry="25" fill="none"/>
+<ellipse cx="124" cy="54" rx="15" ry="26" fill="#f6f8f9"/>
+<ellipse cx="124" cy="54" rx="10" ry="24" fill="none"/>
+<ellipse id="outer-button-2" cx="125" cy="54" rx="4" ry="8" fill="#20282e"/>
+<circle id="outer-button-1" cx="31" cy="36" r="4.5" fill="#20282e"/>
+<path d="M0 34 L23 35 M129 54 L145 55 M21 102 L17 114 M27 103 L30 115 M60 113 L61 115 M130 77 L141 85 L143 100 L140 114" fill="none"/>
+</g>
+</svg>

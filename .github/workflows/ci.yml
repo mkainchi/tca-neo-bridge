@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  daemon:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchains
+        shell: pwsh
+        run: |
+          rustup component add clippy llvm-tools-preview
+          rustup toolchain install nightly --profile minimal --component llvm-tools-preview
+          cargo install cargo-llvm-cov --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Page test dependencies
+        run: npm ci
+      - name: Lint and 100% coverage gates
+        shell: pwsh
+        run: ./scripts/check.ps1
+
+  driver:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build driver package (needs WDK 10.0.26100 on the runner)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'C:\Program Files (x86)\Windows Kits\10\Lib\wdf\umdf\x64\2.33\WdfDriverStubUm.lib')) {
+            Write-Output '::notice::WDK 10.0.26100 not present on this runner image; driver build skipped.'
+            exit 0
+          }
+          ./driver/build.ps1

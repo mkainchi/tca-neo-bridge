@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="152" height="125" viewBox="0 0 152 125" role="img" aria-labelledby="title">
+<title id="title">Sidestick grip side view: trigger and upper button</title>
+<desc>Original measured vector diagram; simplified materials and no manufacturer logos. Numbered controls are supplied by the configuration page.</desc>
+
+<defs><clipPath id="detail-clip"><circle cx="54" cy="58" r="52"/></clipPath></defs><g id="grip-side" fill="#f7f8f9" stroke="#252c32" stroke-width="1.7" stroke-linejoin="round">
+<circle id="detail-circle" cx="54" cy="58" r="52" fill="#fff" stroke-width="2.4"/>
+<g clip-path="url(#detail-clip)">
+<path d="M59 7 C48 13 39 17 39 28 L49 48 L45 55 L52 67 L58 96 C58 103 60 108 63 105 L68 101 L66 76 L71 72 C76 80 82 82 96 85 C105 71 108 54 103 37 C99 23 89 13 78 10 L73 34 C69 45 73 55 80 63 C87 69 95 71 104 71"/>
+<path id="upper-button" d="M42 25 L39 30 L49 49 L53 44 Z" fill="#737f88"/>
+<path id="trigger" d="M53 51 L49 57 L54 70 L59 94 L60 104 L64 103 L65 94 L62 69 Z" fill="#bec8cf"/>
+<path d="M53 45 C59 55 60 62 63 71 M65 76 L70 70" fill="none"/>
+</g></g>
+</svg>

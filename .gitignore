@@ -1,0 +1,18 @@
+# Build output
+daemon/target/
+driver/out/
+driver/descriptor.h
+dist/
+
+# Tooling
+node_modules/
+coverage/
+*.log
+*.tmp
+
+# Signing material is created on the user's PC at install time and never committed
+*.pfx
+*.p12
+*.cer
+*.key
+*.pem
