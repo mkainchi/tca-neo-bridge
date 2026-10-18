@@ -12,7 +12,7 @@ ACE COMBAT 8 has native HOTAS bindings for the Thrustmaster **T.Flight Hotas NEO
 
 - No game modification, no code injection or hooking, and no patching of vendor binaries.
 - No kernel-mode driver, no test-signing mode, no third-party virtual-device or USB/IP drivers, which the maintainer did not want to trust.
-- No vendor software, firmware, SDK or artwork is redistributed; nothing in the build depends on it.
+- No proprietary source code is used, and no vendor software, firmware, SDK or artwork is redistributed; nothing in the build depends on it.
 - No telemetry; private data such as device instance paths and serial numbers is never logged.
 - Every physical or gameplay claim must be backed by a live test, not by unit tests or reasoning.
 
