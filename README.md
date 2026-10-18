@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/tca-neo-bridge-logo.png" alt="TCA-NEO bridge logo" width="180">
+</p>
+
 # TCA-NEO bridge
 
 Fly **ACE COMBAT 8** with a **Thrustmaster TCA Sidestick Airbus Edition** and **TCA Quadrant Eng 1&2**, using the game's **native HOTAS controls**.
@@ -9,6 +13,8 @@ ACE COMBAT 8 natively supports the Thrustmaster T.Flight Hotas NEO, but not the 
 Not affiliated with Thrustmaster/Guillemot, Bandai Namco or Microsoft. See [Trademarks](#licence-and-trademarks).
 
 ## Another Thrustmaster HOTAS?
+
+<img src="docs/images/any-tm-hotas-experimental-bridge-logo.png" alt="Any-TM-HOTAS experimental bridge logo" width="96" align="right">
 
 This bridge supports only the TCA Airbus sidestick + quadrant. For a T.16000M (+ TWCS), HOTAS Warthog, T.Flight Hotas X / 4 / One, TCA Boeing or another Thrustmaster HOTAS, try the **Any-TM-HOTAS experimental bridge**.
 

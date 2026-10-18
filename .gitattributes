@@ -1,3 +1,5 @@
 * text=auto eol=lf
 *.ps1 text eol=crlf
 *.hex text eol=lf
+docs/images/tca-neo-bridge-logo.png filter=lfs diff=lfs merge=lfs -text
+docs/images/any-tm-hotas-experimental-bridge-logo.png filter=lfs diff=lfs merge=lfs -text
