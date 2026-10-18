@@ -1,6 +1,6 @@
 [package]
 name = "neo-daemon"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 publish = false
 description = "Tray daemon that presents a Thrustmaster TCA Sidestick + Quadrant as a virtual T.Flight Hotas NEO"
