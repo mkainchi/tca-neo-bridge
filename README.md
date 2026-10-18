@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/any-tm-hotas-experimental-bridge-logo.png" alt="Any-TM-HOTAS experimental bridge logo" width="180">
+</p>
+
 # Any-TM-HOTAS experimental bridge
 
 Fly **ACE COMBAT 8** with **any Thrustmaster HOTAS**, using the game's **native HOTAS controls**.
