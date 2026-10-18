@@ -33,7 +33,7 @@ It runs clippy with warnings as errors and enforces **100 % coverage**: Rust lin
 ## Rules the code keeps
 
 - Never log, display or send device instance paths or serial numbers. `--probe` output and logs must stay free of them.
-- No vendor software, firmware, SDK or artwork in the repository or in builds. Trademarks only to name the hardware.
+- No proprietary source code (including decompiled or leaked code), and no vendor software, firmware, SDK or artwork, in the repository or in builds. Trademarks only to name the hardware.
 - Nothing leaves the PC: no telemetry, no network access beyond the loopback configuration page.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat(hid): …`, `fix(tray): …`, `docs: …`).
 - Keep player-facing text plain and short; say what to do, not why the code does it.
