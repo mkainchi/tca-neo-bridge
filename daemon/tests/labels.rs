@@ -17,28 +17,39 @@ fn entry(label: &str, sources: &[&str]) -> Entry {
 
 #[test]
 fn sources_include_buttons_and_hat_directions_only() {
-    for good in ["s1", "q31", "hat-up", "hat-down-left"] {
+    for good in ["tca-stick/b1", "tca-quadrant/b31", "t16000m/hat-up", "twcs#2/hat-down-left"] {
         assert!(labels::valid_source(good), "{good}");
     }
-    for bad in ["s0", "hat-", "hat-sideways", "hat", "x"] {
+    for bad in ["s1", "x/b0", "x/hat-", "x/hat-sideways", "x/hat", "X/hat-up", "hat-up", "x"] {
         assert!(!labels::valid_source(bad), "{bad}");
     }
 }
 
 #[test]
+fn recordings_of_the_tca_bridge_are_migrated() {
+    assert_eq!(labels::migrate_source("s12"), "tca-stick/b12");
+    assert_eq!(labels::migrate_source("q3"), "tca-quadrant/b3");
+    assert_eq!(labels::migrate_source("hat-up-right"), "tca-stick/hat-up-right");
+    assert_eq!(labels::migrate_source("hat-sideways"), "hat-sideways");
+    assert_eq!(labels::migrate_source("t16000m/b1"), "t16000m/b1");
+    let old = r#"[{"label": "5", "sources": ["s12", "hat-left"], "mapping": "NEO 4"}]"#;
+    assert_eq!(labels::parse(old).unwrap()[0].sources, ["tca-stick/b12", "tca-stick/hat-left"]);
+}
+
+#[test]
 fn parse_validates_every_field() {
-    let ok = serde_json::to_string(&vec![entry("5", &["s12"]), entry("Hat up", &["hat-up", "s1"])]).unwrap();
+    let ok = serde_json::to_string(&vec![entry("5", &["tca-stick/b12"]), entry("Hat up", &["tca-stick/hat-up", "tca-stick/b1"])]).unwrap();
     assert_eq!(labels::parse(&ok).unwrap().len(), 2);
     let bad = |entries: Vec<Entry>| labels::parse(&serde_json::to_string(&entries).unwrap()).unwrap_err();
-    assert!(bad(vec![entry("  ", &["s1"])]).contains("1 to 60"));
-    assert!(bad(vec![entry(&"x".repeat(61), &["s1"])]).contains("1 to 60"));
+    assert!(bad(vec![entry("  ", &["x/b1"])]).contains("1 to 60"));
+    assert!(bad(vec![entry(&"x".repeat(61), &["x/b1"])]).contains("1 to 60"));
     assert!(bad(vec![entry("a", &[])]).contains("detected"));
-    assert!(bad(vec![entry("a", &["s1"; 9])]).contains("detected"));
+    assert!(bad(vec![entry("a", &["x/b1"; 9])]).contains("detected"));
     assert!(bad(vec![entry("a", &["zz"])]).contains("detected"));
-    let mut long = entry("a", &["s1"]);
+    let mut long = entry("a", &["x/b1"]);
     long.mapping = "m".repeat(201);
     assert!(bad(vec![long]).contains("too long"));
-    assert!(bad(vec![entry("a", &["s1"]); 201]).contains("At most"));
+    assert!(bad(vec![entry("a", &["x/b1"]); 201]).contains("At most"));
     assert!(labels::parse("{").unwrap_err().starts_with("Invalid recordings"));
     assert!(labels::parse(r#"[{"label":"a","sources":["s1"],"mapping":"","extra":1}]"#).is_err());
 }
@@ -48,8 +59,8 @@ fn load_and_save_round_trip_and_failures() {
     let dir = temp("store");
     let path = dir.join("label-map.json");
     assert!(labels::load(&path).unwrap().is_empty());
-    labels::save(&path, &[entry("5", &["s12"])]).unwrap();
-    assert_eq!(labels::load(&path).unwrap(), [entry("5", &["s12"])]);
+    labels::save(&path, &[entry("5", &["tca-stick/b12"])]).unwrap();
+    assert_eq!(labels::load(&path).unwrap(), [entry("5", &["tca-stick/b12"])]);
     assert!(!dir.join("label-map.tmp").exists());
     assert!(labels::save(&dir.join("missing").join("x.json"), &[]).unwrap_err().contains("could not be saved"));
     assert_eq!(labels::load(&dir).unwrap_err(), "The recordings could not be read.");
@@ -66,7 +77,7 @@ fn api_reads_and_replaces_recordings_next_to_the_profile() {
         (response.status, serde_json::from_str::<serde_json::Value>(&response.body).unwrap())
     };
     assert_eq!(call("GET", ""), (200, serde_json::json!({"labels": []})));
-    let body = serde_json::to_string(&vec![entry("5", &["s12"])]).unwrap();
+    let body = serde_json::to_string(&vec![entry("5", &["tca-stick/b12"])]).unwrap();
     assert_eq!(call("PUT", &body), (200, serde_json::json!({"saved": 1})));
     assert_eq!(call("GET", "").1["labels"][0]["label"], "5");
     let (status, error) = call("PUT", "[]x");

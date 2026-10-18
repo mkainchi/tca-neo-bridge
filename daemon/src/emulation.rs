@@ -1,20 +1,21 @@
-//! Emulation session: HidHide isolation → TCA readers → report pipe → virtual NEO, torn down in reverse.
+//! Emulation session: HidHide isolation → controller readers → report pipe → virtual NEO, torn down in reverse.
 use crate::device::{DeviceApi, PipeServer, SoftwareDevice};
 use crate::hidhide::Hiding;
 use crate::neo::{self, Mapper};
 use crate::shared::{Links, Shared, Status};
-use crate::tca::{self, HidApi, Reader};
+use crate::hid::{self, HidApi, Reader};
+use crate::models;
 use crate::validation;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-pub const DISCONNECTED: &str = "A TCA device disconnected. Controls were released; reconnect it and start emulation again.";
+pub const DISCONNECTED: &str = "A controller disconnected. Controls were released; reconnect it and start emulation again.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    Tca,
+    Hotas,
     Validation,
 }
 
@@ -34,7 +35,7 @@ pub struct Deps {
 #[derive(Default)]
 struct Resources {
     hiding: Option<Hiding>,
-    readers: Option<(Reader, Reader)>,
+    readers: Option<Vec<Reader>>,
     pipe: Option<PipeServer>,
     device: Option<SoftwareDevice>,
 }
@@ -51,12 +52,12 @@ impl Resources {
     }
 }
 
-fn acquire(deps: &Deps, source: Source, resources: &mut Resources) -> Result<(), String> {
-    if source == Source::Tca {
+fn acquire(deps: &Deps, source: Source, wanted: &[String], resources: &mut Resources) -> Result<(), String> {
+    if source == Source::Hotas {
         let hiding = resources.hiding.insert((deps.hiding)()?);
-        hiding.start()?;
-        let (stick, quadrant) = tca::find_pair(&deps.hid)?;
-        resources.readers = Some((Reader::spawn(deps.hid, stick), Reader::spawn(deps.hid, quadrant)));
+        hiding.start(&|vid, pid| models::wanted(wanted, vid, pid))?;
+        let opened = hid::find(&deps.hid, wanted)?;
+        resources.readers = Some(opened.into_iter().map(|o| Reader::spawn(deps.hid, o)).collect());
     }
     resources.pipe = Some(PipeServer::start(deps.device, &deps.pipe_name, deps.period)?);
     resources.device = Some(SoftwareDevice::create(deps.device, deps.device_timeout)?);
@@ -71,27 +72,25 @@ pub struct Emulation {
 fn run_loop(resources: &Resources, shared: &Shared, period: Duration, stop: &AtomicBool) -> Result<(), String> {
     let started = Instant::now();
     let (mut generation, config) = shared.config();
-    let mut mapper = Mapper::new(&config);
+    let devices: Vec<_> = resources.readers.iter().flatten().map(|r| r.info.clone()).collect();
+    let mut mapper = Mapper::new(&config, &devices);
     let pipe = resources.pipe.as_ref().unwrap();
     while !stop.load(Ordering::SeqCst) {
         let report = match &resources.readers {
-            Some((stick, quadrant)) => {
-                if stick.failed.load(Ordering::SeqCst) || quadrant.failed.load(Ordering::SeqCst) {
+            Some(readers) => {
+                if readers.iter().any(|r| r.failed.load(Ordering::SeqCst)) {
                     return Err(DISCONNECTED.into());
                 }
                 if shared.generation() != generation {
                     let (latest, config) = shared.config();
-                    (generation, mapper) = (latest, Mapper::new(&config));
+                    (generation, mapper) = (latest, Mapper::new(&config, &devices));
                 }
-                let (stick, quadrant) = (stick.snapshot(), quadrant.snapshot());
-                *shared.pressed.lock().unwrap() = match (&stick, &quadrant) {
-                    // Readers only publish complete reports of their role's length.
-                    // The hat is reported as its cardinal components ("hat-up", "hat-right"), matching the mappable hat sources.
-                    (Some(s), Some(q)) => neo::pressed(s, q).into_iter().chain(neo::hat(s).into_iter().flat_map(|d| d.split('-')).map(|d| format!("hat-{d}"))).collect(),
-                    _ => Vec::new(),
-                };
-                *shared.levers.lock().unwrap() = quadrant.as_deref().map(neo::levers);
-                mapper.convert(stick.as_deref(), quadrant.as_deref())
+                let inputs: Vec<_> = readers.iter().map(Reader::snapshot).collect();
+                // The hat is reported as its cardinal components ("…/hat-up", "…/hat-right"), matching the mappable hat sources.
+                *shared.pressed.lock().unwrap() = if inputs.iter().all(Option::is_some) { neo::pressed(&devices, &inputs) } else { Vec::new() };
+                *shared.levers.lock().unwrap() = mapper.levers(&inputs);
+                *shared.axes.lock().unwrap() = neo::axes(&devices, &inputs);
+                mapper.convert(&inputs)
             }
             None => validation::report(started.elapsed().as_secs_f64()),
         };
@@ -104,17 +103,21 @@ fn run_loop(resources: &Resources, shared: &Shared, period: Duration, stop: &Ato
 impl Emulation {
     pub fn start(deps: &Deps, shared: Arc<Shared>, source: Source, notify: Notify) -> Result<Self, String> {
         let mut resources = Resources::default();
-        if let Err(error) = acquire(deps, source, &mut resources) {
+        if let Err(error) = acquire(deps, source, &shared.config().1.devices, &mut resources) {
             return Err(resources.release().err().unwrap_or(error));
         }
-        let tca = source == Source::Tca;
-        *shared.links.lock().unwrap() = Some(Links { source: if tca { "tca" } else { "validation" }, hidden: tca, tca, virtual_neo: true });
+        let hotas = source == Source::Hotas;
+        let devices: Vec<_> = resources.readers.iter().flatten().map(|r| r.info.clone()).collect();
+        *shared.links.lock().unwrap() = Some(Links { source: if hotas { "hotas" } else { "validation" }, hidden: hotas, inputs: devices.len(), virtual_neo: true });
+        *shared.devices.lock().unwrap() = hotas.then_some(devices);
         let stop = Arc::new(AtomicBool::new(false));
         let (thread_stop, period) = (stop.clone(), deps.period);
         let thread = std::thread::spawn(move || {
             let outcome = run_loop(&resources, &shared, period, &thread_stop);
             shared.pressed.lock().unwrap().clear();
             *shared.levers.lock().unwrap() = None;
+            shared.axes.lock().unwrap().clear();
+            *shared.devices.lock().unwrap() = None;
             let released = resources.release();
             *shared.links.lock().unwrap() = None;
             shared.set_status(match outcome.and(released) {

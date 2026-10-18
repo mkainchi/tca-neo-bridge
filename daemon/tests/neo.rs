@@ -1,4 +1,6 @@
-use neo_daemon::config::{self, Direction, Lever};
+use neo_daemon::config::{self, Binding, Direction};
+use neo_daemon::hid::{self, InputState};
+use neo_daemon::models::{self, Axis, DeviceInfo, Layout};
 use neo_daemon::neo::{self, centered, input_report, unit16, Mapper, ThrottleSelector};
 use neo_daemon::{protocol, validation};
 
@@ -29,6 +31,19 @@ fn quadrant(left: u16, right: u16, buttons: &[u32]) -> Vec<u8> {
     report
 }
 
+fn devices() -> Vec<DeviceInfo> {
+    vec![models::tca_stick(), models::tca_quadrant()]
+}
+
+/// Decoded TCA pair, as the readers publish it.
+fn tca(stick: &[u8], quadrant: &[u8]) -> Vec<Option<InputState>> {
+    vec![hid::tca_stick(stick), hid::tca_quadrant(quadrant)]
+}
+
+fn convert(mapper: &mut Mapper, stick: &[u8], quadrant: &[u8]) -> neo::Report {
+    mapper.convert(&tca(stick, quadrant))
+}
+
 fn fields(report: &neo::Report) -> ([u16; 7], u32, u8) {
     let axes = std::array::from_fn(|i| u16::from_le_bytes([report[4 + 2 * i], report[5 + 2 * i]]));
     let packed = u32::from_le_bytes([report[1], report[2], report[3], 0]);
@@ -39,25 +54,48 @@ fn hex(text: &str) -> Vec<u8> {
     (0..text.len()).step_by(2).map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap()).collect()
 }
 
+/// A version 1 (TCA-only) profile with `changes` applied, migrated: the vectors below prove migration keeps output.
+fn v1(changes: serde_json::Value) -> config::Config {
+    let mut value = serde_json::json!({
+        "version": 1, "deadzone": 0.04, "camera_strength": 1.0, "throttle_lever": "left", "hat": "camera",
+        "split_high_g": {"enabled": true, "forward": 0.75, "back": 0.25},
+        "invert": {"roll": false, "pitch": false, "yaw": false, "throttle": false},
+        "buttons": {}, "pov": {}
+    });
+    for (key, change) in changes.as_object().unwrap() {
+        value[key] = change.clone();
+    }
+    config::parse(&value.to_string()).unwrap()
+}
+
 /// The research mapping from tca_to_neo.py (DEFAULT_BINDINGS / ORDERS), which produced the Python vectors,
 /// with the settings these tests were written against: throttle not inverted, split High-G at 95% / 5%.
+fn research_json() -> serde_json::Value {
+    serde_json::json!({
+        "split_high_g": {"enabled": true, "forward": 0.95, "back": 0.05},
+        "buttons": {"s1": [1], "s2": [2], "s3": [3], "s4": [4], "s5": [5], "s6": [7], "s7": [8], "s8": [9], "s9": [1], "s10": [12], "s16": [4], "q1": [2], "q2": [7]},
+        "pov": {"s11": "up", "s12": "down", "s13": "left", "s14": "right"}
+    })
+}
+
 fn research() -> config::Config {
-    let mut cfg = config::defaults();
-    cfg.invert = config::Invert::default();
-    cfg.split_high_g = config::SplitHighG { enabled: true, forward: 0.95, back: 0.05 };
-    cfg.buttons = [("s1", 1), ("s2", 2), ("s3", 3), ("s4", 4), ("s5", 5), ("s6", 7), ("s7", 8), ("s8", 9), ("s9", 1), ("s10", 12), ("s16", 4), ("q1", 2), ("q2", 7)]
-        .iter()
-        .map(|(k, v)| (k.to_string(), vec![*v]))
-        .collect();
-    cfg.pov = [("s11", Direction::Up), ("s12", Direction::Down), ("s13", Direction::Left), ("s14", Direction::Right)]
-        .iter()
-        .map(|(k, v)| (k.to_string(), *v))
-        .collect();
-    cfg
+    v1(research_json())
+}
+
+fn research_with(extra: serde_json::Value) -> config::Config {
+    let mut value = research_json();
+    for (key, change) in extra.as_object().unwrap() {
+        value[key] = change.clone();
+    }
+    v1(value)
+}
+
+fn profile(cfg: &mut config::Config) -> &mut config::Profile {
+    cfg.setups.get_mut(config::TCA_SETUP).unwrap()
 }
 
 fn mapper() -> Mapper {
-    Mapper::new(&research())
+    Mapper::new(&research(), &devices())
 }
 
 #[test]
@@ -70,31 +108,35 @@ fn python_research_vectors_match_byte_for_byte() {
         let mut mapper = mapper();
         let stick = hex(vector["synthetic_stick_report"].as_str().unwrap());
         let quadrant = hex(vector["synthetic_quadrant_report"].as_str().unwrap());
-        let report = mapper.convert(Some(&stick), Some(&quadrant));
+        let report = convert(&mut mapper, &stick, &quadrant);
         assert_eq!(report.to_vec(), hex(vector["neo_report"].as_str().unwrap()), "{}", vector["name"]);
     }
 }
 
 #[test]
-fn default_profile_maps_sidestick_numbers_and_recorded_quadrant_controls() {
-    let mut mapper = Mapper::new(&config::defaults());
+fn default_tca_profile_maps_sidestick_numbers_and_recorded_quadrant_controls() {
+    let mut mapper = Mapper::new(&config::defaults(), &devices());
     let neutral_quadrant = quadrant(32768, 32768, &[]);
     for n in 1..=15u32 {
-        let (_, buttons, hat) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 8, &[n])), Some(&neutral_quadrant)));
+        let (_, buttons, hat) = fields(&convert(&mut mapper, &stick(8192, 8192, 128, 128, 8, &[n]), &neutral_quadrant));
         assert_eq!((buttons, hat), (1 << (n - 1), 8), "sidestick {n}");
     }
     for (button, neo) in [(1, 5), (2, 5), (3, 6), (4, 6), (5, 9), (6, 6), (7, 7), (8, 8)] {
-        let (_, buttons, _) = fields(&mapper.convert(Some(&neutral_stick()), Some(&quadrant(32768, 32768, &[button]))));
+        let (_, buttons, _) = fields(&convert(&mut mapper, &neutral_stick(), &quadrant(32768, 32768, &[button])));
         assert_eq!(buttons, 1 << (neo - 1), "quadrant {button}");
     }
     // Tuned settings: no axis inverted (checked in AC8), split High-G at 75% / 25%.
-    let defaults = config::defaults();
-    assert!(!defaults.invert.throttle && !defaults.invert.roll && !defaults.invert.pitch && !defaults.invert.yaw);
-    assert_eq!((defaults.split_high_g.enabled, defaults.split_high_g.forward, defaults.split_high_g.back), (true, 0.75, 0.25));
+    let tca = config::default_profile(&devices());
+    assert_eq!(tca, config::tca_profile());
+    assert!(!tca.axes.throttle.iter().chain(&tca.split_high_g.levers).any(|b| b.invert));
+    assert_eq!((tca.split_high_g.enabled, tca.split_high_g.forward, tca.split_high_g.back), (true, 0.75, 0.25));
     // Sidestick 16/17 and the remaining quadrant inputs are unmapped; no control sends the POV; the hat is camera.
-    let (axes, buttons, hat) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 0, &[16, 17])), Some(&quadrant(32768, 32768, &[9, 31]))));
+    let (axes, buttons, hat) = fields(&convert(&mut mapper, &stick(8192, 8192, 128, 128, 0, &[16, 17]), &quadrant(32768, 32768, &[9, 31])));
     assert_eq!((buttons, hat, axes[4]), (0, 8, 0));
-    assert!(config::defaults().pov.is_empty());
+    assert!(tca.pov.is_empty());
+    // The v1 default profile migrates to exactly the TCA default.
+    let migrated = v1(serde_json::json!({"buttons": {"s1": [1], "s2": [2], "s3": [3], "s4": [4], "s5": [5], "s6": [6], "s7": [7], "s8": [8], "s9": [9], "s10": [10], "s11": [11], "s12": [12], "s13": [13], "s14": [14], "s15": [15], "q1": [5], "q2": [5], "q3": [6], "q4": [6], "q5": [9], "q6": [6], "q7": [7], "q8": [8]}}));
+    assert_eq!(migrated.setups[config::TCA_SETUP], config::tca_profile());
 }
 
 #[test]
@@ -103,48 +145,74 @@ fn split_levers_hold_high_g_and_the_throttle_follows_the_forward_lever() {
     let neutral = neutral_stick();
     let (forward_raw, idle_raw) = (0u16, 65535u16);
     let mut mapper = mapper();
-    let normal = |mapper: &mut Mapper, raw: u16| fields(&mapper.convert(Some(&neutral), Some(&quadrant(raw, raw, &[])))).0[2];
+    let normal = |mapper: &mut Mapper, raw: u16| fields(&convert(mapper, &neutral, &quadrant(raw, raw, &[]))).0[2];
     // Left forward, right back: High-G (NEO 5) held, throttle as if the forward lever alone were the throttle.
-    let (axes, buttons, _) = fields(&mapper.convert(Some(&neutral), Some(&quadrant(forward_raw, idle_raw, &[]))));
+    let (axes, buttons, _) = fields(&convert(&mut mapper, &neutral, &quadrant(forward_raw, idle_raw, &[])));
     assert_eq!((axes[2], buttons), (0, 1 << 4));
     // Either order; thresholds are inclusive (95% / 5% of travel).
     let forward = (0.05f64 * 65535.0).floor() as u16;
     let back = (0.95f64 * 65535.0).ceil() as u16;
-    let (axes, buttons, _) = fields(&mapper.convert(Some(&neutral), Some(&quadrant(back, forward, &[]))));
+    let (axes, buttons, _) = fields(&convert(&mut mapper, &neutral, &quadrant(back, forward, &[])));
     assert_eq!((axes[2], buttons), (normal(&mut mapper, forward), 1 << 4));
     // Just outside either threshold: no High-G.
-    assert_eq!(fields(&mapper.convert(Some(&neutral), Some(&quadrant(forward + 2, idle_raw, &[])))).1, 0);
-    assert_eq!(fields(&mapper.convert(Some(&neutral), Some(&quadrant(forward_raw, back - 2, &[])))).1, 0);
+    assert_eq!(fields(&convert(&mut mapper, &neutral, &quadrant(forward + 2, idle_raw, &[]))).1, 0);
+    assert_eq!(fields(&convert(&mut mapper, &neutral, &quadrant(forward_raw, back - 2, &[]))).1, 0);
     // Throttle inverted, thresholds 75% / 25%: the split throttle still follows the forward lever and is inverted
     // exactly like the normal throttle, never the back lever's idle.
-    let mut cfg = research();
-    cfg.invert.throttle = true;
-    cfg.split_high_g.forward = 0.75;
-    cfg.split_high_g.back = 0.25;
-    let mut inverted = Mapper::new(&cfg);
+    let cfg = research_with(serde_json::json!({"invert": {"roll": false, "pitch": false, "yaw": false, "throttle": true}, "split_high_g": {"enabled": true, "forward": 0.75, "back": 0.25}}));
+    let mut inverted = Mapper::new(&cfg, &devices());
     let idle = normal(&mut inverted, idle_raw);
     let full_normal = normal(&mut inverted, forward_raw);
     assert_eq!((idle, full_normal), (0, 65535));
     for levers in [(forward_raw, idle_raw), (idle_raw, forward_raw)] {
-        let (axes, buttons, _) = fields(&inverted.convert(Some(&neutral), Some(&quadrant(levers.0, levers.1, &[]))));
+        let (axes, buttons, _) = fields(&convert(&mut inverted, &neutral, &quadrant(levers.0, levers.1, &[])));
         assert_eq!((axes[2], buttons), (full_normal, 1 << 4), "{levers:?}");
     }
-    let (axes, buttons, _) = fields(&inverted.convert(Some(&neutral), Some(&quadrant(16383, 49152, &[]))));
+    let (axes, buttons, _) = fields(&convert(&mut inverted, &neutral, &quadrant(16383, 49152, &[])));
     assert_eq!((axes[2], buttons), (normal(&mut inverted, 16383), 1 << 4)); // 75% / 25%: inclusive
     // Disabled: levers act normally.
-    let mut cfg = research();
-    cfg.split_high_g.enabled = false;
-    assert_eq!(fields(&Mapper::new(&cfg).convert(Some(&neutral), Some(&quadrant(forward_raw, idle_raw, &[])))).1, 0);
+    let cfg = research_with(serde_json::json!({"split_high_g": {"enabled": false, "forward": 0.95, "back": 0.05}}));
+    assert_eq!(fields(&convert(&mut Mapper::new(&cfg, &devices()), &neutral, &quadrant(forward_raw, idle_raw, &[]))).1, 0);
     // Combined with a mapped High-G button the bit is simply set once.
-    let (_, buttons, _) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 8, &[5])), Some(&quadrant(idle_raw, forward_raw, &[]))));
+    let (_, buttons, _) = fields(&convert(&mut mapper, &stick(8192, 8192, 128, 128, 8, &[5]), &quadrant(idle_raw, forward_raw, &[])));
     assert_eq!(buttons, 1 << 4);
+}
+
+#[test]
+fn reversed_levers_count_travel_from_the_low_raw_end() {
+    let mut cfg = research();
+    profile(&mut cfg).split_high_g.reverse = true;
+    let mut mapper = Mapper::new(&cfg, &devices());
+    // Raw 65535 is now fully forward: left forward, right back.
+    let inputs = tca(&neutral_stick(), &quadrant(65535, 0, &[]));
+    assert_eq!(mapper.levers(&inputs), Some([1.0, 0.0]));
+    let (axes, buttons, _) = fields(&mapper.convert(&inputs));
+    assert_eq!((axes[2], buttons), (65535, 1 << 4)); // throttle follows the forward lever's raw value
 }
 
 #[test]
 fn lever_positions_and_split_rule() {
     // Travel: raw 65535 is idle (0.0), raw 0 is fully forward (1.0).
-    assert_eq!(neo::levers(&quadrant(65535, 0, &[])), [0.0, 1.0]);
-    let rule = config::SplitHighG::default();
+    let mapper = mapper();
+    assert_eq!(mapper.levers(&tca(&neutral_stick(), &quadrant(65535, 0, &[]))), Some([0.0, 1.0]));
+    assert_eq!(mapper.levers(&[hid::tca_stick(&neutral_stick()), None]), None);
+    let mut unbound = research();
+    profile(&mut unbound).split_high_g.levers.clear();
+    profile(&mut unbound).split_high_g.enabled = false;
+    assert_eq!(Mapper::new(&unbound, &devices()).levers(&tca(&neutral_stick(), &quadrant(65535, 0, &[]))), None);
+    // Levers on two devices: both must report; inputs shorter than the device list count as missing.
+    let mut spread = research();
+    profile(&mut spread).split_high_g.levers = vec![Binding::new("tca-stick", "slider", false), Binding::new("tca-quadrant", "left", false)];
+    let spread = Mapper::new(&spread, &devices());
+    assert_eq!(spread.levers(&[hid::tca_stick(&neutral_stick()), None]), None);
+    assert_eq!(spread.levers(&tca(&neutral_stick(), &quadrant(0, 0, &[]))[..1]), None);
+    // Bindings and keys naming absent devices or nonsense are ignored by the mapper.
+    let mut odd = research();
+    profile(&mut odd).axes.roll = Some(Binding::new("absent", "x", false));
+    profile(&mut odd).buttons.insert("junk".into(), vec![1]);
+    let (axes, buttons, _) = fields(&convert(&mut Mapper::new(&odd, &devices()), &stick(0, 8192, 128, 128, 8, &[]), &quadrant(32768, 32768, &[])));
+    assert_eq!((axes[0], buttons), (32768, 0));
+    let rule = config::tca_profile().split_high_g;
     assert!(neo::split(&rule, [0.0, 1.0]));
     assert!(!neo::split(&rule, [0.5, 1.0]));
     assert!(!neo::split(&config::SplitHighG { enabled: false, ..rule }, [0.0, 1.0]));
@@ -174,11 +242,12 @@ fn centered_unit16_and_ties_to_even() {
 #[test]
 fn throttle_last_meaningful_move_wins() {
     let mut selector = ThrottleSelector::default();
-    assert_eq!(selector.read(0.5, -0.5), -0.5); // quadrant owns at startup
-    assert_eq!(selector.read(0.51, -0.5), -0.5); // noise
-    assert_eq!(selector.read(0.9, -0.5), 0.9); // stick moved alone
-    assert_eq!(selector.read(0.0, 0.0), 0.0); // both moved: ownership kept
-    assert_eq!(selector.read(0.0, 0.7), 0.7);
+    assert_eq!(selector.read(&[]), None);
+    assert_eq!(selector.read(&[0.5, -0.5]), Some((1, -0.5))); // the last axis owns at startup
+    assert_eq!(selector.read(&[0.51, -0.5]), Some((1, -0.5))); // noise
+    assert_eq!(selector.read(&[0.9, -0.5]), Some((0, 0.9))); // first moved alone
+    assert_eq!(selector.read(&[0.0, 0.0]), Some((0, 0.0))); // both moved: ownership kept
+    assert_eq!(selector.read(&[0.0, 0.7]), Some((1, 0.7)));
 }
 
 #[test]
@@ -192,120 +261,197 @@ fn real_resolution_and_independent_axes_without_deadzone() {
                 1 => stick(8192, value as u16, 128, 128, 8, &[]),
                 _ => stick(8192, 8192, value as u8, 128, 8, &[]),
             };
-            let (axes, buttons, hat) = fields(&Mapper::new(&cfg).convert(Some(&s), Some(&quadrant(32768, 32768, &[]))));
+            let (axes, buttons, hat) = fields(&convert(&mut Mapper::new(&cfg, &devices()), &s, &quadrant(32768, 32768, &[])));
             assert_eq!(u32::from(axes[index]), value * 65535 / maximum);
             assert_eq!((buttons, hat), (0, 8));
         }
     }
-    let (axes, _, _) = fields(&mapper().convert(Some(&neutral_stick()), Some(&quadrant(32768, 32768, &[]))));
+    let (axes, _, _) = fields(&convert(&mut mapper(), &neutral_stick(), &quadrant(32768, 32768, &[])));
     assert_eq!((axes[0], axes[1], axes[5]), (32768, 32768, 32768));
     // Out-of-range raw values clamp instead of failing a live frame.
-    let (axes, _, _) = fields(&Mapper::new(&cfg).convert(Some(&stick(0xffff, 8192, 128, 128, 8, &[])), Some(&quadrant(32768, 32768, &[]))));
+    let (axes, _, _) = fields(&convert(&mut Mapper::new(&cfg, &devices()), &stick(0xffff, 8192, 128, 128, 8, &[]), &quadrant(32768, 32768, &[])));
     assert_eq!(axes[0], 65535);
 }
 
 #[test]
 fn inversion_on_every_axis_with_and_without_deadzone() {
-    let mut cfg = research();
-    cfg.invert = config::Invert { roll: true, pitch: true, yaw: true, throttle: true };
-    let (axes, _, _) = fields(&Mapper::new(&cfg).convert(Some(&stick(0, 16383, 0, 128, 8, &[])), Some(&quadrant(0, 0, &[]))));
+    let mut cfg = research_with(serde_json::json!({"invert": {"roll": true, "pitch": true, "yaw": true, "throttle": true}}));
+    let (axes, _, _) = fields(&convert(&mut Mapper::new(&cfg, &devices()), &stick(0, 16383, 0, 128, 8, &[]), &quadrant(0, 0, &[])));
     assert_eq!((axes[0], axes[1], axes[2], axes[5]), (65535, 0, 65535, 65535));
     cfg.deadzone = 0.0;
-    let (axes, _, _) = fields(&Mapper::new(&cfg).convert(Some(&stick(0, 16383, 255, 128, 8, &[])), Some(&quadrant(0, 0, &[]))));
+    let (axes, _, _) = fields(&convert(&mut Mapper::new(&cfg, &devices()), &stick(0, 16383, 255, 128, 8, &[]), &quadrant(0, 0, &[])));
     assert_eq!((axes[0], axes[1], axes[5]), (65535, 0, 0));
 }
 
 #[test]
 fn right_lever_slider_takeover_and_high_g() {
-    let mut cfg = research();
-    cfg.throttle_lever = Lever::Right;
-    let mut mapper = Mapper::new(&cfg);
-    assert_eq!(fields(&mapper.convert(Some(&stick(8192, 8192, 128, 0, 8, &[])), Some(&quadrant(0, 12345, &[])))).0[2], 12345);
-    let (axes, buttons, _) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 255, 8, &[5])), Some(&quadrant(0, 12345, &[]))));
+    let cfg = research_with(serde_json::json!({"throttle_lever": "right"}));
+    let mut mapper = Mapper::new(&cfg, &devices());
+    assert_eq!(fields(&convert(&mut mapper, &stick(8192, 8192, 128, 0, 8, &[]), &quadrant(0, 12345, &[]))).0[2], 12345);
+    let (axes, buttons, _) = fields(&convert(&mut mapper, &stick(8192, 8192, 128, 255, 8, &[5]), &quadrant(0, 12345, &[])));
     assert_eq!((axes[2], buttons), (65535, 1 << 4));
-    assert_eq!(fields(&mapper.convert(Some(&stick(8192, 8192, 128, 255, 8, &[])), Some(&quadrant(65535, 54321, &[])))).0[2], 54321);
+    assert_eq!(fields(&convert(&mut mapper, &stick(8192, 8192, 128, 255, 8, &[]), &quadrant(65535, 54321, &[]))).0[2], 54321);
 }
 
 #[test]
 fn camera_hat_strength_and_neutral() {
     let mut cfg = research();
     cfg.camera_strength = 0.5;
-    let mut mapper = Mapper::new(&cfg);
-    let (axes, _, _) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 2, &[])), Some(&quadrant(32768, 32768, &[]))));
+    let mut mapper = Mapper::new(&cfg, &devices());
+    let (axes, _, _) = fields(&convert(&mut mapper, &stick(8192, 8192, 128, 128, 2, &[]), &quadrant(32768, 32768, &[])));
     assert_eq!((axes[3], axes[4]), (unit16(0.5), 32768));
-    let (axes, _, _) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 15, &[])), Some(&quadrant(32768, 32768, &[]))));
+    let (axes, _, _) = fields(&convert(&mut mapper, &stick(8192, 8192, 128, 128, 15, &[]), &quadrant(32768, 32768, &[])));
     assert_eq!((axes[3], axes[4], axes[6]), (32768, 32768, 32768));
 }
 
 #[test]
 fn buttons_multi_targets_quadrant_bits_and_pov_combinations() {
     let mut cfg = research();
-    cfg.buttons.insert("q31".into(), vec![14, 15]);
-    cfg.buttons.insert("q17".into(), vec![13]);
-    cfg.pov.insert("q3".into(), Direction::Right);
-    let mut mapper = Mapper::new(&cfg);
-    let (_, buttons, hat) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 8, &[1, 9, 11])), Some(&quadrant(32768, 32768, &[2, 17, 31, 3]))));
+    profile(&mut cfg).buttons.insert("tca-quadrant/b31".into(), vec![14, 15]);
+    profile(&mut cfg).buttons.insert("tca-quadrant/b17".into(), vec![13]);
+    profile(&mut cfg).pov.insert("tca-quadrant/b3".into(), Direction::Right);
+    let mut mapper = Mapper::new(&cfg, &devices());
+    let (_, buttons, hat) = fields(&convert(&mut mapper, &stick(8192, 8192, 128, 128, 8, &[1, 9, 11]), &quadrant(32768, 32768, &[2, 17, 31, 3])));
     assert_eq!(buttons, 1 | 1 << 6 | 1 << 12 | 1 << 13 | 1 << 14);
     assert_eq!(hat, 1); // up + right
-    let (_, _, hat) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 8, &[11, 12])), Some(&quadrant(32768, 32768, &[]))));
+    let (_, _, hat) = fields(&convert(&mut mapper, &stick(8192, 8192, 128, 128, 8, &[11, 12]), &quadrant(32768, 32768, &[])));
     assert_eq!(hat, 8); // up + down cancel
-    let (_, _, hat) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 8, &[13])), Some(&quadrant(32768, 32768, &[3]))));
+    let (_, _, hat) = fields(&convert(&mut mapper, &stick(8192, 8192, 128, 128, 8, &[13]), &quadrant(32768, 32768, &[3])));
     assert_eq!(hat, 8); // left + right cancel
     let mut cfg = research();
-    cfg.pov.insert("s15".into(), Direction::Up);
-    let (_, buttons, hat) = fields(&Mapper::new(&cfg).convert(Some(&stick(8192, 8192, 128, 128, 8, &[11, 15, 17])), Some(&quadrant(32768, 32768, &[]))));
-    assert_eq!((buttons, hat), (0, 0)); // clamped double up; s17 unbound
+    profile(&mut cfg).pov.insert("tca-stick/b15".into(), Direction::Up);
+    let (_, buttons, hat) = fields(&convert(&mut Mapper::new(&cfg, &devices()), &stick(8192, 8192, 128, 128, 8, &[11, 15, 17]), &quadrant(32768, 32768, &[])));
+    assert_eq!((buttons, hat), (0, 0)); // clamped double up; tca-stick/b17 unbound
 }
 
 #[test]
 fn missing_or_malformed_input_releases_and_resets_throttle() {
     let mut mapper = mapper();
     let good = quadrant(32768, 32768, &[]);
-    assert_eq!(mapper.convert(None, Some(&good)), neo::neutral());
-    assert_eq!(mapper.convert(Some(&neutral_stick()), None), neo::neutral());
-    assert_eq!(mapper.convert(Some(&neutral_stick()[..10]), Some(&good)), neo::neutral());
+    assert_eq!(convert(&mut mapper, &[], &good), neo::neutral());
+    assert_eq!(mapper.convert(&[hid::tca_stick(&neutral_stick()), None]), neo::neutral());
+    assert_eq!(convert(&mut mapper, &neutral_stick()[..10], &good), neo::neutral());
     let mut wrong_id = neutral_stick();
     wrong_id[0] = 2;
-    assert_eq!(mapper.convert(Some(&wrong_id), Some(&good)), neo::neutral());
-    assert_eq!(fields(&mapper.convert(Some(&stick(8192, 8192, 128, 0, 8, &[])), Some(&quadrant(1000, 0, &[])))).0[2], 1000);
+    assert_eq!(convert(&mut mapper, &wrong_id, &good), neo::neutral());
+    assert_eq!(mapper.convert(&tca(&neutral_stick(), &good)[..1]), neo::neutral()); // fewer inputs than devices
+    assert_eq!(fields(&convert(&mut mapper, &stick(8192, 8192, 128, 0, 8, &[]), &quadrant(1000, 0, &[]))).0[2], 1000);
+    assert_eq!(Mapper::new(&research(), &[]).convert(&[]), neo::neutral());
 }
 
 #[test]
 fn hat_mode_camera_ignores_hat_mappings_and_mapped_mode_uses_them() {
     let mut cfg = research();
-    cfg.buttons.insert("hat-right".into(), vec![10]);
-    cfg.pov.insert("hat-up".into(), Direction::Up);
-    cfg.pov.insert("hat-down".into(), Direction::Down);
-    cfg.buttons.insert("hat-left".into(), vec![11]);
+    let p = profile(&mut cfg);
+    p.buttons.insert("tca-stick/hat-right".into(), vec![10]);
+    p.pov.insert("tca-stick/hat-up".into(), Direction::Up);
+    p.pov.insert("tca-stick/hat-down".into(), Direction::Down);
+    p.buttons.insert("tca-stick/hat-left".into(), vec![11]);
     let quad = quadrant(32768, 32768, &[]);
     // Camera (default): hat up-right moves the camera, mappings stay inactive.
-    let (axes, buttons, hat) = fields(&Mapper::new(&cfg).convert(Some(&stick(8192, 8192, 128, 128, 1, &[])), Some(&quad)));
+    let (axes, buttons, hat) = fields(&convert(&mut Mapper::new(&cfg, &devices()), &stick(8192, 8192, 128, 128, 1, &[]), &quad));
     assert_eq!((axes[3], axes[4], buttons, hat), (65535, 0, 0, 8));
-    cfg.hat = config::HatMode::Mapped;
-    let mut mapper = Mapper::new(&cfg);
+    profile(&mut cfg).hat = config::HatMode::Mapped;
+    let mut mapper = Mapper::new(&cfg, &devices());
     // Mapped: up-right presses both directions; the camera rests.
-    let (axes, buttons, hat) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 1, &[])), Some(&quad)));
+    let (axes, buttons, hat) = fields(&convert(&mut mapper, &stick(8192, 8192, 128, 128, 1, &[]), &quad));
     assert_eq!((axes[3], axes[4], buttons, hat), (32768, 32768, 1 << 9, 0));
-    let (_, buttons, hat) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 6, &[])), Some(&quad)));
+    let (_, buttons, hat) = fields(&convert(&mut mapper, &stick(8192, 8192, 128, 128, 6, &[]), &quad));
     assert_eq!((buttons, hat), (1 << 10, 8));
-    let (_, buttons, hat) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 4, &[])), Some(&quad)));
+    let (_, buttons, hat) = fields(&convert(&mut mapper, &stick(8192, 8192, 128, 128, 4, &[]), &quad));
     assert_eq!((buttons, hat), (0, 4));
-    let (_, buttons, hat) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 8, &[])), Some(&quad)));
+    let (_, buttons, hat) = fields(&convert(&mut mapper, &stick(8192, 8192, 128, 128, 8, &[]), &quad));
     assert_eq!((buttons, hat), (0, 8));
 }
 
 #[test]
-fn hat_names_every_direction_and_none_when_centred() {
-    let names: Vec<_> = (0..8).map(|h| neo::hat(&stick(0, 0, 0, 0, h, &[])).unwrap()).collect();
-    assert_eq!(names, neo::HAT_NAMES);
-    assert_eq!(neo::hat(&stick(0, 0, 0, 0, 8, &[])), None);
-    assert_eq!(neo::hat(&stick(0, 0, 0, 0, 0xf4, &[])), Some("down")); // high nibble ignored
+fn tca_decoders_read_report_01_only() {
+    let state = hid::tca_stick(&stick(1, 2, 3, 4, 0xf4, &[1, 17])).unwrap();
+    assert_eq!(state, InputState { buttons: 1 | 1 << 16, axes: vec![1, 2, 3, 4], hat: Some(4) }); // high nibble ignored
+    assert_eq!(hid::tca_stick(&stick(0, 0, 0, 0, 8, &[])).unwrap().hat, None);
+    let state = hid::tca_quadrant(&quadrant(5, 6, &[1, 16, 17, 20, 21, 31])).unwrap();
+    assert_eq!(state.buttons, 1 | 1 << 15 | 1 << 16 | 1 << 19 | 1 << 20 | 1 << 30);
+    assert_eq!((state.axes, state.hat), (vec![5, 6], None));
+    assert_eq!(hid::tca_quadrant(&quadrant(0, 0, &[])[..43]), None);
 }
 
 #[test]
-fn pressed_lists_config_keys() {
-    assert_eq!(neo::pressed(&stick(0, 0, 0, 0, 8, &[1, 17]), &quadrant(0, 0, &[1, 16, 17, 20, 21, 31])), ["s1", "s17", "q1", "q16", "q17", "q20", "q21", "q31"]);
-    assert!(neo::pressed(&neutral_stick(), &quadrant(0, 0, &[])).is_empty());
+fn pressed_lists_profile_keys_with_hat_components() {
+    let inputs = tca(&stick(0, 0, 0, 0, 1, &[1, 17]), &quadrant(0, 0, &[1, 16, 17, 20, 21, 31]));
+    assert_eq!(
+        neo::pressed(&devices(), &inputs),
+        ["tca-stick/b1", "tca-stick/b17", "tca-stick/hat-up", "tca-stick/hat-right", "tca-quadrant/b1", "tca-quadrant/b16", "tca-quadrant/b17", "tca-quadrant/b20", "tca-quadrant/b21", "tca-quadrant/b31"]
+    );
+    assert!(neo::pressed(&devices(), &tca(&neutral_stick(), &quadrant(0, 0, &[]))).is_empty());
+    assert!(neo::pressed(&devices(), &[None, None]).is_empty());
+    assert_eq!(neo::HAT_NAMES.len(), 8);
+}
+
+#[test]
+fn live_axes_are_scaled_per_device() {
+    let axes = neo::axes(&devices(), &[hid::tca_stick(&stick(0, 16383, 255, 0, 8, &[])), None]);
+    assert_eq!(axes.len(), 1);
+    assert_eq!(axes["tca-stick"], [-1.0, 1.0, 1.0, -1.0]);
+}
+
+fn device(id: &str, buttons: u16, axes: &[(&str, u32)], hat: bool) -> DeviceInfo {
+    let axes = axes.iter().map(|(name, max)| Axis { name: name.to_string(), max: *max }).collect();
+    DeviceInfo { id: id.into(), name: id.into(), vid: 0x044f, pid: 1, layout: Layout { buttons, axes, hat } }
+}
+
+#[test]
+fn generic_setups_bind_by_name_and_ignore_what_is_absent() {
+    let stick = device("t16000m", 16, &[("x", 1023), ("y", 1023), ("rz", 255), ("slider", 255)], true);
+    let throttle = device("twcs", 14, &[("z", 1023), ("rz", 1023)], true);
+    let devices = [stick.clone(), throttle.clone()];
+    let default = config::default_profile(&devices);
+    assert_eq!(default.axes.roll, Some(Binding::new("t16000m", "x", false)));
+    assert_eq!(default.axes.yaw, Some(Binding::new("t16000m", "rz", false)));
+    assert_eq!(default.axes.throttle, [Binding::new("t16000m", "slider", false), Binding::new("twcs", "z", false)]);
+    assert_eq!((default.camera.as_deref(), default.buttons.len(), default.split_high_g.enabled), (Some("t16000m"), 15, false));
+    let mut cfg = config::defaults();
+    let mut p = default.clone();
+    p.camera = Some("twcs".into()); // the throttle's hat drives the camera; the stick's hat is a source
+    p.buttons.insert("t16000m/hat-up".into(), vec![12]);
+    p.buttons.insert("t16000m/b99".into(), vec![13]); // beyond the stick's buttons: ignored
+    p.pov.insert("t16000m/b99".into(), Direction::Up);
+    p.buttons.insert("absent/b1".into(), vec![14]);
+    p.pov.insert("twcs/hat-down".into(), Direction::Down); // camera hat: inactive
+    p.axes.pitch = Some(Binding::new("t16000m", "missing", false));
+    cfg.setups.insert(models::setup_key(&devices), p);
+    let mut mapper = Mapper::new(&cfg, &devices);
+    let state = |buttons: u128, axes: Vec<u32>, hat| Some(InputState { buttons, axes, hat });
+    let report = mapper.convert(&[state(1, vec![0, 512, 128, 255], Some(0)), state(0, vec![1023, 0], Some(4))]);
+    let (axes, buttons, hat) = fields(&report);
+    assert_eq!((axes[0], axes[1], axes[2], axes[4]), (0, 32768, 65535, 65535)); // pitch unbound; camera down
+    assert_eq!((buttons, hat), (1 | 1 << 11, 8));
+    // Neither binding: a setup without axes rests.
+    let bare = [device("pad", 4, &[], false)];
+    assert_eq!(fields(&Mapper::new(&config::defaults(), &bare).convert(&[state(1, vec![], None)])), ([32768; 7], 0, 8));
+}
+
+#[test]
+fn convention_defaults_cover_odd_controller_sets() {
+    // No stick: yaw from a rudder, throttle from a Simulation throttle, the first hat drives the camera.
+    let pedals = device("pedals", 0, &[("rudder", 255)], false);
+    let throttle = device("box", 8, &[("throttle", 255), ("z", 255)], true);
+    let p = config::default_profile(&[pedals, throttle]);
+    assert_eq!((p.axes.roll, p.axes.yaw), (None, Some(Binding::new("pedals", "rudder", false))));
+    assert_eq!(p.axes.throttle, [Binding::new("box", "throttle", false)]);
+    assert_eq!((p.camera.as_deref(), p.buttons.is_empty()), (Some("box"), true));
+    // A stick whose Z is not its yaw: Z feeds the throttle; no hat anywhere.
+    let stick = device("stick", 20, &[("x", 1), ("y", 1), ("z", 1)], false);
+    let p = config::default_profile(&[stick]);
+    assert_eq!((p.axes.yaw, p.axes.throttle.len(), p.camera), (None, 1, None));
+    assert_eq!(p.buttons.len(), 15);
+    // No throttle-like axis anywhere; a stick without a hat leaves the camera to another device.
+    let stick = device("stick", 2, &[("x", 1), ("y", 1), ("rz", 1)], false);
+    let other = device("other", 0, &[], true);
+    let p = config::default_profile(&[stick, other]);
+    assert_eq!((p.axes.throttle.len(), p.camera.as_deref()), (0, Some("other")));
+    // No stick at all: yaw from any device's Rz.
+    let twist = device("twist", 0, &[("rz", 255)], false);
+    assert_eq!(config::default_profile(&[twist]).axes.yaw, Some(Binding::new("twist", "rz", false)));
 }
 
 #[test]

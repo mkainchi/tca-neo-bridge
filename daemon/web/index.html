@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TCA-NEO bridge configuration</title>
+<title>Any-TM-HOTAS bridge configuration</title>
 <link rel="stylesheet" href="style.css">
 <script type="module" src="app.js"></script>
 </head>
@@ -15,13 +15,13 @@
         <svg viewBox="0 0 24 24" width="24" height="24"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 12h9M5 9.5V5h14v4.5M5 14.5V19h14v-4.5"/></svg>
       </span>
       <div>
-        <h1>TCA-NEO bridge</h1>
-        <p class="sub">TCA Airbus sidestick + quadrant → virtual T.Flight Hotas NEO</p>
+        <h1>Any-TM-HOTAS bridge <span class="badge">Experimental</span></h1>
+        <p class="sub">Thrustmaster HOTAS → virtual T.Flight Hotas NEO</p>
       </div>
     </div>
     <ul class="pills" aria-label="Bridge status">
       <li id="pill-status" class="pill" data-state="off"><span class="dot"></span><span id="daemon-status" role="status" aria-live="polite">Loading…</span></li>
-      <li id="pill-tca" class="pill" data-state="off"><span class="dot"></span><span>TCA: not open</span></li>
+      <li id="pill-inputs" class="pill" data-state="off"><span class="dot"></span><span>Controllers: not open</span></li>
       <li id="pill-hidhide" class="pill" data-state="off"><span class="dot"></span><span>HidHide: off</span></li>
       <li id="pill-neo" class="pill" data-state="off"><span class="dot"></span><span>Virtual NEO: absent</span></li>
     </ul>
@@ -32,7 +32,7 @@
       <button id="tab-mapping" class="tab" role="tab" type="button" aria-selected="true" aria-controls="panel-mapping">Mapping</button>
       <button id="tab-settings" class="tab" role="tab" type="button" aria-selected="false" aria-controls="panel-settings" tabindex="-1">Axes and settings</button>
     </div>
-    <p class="mono path">Profile · <span id="profile-path">config.json</span> · changes apply immediately</p>
+    <p class="mono path">Profile · <span id="profile-path">config.json</span> · <span id="setup-name">no controllers</span> · changes apply immediately</p>
   </nav>
 
   <main>
@@ -40,26 +40,11 @@
     <div class="row-link">
       <section class="panel tca" aria-labelledby="tca-heading">
         <div class="panel-head">
-          <h2 id="tca-heading">TCA source</h2>
-          <fieldset class="seg">
-            <legend class="sr">Sidestick base setup</legend>
-            <label><input type="radio" name="hand" value="left"><span aria-hidden="true">L</span><span class="sr">Left-hand setup</span></label>
-            <label><input type="radio" name="hand" value="right" checked><span aria-hidden="true">R</span><span class="sr">Right-hand setup</span></label>
-          </fieldset>
+          <h2 id="tca-heading">Your controllers</h2>
         </div>
         <p class="help">Click a control, or press it during emulation. Its NEO mapping lights up.</p>
-        <figure>
-          <figcaption class="cap split"><span>Sidestick</span><span id="hand-caption" class="accent-ink">Right-hand setup</span></figcaption>
-          <div class="plate"><div id="stick-spots" class="spots">
-            <img id="stick-img" src="device/sidestick-right.svg" alt="TCA Sidestick, top view, right-hand setup, numbered controls 1 to 17" width="390" height="340">
-          </div></div>
-        </figure>
-        <figure>
-          <figcaption class="cap split"><span>Quadrant Eng 1&amp;2</span><span>7 · 8 = mode selector</span></figcaption>
-          <div class="plate"><div id="quad-spots" class="spots">
-            <img src="device/quadrant.svg" alt="TCA Quadrant Eng 1 and 2, numbered controls 1 to 8" width="533" height="364">
-          </div></div>
-        </figure>
+        <p id="sources-empty" class="empty" hidden>No controller found. Connect your HOTAS, then reopen Configure from the tray icon, or tick it under Axes and settings.</p>
+        <div id="sources" class="stack"></div>
       </section>
 
       <section class="panel neo" aria-labelledby="neo-heading">
@@ -67,7 +52,7 @@
           <h2 id="neo-heading"><svg class="arrow" viewBox="0 0 18 12" width="18" height="12" aria-hidden="true"><path d="M1 6h15M11 1l5 5-5 5"/></svg>T.Flight Hotas NEO</h2>
           <span class="badge">Virtual · AC8 native</span>
         </div>
-        <p id="neo-context" class="context mono" data-mode="none"><span class="dot"></span><span id="neo-context-text">Select a TCA control to light up its NEO targets</span></p>
+        <p id="neo-context" class="context mono" data-mode="none"><span class="dot"></span><span id="neo-context-text">Select a control to light up its NEO targets</span></p>
         <div class="plate grow"><div id="neo-spots" class="spots">
           <img src="device/neo.svg" alt="T.Flight Hotas NEO, numbered buttons 1 to 16, POV hat and axes" width="606" height="726">
         </div></div>
@@ -92,7 +77,7 @@
           <dt id="mapped-new-label" class="cap">New mapping</dt><dd id="mapped-new" class="mono strong">—</dd>
         </dl>
         <ul id="diff" class="diff mono" aria-label="Changes"></ul>
-        <p id="link-help" class="help">Select a TCA control, then click NEO buttons or a POV arrow to build its mapping. With nothing selected, clicking a NEO button shows what feeds it.</p>
+        <p id="link-help" class="help">Select a control, then click NEO buttons or a POV arrow to build its mapping. With nothing selected, clicking a NEO button shows what feeds it.</p>
         <div class="actions">
           <button id="record" class="btn primary" type="button" disabled>Record mapping</button>
           <button id="revert" class="btn" type="button" disabled>Undo changes</button>
@@ -117,21 +102,24 @@
     <div class="row-detail">
       <div class="stack">
         <section class="panel" aria-labelledby="other-heading">
-          <div class="panel-head"><h2 id="other-heading">Other TCA inputs</h2></div>
+          <div class="panel-head"><h2 id="other-heading">Hats and other inputs</h2></div>
           <div class="hat-head">
             <div>
-              <p class="label">Sidestick hat drives</p>
+              <p class="label">Camera hat drives</p>
               <p id="hat-hint" class="help">Pans the camera through the NEO mini-stick (Rx/Ry).</p>
             </div>
             <fieldset class="seg">
-              <legend class="sr">Sidestick hat mode</legend>
+              <legend class="sr">Camera hat mode</legend>
               <label><input type="radio" name="hat" value="camera" checked><span>Camera (NEO mini-stick)</span></label>
               <label><input type="radio" name="hat" value="mapped"><span>Mapped controls</span></label>
             </fieldset>
           </div>
-          <div class="chip-row"><span class="cap">Hat directions</span><div id="extra-hat" class="chips"></div></div>
-          <div class="chip-row"><span class="cap">Detent states</span><div id="extra-detents" class="chips"></div></div>
-          <div class="chip-row"><span class="cap">Add-on inputs</span><div id="extra-addons" class="chips"></div></div>
+          <div class="chip-row"><label class="cap" for="camera-device">Camera hat</label><select id="camera-device" class="sel"></select></div>
+          <div id="hat-rows" class="stack"></div>
+          <div id="quadrant-rows" class="stack" hidden>
+            <div class="chip-row"><span class="cap">Detent states</span><div id="extra-detents" class="chips"></div></div>
+            <div class="chip-row"><span class="cap">Add-on inputs</span><div id="extra-addons" class="chips"></div></div>
+          </div>
         </section>
 
         <section class="panel" aria-labelledby="axes-heading">
@@ -162,7 +150,7 @@
 
           <div class="field">
             <div class="field-head">
-              <label for="deadzone"><span class="label">Stick deadzone</span><span class="help">Applied to roll, pitch and twist. 0 to 0.99.</span></label>
+              <label for="deadzone"><span class="label">Stick deadzone</span><span class="help">Applied to roll, pitch and yaw. 0 to 0.99.</span></label>
               <input id="deadzone" class="num" name="deadzone" type="number" min="0" max="0.99" step="0.01" inputmode="decimal" aria-describedby="deadzone-error">
             </div>
             <input id="deadzone-range" class="rng" type="range" min="0" max="30" step="1" aria-label="Stick deadzone, percent">
@@ -173,29 +161,24 @@
 
           <div class="field">
             <div class="field-head">
-              <label for="camera"><span class="label">Camera strength</span><span class="help">How far the sidestick hat moves the NEO mini-stick. 0 to 1.</span></label>
+              <label for="camera"><span class="label">Camera strength</span><span class="help">How far the camera hat moves the NEO mini-stick. 0 to 1.</span></label>
               <input id="camera" class="num" name="camera" type="number" min="0" max="1" step="0.05" inputmode="decimal" aria-describedby="camera-error">
             </div>
             <input id="camera-range" class="rng" type="range" min="0" max="100" step="5" aria-label="Camera strength, percent">
             <p id="camera-error" class="error" role="alert"></p>
           </div>
 
-          <div class="field split-row">
-            <div><p class="label" id="lever-label">Quadrant throttle lever</p><p class="help">Shares the throttle with the sidestick slider. The last one moved takes over.</p></div>
-            <fieldset class="seg" aria-labelledby="lever-label">
-              <label><input type="radio" name="lever" value="left"><span>Left lever</span></label>
-              <label><input type="radio" name="lever" value="right"><span>Right lever</span></label>
-            </fieldset>
-          </div>
-
-          <fieldset class="field invert">
-            <legend class="label">Invert</legend>
-            <div class="togs">
-              <label class="tog"><input type="checkbox" id="invert-roll"><span>Roll</span></label>
-              <label class="tog"><input type="checkbox" id="invert-pitch"><span>Pitch</span></label>
-              <label class="tog"><input type="checkbox" id="invert-yaw"><span>Yaw (twist)</span></label>
-              <label class="tog"><input type="checkbox" id="invert-throttle"><span>Throttle</span></label>
+          <fieldset class="field">
+            <legend class="label">Axis sources</legend>
+            <p class="help">Pick the axis of your HOTAS for each NEO axis, or press Detect and move it during emulation. Check every direction in the game: untested controllers may need Invert.</p>
+            <div id="bindings" class="bindings"></div>
+            <div class="binding">
+              <span class="label">Throttle</span>
+              <select id="throttle-add" class="sel" aria-label="Add a throttle axis"></select>
+              <button id="detect-throttle" class="btn quiet" type="button" data-detect="throttle">Detect</button>
             </div>
+            <ul id="throttle-list" class="throttles" aria-label="Throttle axes; the last one moved takes over"></ul>
+            <p id="detect-hint" class="help" role="status" aria-live="polite"></p>
           </fieldset>
         </section>
 
@@ -204,7 +187,10 @@
             <h2 id="split-heading">High-G from split levers</h2>
             <span class="badge">Holds NEO 5</span>
           </div>
-          <label class="tog wide"><input type="checkbox" id="split-enabled"><span>Hold NEO 5 (High-G) while one quadrant lever is forward and the other back</span></label>
+          <label class="tog wide"><input type="checkbox" id="split-enabled"><span>Hold NEO 5 (High-G) while one lever is forward and the other back</span></label>
+          <div class="binding"><label class="label" for="lever-0">First lever</label><select id="lever-0" class="sel"></select><button class="btn quiet" type="button" data-detect="lever-0">Detect</button></div>
+          <div class="binding"><label class="label" for="lever-1">Second lever</label><select id="lever-1" class="sel"></select><button class="btn quiet" type="button" data-detect="lever-1">Detect</button></div>
+          <label class="tog"><input type="checkbox" id="split-reverse"><span>Forward is the high raw value (most non-TCA throttles)</span></label>
           <div class="thresholds">
             <div class="card">
               <div class="field-head">
@@ -231,8 +217,8 @@
             </div>
             <p id="lever-live" class="help">Lever positions appear here during emulation.</p>
             <div id="lever-rails" class="lever-rails" hidden>
-              <div class="lever"><span>Left lever</span><div class="rail tall" aria-hidden="true"><span class="hatch back"></span><span class="zone-f"></span><span id="needle-left" class="needle"></span></div><span id="value-left" class="mono value">0%</span></div>
-              <div class="lever"><span>Right lever</span><div class="rail tall" aria-hidden="true"><span class="hatch back"></span><span class="zone-f"></span><span id="needle-right" class="needle"></span></div><span id="value-right" class="mono value">0%</span></div>
+              <div class="lever"><span id="lever-name-0">First lever</span><div class="rail tall" aria-hidden="true"><span class="hatch back"></span><span class="zone-f"></span><span id="needle-0" class="needle"></span></div><span id="value-0" class="mono value">0%</span></div>
+              <div class="lever"><span id="lever-name-1">Second lever</span><div class="rail tall" aria-hidden="true"><span class="hatch back"></span><span class="zone-f"></span><span id="needle-1" class="needle"></span></div><span id="value-1" class="mono value">0%</span></div>
             </div>
             <ul class="zones" aria-hidden="true">
               <li><span class="hatch key"></span>Back zone</li>
@@ -240,7 +226,17 @@
               <li>Full stop reads 0%</li>
             </ul>
           </div>
-          <p class="help">Either lever can be the forward one. While split, the throttle follows it, with the same inversion as normal.</p>
+          <p class="help">Either lever can be the forward one. While split, the throttle follows it, with that lever's inversion.</p>
+        </section>
+
+        <section class="panel" aria-labelledby="devices-heading">
+          <div class="panel-head">
+            <h2 id="devices-heading">Controllers</h2>
+            <span class="cap">Hidden from the game while emulating</span>
+          </div>
+          <label class="tog wide"><input type="checkbox" id="devices-auto"><span>Automatic: every Thrustmaster joystick that is connected</span></label>
+          <div id="device-list" class="togs"></div>
+          <p class="help">Each set of controllers keeps its own mapping. Untick a controller to leave it visible to the game; tick another vendor's controller to use it too.</p>
         </section>
       </div>
 
@@ -254,6 +250,29 @@
     </form>
   </section>
   </main>
+
+  <template id="tpl-tca-stick">
+    <figure data-device="tca-stick">
+      <figcaption class="cap split"><span class="device-name">TCA Sidestick</span><span id="hand-caption" class="accent-ink">Right-hand setup</span></figcaption>
+      <fieldset class="seg">
+        <legend class="sr">Sidestick base setup</legend>
+        <label><input type="radio" name="hand" value="left"><span aria-hidden="true">L</span><span class="sr">Left-hand setup</span></label>
+        <label><input type="radio" name="hand" value="right" checked><span aria-hidden="true">R</span><span class="sr">Right-hand setup</span></label>
+      </fieldset>
+      <div class="plate"><div id="stick-spots" class="spots">
+        <img id="stick-img" src="device/sidestick-right.svg" alt="TCA Sidestick, top view, right-hand setup, numbered controls 1 to 17" width="390" height="340">
+      </div></div>
+    </figure>
+  </template>
+
+  <template id="tpl-tca-quadrant">
+    <figure data-device="tca-quadrant">
+      <figcaption class="cap split"><span class="device-name">Quadrant Eng 1&amp;2</span><span>7 · 8 = mode selector</span></figcaption>
+      <div class="plate"><div id="quad-spots" class="spots">
+        <img src="device/quadrant.svg" alt="TCA Quadrant Eng 1 and 2, numbered controls 1 to 8" width="533" height="364">
+      </div></div>
+    </figure>
+  </template>
 </div>
 </body>
 </html>

@@ -150,7 +150,7 @@ pub fn menu_items(status: &Status, driver: (Option<bool>, bool)) -> Vec<(Option<
 }
 
 pub fn tooltip(status: &Status) -> String {
-    format!("TCA-NEO bridge \u{2014} {}", status.label())
+    format!("Any-TM-HOTAS bridge \u{2014} {}", status.label())
 }
 
 pub enum Action {

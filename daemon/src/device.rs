@@ -75,7 +75,7 @@ pub struct SoftwareDevice {
 impl SoftwareDevice {
     pub fn create(api: DeviceApi, timeout: Duration) -> Result<Self, String> {
         let (enumerator, parent, instance, description) =
-            (ffi::wide(ENUMERATOR), ffi::wide(r"HTREE\ROOT\0"), ffi::wide(INSTANCE_ID), ffi::wide("Virtual NEO HID (TCA-NEO bridge)"));
+            (ffi::wide(ENUMERATOR), ffi::wide(r"HTREE\ROOT\0"), ffi::wide(INSTANCE_ID), ffi::wide("Virtual NEO HID (Any-TM-HOTAS bridge)"));
         let hardware = multi_sz(&[HARDWARE_ID]);
         let info = SW_DEVICE_CREATE_INFO {
             cbSize: std::mem::size_of::<SW_DEVICE_CREATE_INFO>() as u32,
@@ -193,7 +193,7 @@ impl Drop for PipeServer {
         self.send(neutral());
         self.stop.store(true, Ordering::SeqCst);
         let thread = self.thread.take().unwrap();
-        crate::tca::cancel_until_finished(&thread, self.api.cancel_io);
+        crate::hid::cancel_until_finished(&thread, self.api.cancel_io);
         thread.join().unwrap();
         // SAFETY: thread exited; the pipe handle is ours.
         unsafe { (self.api.close)(self.pipe) };

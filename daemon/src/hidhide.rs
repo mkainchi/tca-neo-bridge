@@ -34,6 +34,18 @@ pub struct Hiding {
     expected: BTreeSet<String>,
 }
 
+/// "VID_xxxx&PID_yyyy" of an (uppercase) instance path, with both fields complete.
+pub fn ids(path: &str) -> Option<(u16, u16)> {
+    let at = path.find("VID_")?;
+    let (vid, rest) = path[at + 4..].split_at_checked(4)?;
+    let pid = rest.strip_prefix("&PID_")?.get(..4)?;
+    if !matches!(rest.as_bytes().get(9), None | Some(b'&' | b'\\')) {
+        return None;
+    }
+    let hex = |text: &str| u16::from_str_radix(text, 16).ok().filter(|_| text.bytes().all(|b| b.is_ascii_hexdigit()));
+    Some((hex(vid)?, hex(pid)?))
+}
+
 fn steam(path: &str) -> bool {
     let name = Path::new(path).file_name().map(|n| n.to_string_lossy().to_lowercase());
     matches!(name.as_deref(), Some("steam.exe" | "steamwebhelper.exe"))
@@ -83,16 +95,13 @@ impl Hiding {
             .map_err(|_| ERROR.to_string())
     }
 
-    fn devices(&self, pids: &[&str]) -> Result<BTreeSet<String>, String> {
+    fn devices(&self, wanted: &dyn Fn(u16, u16) -> bool) -> Result<BTreeSet<String>, String> {
         let data: serde_json::Value = serde_json::from_str(&self.call(&["--dev-gaming"])?).map_err(|_| ERROR.to_string())?;
         let groups = data.as_array().ok_or(ERROR)?;
         let mut found = BTreeSet::new();
         for device in groups.iter().flat_map(|g| g["devices"].as_array().into_iter().flatten()) {
             let path = device["deviceInstancePath"].as_str().ok_or(ERROR)?.to_uppercase();
-            let matches = pids.iter().any(|pid| {
-                let key = format!("VID_044F&PID_{pid}");
-                path.match_indices(&key).any(|(at, _)| matches!(path.as_bytes().get(at + key.len()), None | Some(b'&' | b'\\')))
-            });
+            let matches = ids(&path).is_some_and(|(vid, pid)| wanted(vid, pid));
             if device["present"] == true && device["gamingDevice"] == true && matches {
                 found.insert(path);
             }
@@ -100,7 +109,8 @@ impl Hiding {
         Ok(found)
     }
 
-    pub fn start(&mut self) -> Result<(), String> {
+    /// Hide every present gaming device `wanted` accepts (by vendor and product id).
+    pub fn start(&mut self, wanted: &dyn Fn(u16, u16) -> bool) -> Result<(), String> {
         let hidden = self.entries("dev")?;
         let apps = self.entries("app")?;
         let active = self.call(&["--cloak-state"])?;
@@ -110,12 +120,10 @@ impl Hiding {
         if apps.iter().any(|p| steam(p)) {
             return Err("Remove Steam from the HidHide Applications list before emulating.".into());
         }
-        let stick = self.devices(&["0405", "0406"])?;
-        let quadrant = self.devices(&["0407"])?;
-        if stick.is_empty() || quadrant.is_empty() {
-            return Err("HidHide must detect both supported TCA controllers. Reconnect them and retry.".into());
+        let devices = self.devices(wanted)?;
+        if devices.is_empty() {
+            return Err("HidHide must detect the selected controllers. Reconnect them and retry.".into());
         }
-        let devices: BTreeSet<String> = stick.union(&quadrant).cloned().collect();
         if active == "--cloak-off" && !hidden.is_subset(&devices) {
             return Err("HidHide has other hidden devices. Enable hiding yourself or clear unused entries before emulating.".into());
         }

@@ -43,13 +43,18 @@ fn ui() -> MutexGuard<'static, Ui> {
 
 fn reset() -> MutexGuard<'static, ()> {
     let g = guard();
-    *ui() = Ui { window: 42, mutex: 9, icon_size: 16, ..Default::default() };
-    tray::TRAY.with(|t| t.borrow_mut().take());
+    fresh_ui();
     g
 }
 
+/// A clean desktop between two runs inside one test.
+fn fresh_ui() {
+    *ui() = Ui { window: 42, mutex: 9, icon_size: 16, ..Default::default() };
+    tray::TRAY.with(|t| t.borrow_mut().take());
+}
+
 unsafe extern "system" fn register_class(class: *const WNDCLASSEXW) -> u16 {
-    assert_eq!(wide_string((*class).lpszClassName), "TcaNeoBridgeTray");
+    assert_eq!(wide_string((*class).lpszClassName), "AnyTmHotasBridgeTray");
     1
 }
 unsafe extern "system" fn create_window(_: u32, _: PCWSTR, _: PCWSTR, _: u32, _: i32, _: i32, _: i32, _: i32, _: HWND, _: HANDLE, _: HANDLE, _: *const c_void) -> HWND {
@@ -231,6 +236,7 @@ fn apis() -> Apis {
         pipe_name: "p".into(),
         bind: "127.0.0.1:0".into(),
         period: Duration::from_millis(1),
+        probe_wait: Duration::from_millis(1),
     }
 }
 
@@ -248,9 +254,10 @@ fn lparam(event: u32) -> isize {
 
 #[test]
 fn options_parse_and_reject() {
-    assert_eq!(app::options(&args(&[]), "dflt".into()).unwrap(), Options { data: "dflt".into(), source: Source::Tca, autostart: false, self_test: false });
-    let parsed = app::options(&args(&["--self-test", "--data", "d", "--source", "validation", "--autostart", "--source", "tca"]), "dflt".into()).unwrap();
-    assert_eq!(parsed, Options { data: "d".into(), source: Source::Tca, autostart: true, self_test: true });
+    assert_eq!(app::options(&args(&[]), "dflt".into()).unwrap(), Options { data: "dflt".into(), source: Source::Hotas, autostart: false, self_test: false, probe: false });
+    let parsed = app::options(&args(&["--self-test", "--data", "d", "--source", "validation", "--autostart", "--source", "tca", "--probe"]), "dflt".into()).unwrap();
+    assert_eq!(parsed, Options { data: "d".into(), source: Source::Hotas, autostart: true, self_test: true, probe: true });
+    assert_eq!(app::options(&args(&["--source", "validation", "--source", "hotas"]), "dflt".into()).unwrap().source, Source::Hotas);
     for bad in [&["--source"][..], &["--source", "x"], &["--data"], &["--what"]] {
         assert_eq!(app::options(&args(bad), "dflt".into()).unwrap_err(), app::USAGE);
     }
@@ -268,12 +275,74 @@ fn options_parse_and_reject() {
 
 #[test]
 fn default_data_lives_in_local_app_data_whatever_the_launch_folder() {
-    let exe = PathBuf::from(r"C:\Tools\tca-neo-bridge\neo-daemon.exe");
+    let exe = PathBuf::from(r"C:\Tools\any-tm-hotas-bridge\neo-daemon.exe");
     let base = PathBuf::from(r"C:\Users\pilot\AppData\Local");
-    assert_eq!(app::default_data(Some(&base), &exe), base.join("tca-neo-bridge"));
-    assert_eq!(app::default_data(None, &exe), PathBuf::from(r"C:\Tools\tca-neo-bridge\data"));
+    assert_eq!(app::default_data(Some(&base), &exe), base.join("any-tm-hotas-bridge"));
+    assert_eq!(app::default_data(None, &exe), PathBuf::from(r"C:\Tools\any-tm-hotas-bridge\data"));
     let _ = app::pnputil_runner();
 }
+#[test]
+fn first_run_imports_the_stable_profile_without_touching_it() {
+    let _g = reset();
+    let base = temp("import-base");
+    let stable = base.join(app::STABLE_FOLDER);
+    std::fs::create_dir_all(&stable).unwrap();
+    let data = base.join(app::APP_FOLDER);
+    std::fs::create_dir_all(&data).unwrap();
+    assert_eq!(app::import_stable(&stable, &data), "none");
+    let v1 = r#"{"version": 1, "deadzone": 0.1, "camera_strength": 1.0, "throttle_lever": "left", "invert": {"roll": false, "pitch": false, "yaw": false, "throttle": false}, "buttons": {"s2": [3]}, "pov": {}}"#;
+    std::fs::write(stable.join("config.json"), "{").unwrap();
+    assert_eq!(app::import_stable(&stable, &data), "none");
+    std::fs::write(stable.join("config.json"), v1).unwrap();
+    std::fs::write(stable.join("label-map.json"), r#"[{"label": "2", "sources": ["s2"], "mapping": "NEO 3"}]"#).unwrap();
+    // A file where the data folder should be: saving fails.
+    let blocked = base.join("blocked");
+    std::fs::write(&blocked, "x").unwrap();
+    assert_eq!(app::import_stable(&stable, &blocked), "failed");
+    // Through run(): imported once, then kept; the stable files are unchanged.
+    let mut local = apis();
+    local.local_app_data = Some(base.clone());
+    assert_eq!(app::run(&args(&["--data", data.to_str().unwrap(), "--source", "validation"]), local), 0);
+    let imported = neo_daemon::config::load(&data.join("config.json")).unwrap();
+    assert_eq!((imported.deadzone, imported.setups[neo_daemon::config::TCA_SETUP].buttons["tca-stick/b2"].clone()), (0.1, vec![3]));
+    assert_eq!(neo_daemon::labels::load(&data.join("label-map.json")).unwrap()[0].sources, ["tca-stick/b2"]);
+    assert_eq!(std::fs::read_to_string(stable.join("config.json")).unwrap(), v1);
+    assert_eq!(app::import_stable(&stable, &data), "kept");
+    let log = std::fs::read_to_string(data.join("neo-daemon.log")).unwrap();
+    assert!(log.contains("import=imported"), "{log}");
+    // The stable folder itself as data: no import attempted.
+    fresh_ui();
+    let mut local = apis();
+    local.local_app_data = Some(base.clone());
+    assert_eq!(app::run(&args(&["--data", stable.to_str().unwrap(), "--source", "validation"]), local), 0);
+    assert!(std::fs::read_to_string(stable.join("neo-daemon.log")).unwrap().contains("import=skipped"));
+    fresh_ui();
+    let mut none = apis();
+    none.local_app_data = None;
+    assert_eq!(app::run(&args(&["--data", temp("noimport").to_str().unwrap(), "--source", "validation"]), none), 0);
+}
+
+#[test]
+fn probe_writes_the_report_and_opens_it() {
+    let _g = reset();
+    let data = temp("probe");
+    assert_eq!(app::run(&args(&["--probe", "--data", data.to_str().unwrap()]), apis()), 0);
+    assert!(std::fs::read_to_string(data.join("probe.txt")).unwrap().contains("No joysticks found"));
+    assert_eq!(ui().opened, [data.join("probe.txt").to_string_lossy().into_owned()]);
+    // A file where the data folder should be, or HID listing failure: exit 4, nothing opened.
+    let blocked = temp("probe-blocked");
+    std::fs::write(&blocked, "x").unwrap();
+    assert_eq!(app::run(&args(&["--probe", "--data", blocked.to_str().unwrap()]), apis()), 4);
+    state().list_invalid = true;
+    assert_eq!(app::run(&args(&["--probe", "--data", temp("probe-fail").to_str().unwrap()]), apis()), 4);
+    assert_eq!(ui().opened.len(), 1);
+    // The data folder exists but the report cannot be written there.
+    state().list_invalid = false;
+    let occupied = temp("probe-occupied");
+    std::fs::create_dir_all(occupied.join("probe.txt")).unwrap();
+    assert_eq!(app::run(&args(&["--probe", "--data", occupied.to_str().unwrap()]), apis()), 4);
+}
+
 #[test]
 fn token_requires_system_randomness() {
     let _g = reset();
@@ -293,7 +362,7 @@ fn menu_entries_follow_status() {
     let label = |driver| tray::menu_items(&Status::Idle, driver)[4].1;
     assert_eq!([label((None, false)), label((Some(false), false)), label((Some(true), false)), label((Some(true), true))],
         ["Install driver\u{2026}", "Install driver\u{2026}", "Reinstall driver\u{2026}", "Installing driver\u{2026}"]);
-    assert_eq!(tray::tooltip(&Status::Idle), "TCA-NEO bridge \u{2014} Idle");
+    assert_eq!(tray::tooltip(&Status::Idle), "Any-TM-HOTAS bridge \u{2014} Idle");
 }
 
 #[test]

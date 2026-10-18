@@ -4,11 +4,12 @@ use neo_daemon::config;
 use neo_daemon::device::{self, PipeServer, SoftwareDevice};
 use neo_daemon::emulation::{Controller, Deps, Emulation, Notify, Source, DISCONNECTED};
 use neo_daemon::ffi;
+use neo_daemon::hid::{self, Decoder, HidApi, InputState, Reader, Value};
 use neo_daemon::hidhide::Hiding;
+use neo_daemon::models;
 use neo_daemon::neo;
 use neo_daemon::protocol;
 use neo_daemon::shared::{Links, Shared, Status};
-use neo_daemon::tca::{self, HidApi, Reader, Role};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -26,6 +27,16 @@ fn temp(name: &str) -> PathBuf {
     dir
 }
 
+fn ids(opened: &[hid::Opened]) -> Vec<String> {
+    opened.iter().map(|o| o.info.id.clone()).collect()
+}
+
+fn close(opened: Vec<hid::Opened>) {
+    for item in opened {
+        item.close(&hid_api());
+    }
+}
+
 #[test]
 fn real_tables_construct() {
     let _g = guard();
@@ -34,27 +45,17 @@ fn real_tables_construct() {
     let mut field = [7u16; 4];
     ffi::fill(&mut field, "abcdef");
     assert_eq!(field, [97, 98, 99, 0]);
+    assert_eq!(std::mem::size_of::<ffi::HIDP_BUTTON_CAPS>(), 72);
+    assert_eq!(std::mem::size_of::<ffi::HIDP_VALUE_CAPS>(), 72);
 }
 
 #[test]
-fn roles_use_generic_attributes_and_lengths_only() {
-    let attributes = |vid, pid| ffi::HIDD_ATTRIBUTES { VendorID: vid, ProductID: pid, ..Default::default() };
-    assert_eq!(tca::role(&attributes(0x044f, 0x0405), 64), Some(Role::Stick));
-    assert_eq!(tca::role(&attributes(0x044f, 0x0406), 64), Some(Role::Stick));
-    assert_eq!(tca::role(&attributes(0x044f, 0x0407), 44), Some(Role::Quadrant));
-    assert_eq!(tca::role(&attributes(0x044f, 0x0407), 64), None);
-    assert_eq!(tca::role(&attributes(0x1234, 0x0405), 64), None);
-}
-
-#[test]
-fn find_pair_opens_exactly_one_of_each_and_closes_the_rest() {
+fn scan_keeps_joysticks_only_and_closes_the_rest() {
     let _g = guard();
-    assert!(tca::find_pair(&hid_api()).is_err()); // nothing present
-    state().interfaces = vec![Interface::new(0x0405, 64)];
-    assert!(tca::find_pair(&hid_api()).is_err()); // stick without quadrant
-    state().interfaces.clear();
+    assert!(hid::find(&hid_api(), &[]).err().unwrap().contains("supported Thrustmaster HOTAS")); // nothing present
     state().list_invalid = true;
-    assert!(tca::find_pair(&hid_api()).err().unwrap().contains("could not list"));
+    assert!(hid::scan(&hid_api()).err().unwrap().contains("could not list"));
+    assert!(hid::find(&hid_api(), &[]).err().unwrap().contains("could not list"));
     state().list_invalid = false;
     let mut bad_open = Interface::new(0x0405, 64);
     bad_open.open = false;
@@ -64,65 +65,238 @@ fn find_pair_opens_exactly_one_of_each_and_closes_the_rest() {
     bad_preparsed.preparsed = false;
     let mut bad_caps = Interface::new(0x0405, 64);
     bad_caps.caps = 0;
-    let mut other_collection = Interface::new(0x0405, 2);
-    other_collection.path.push('2');
-    let mut skipped = Interface::new(0x0406, 64);
-    skipped.path.push('3');
+    let wrong_length = Interface::new(0x0405, 2);
+    let mut vendor_collection = Interface::new(0x0407, 44);
+    vendor_collection.usage_page = 0xff00;
+    let mut keyboard = Interface::new(0x0407, 44);
+    keyboard.usage = 6;
+    let neo = Interface::generic(0x044f, models::NEO_PID, 8);
+    let mut gamepad = Interface::generic(0x1234, 0x0001, 4);
+    gamepad.usage = 5;
+    let mut broken_generic = Interface::generic(0x044f, 0xb10a, 8);
+    broken_generic.button_status = 0;
     {
         let mut s = state();
-        s.interfaces = vec![bad_open, bad_attributes, bad_preparsed, bad_caps, other_collection, skipped, Interface::new(0x0407, 44)];
-        s.detail_fail.insert(5);
+        s.interfaces = vec![bad_open, bad_attributes, bad_preparsed, bad_caps, wrong_length, vendor_collection, keyboard, neo, broken_generic, Interface::new(0x0406, 64), Interface::new(0x0407, 44), gamepad];
+        for (index, interface) in s.interfaces.iter_mut().enumerate() {
+            interface.path.push_str(&index.to_string());
+        }
+        s.detail_fail.insert(11);
     }
-    // Paths are identical for the first four, so they resolve to the first (unopenable) entry; use distinct paths.
-    for (index, interface) in state().interfaces.iter_mut().enumerate() {
-        interface.path.push_str(&index.to_string());
-    }
-    // Only the quadrant qualifies: no stick → error, and the quadrant handle is closed.
-    let error = tca::find_pair(&hid_api()).err().unwrap();
-    assert!(error.contains("exactly one"));
+    let found = hid::scan(&hid_api()).unwrap();
+    assert_eq!(ids(&found), ["tca-stick", "tca-quadrant"]); // the game pad's path could not be read
     assert!(state().list_destroyed >= 1);
-    {
-        let mut s = state();
-        s.detail_fail.clear();
-        s.closed.clear();
-    }
-    let (stick, quadrant) = tca::find_pair(&hid_api()).unwrap();
-    assert_eq!((stick.role, quadrant.role), (Role::Stick, Role::Quadrant));
-    assert_eq!(state().closed.len(), 4); // attributes, preparsed, caps, wrong-length collections
+    // Rejected handles are closed; preparsed data is freed when it was obtained.
+    assert_eq!(state().closed.len(), 8);
+    assert_eq!(state().freed_preparsed.len(), 6);
+    let (stick, quadrant) = (&found[0], &found[1]);
+    assert_eq!((stick.decoder.name(), quadrant.decoder.name()), ("tca-stick", "tca-quadrant"));
+    assert_eq!((stick.info.name.as_str(), stick.info.pid, quadrant.length), ("TCA Sidestick Airbus", 0x0406, 44));
+    close(found);
+    state().detail_fail.clear();
+    // An explicit list can take another vendor's game pad; auto mode leaves it alone.
+    let found = hid::find(&hid_api(), &["1234-0001".into()]).unwrap();
+    assert_eq!((ids(&found), found[0].info.name.as_str()), (vec!["1234-0001".to_string()], "Fake Stick"));
+    close(found);
+    assert_eq!(ids(&hid::find(&hid_api(), &[]).unwrap()), ["tca-stick", "tca-quadrant"]);
+    assert_eq!(hid::list(&hid_api()).unwrap().len(), 3);
 }
 
 #[test]
-fn reader_keeps_latest_valid_report_and_flags_unexpected_failure() {
+fn identical_devices_are_numbered_and_names_fall_back() {
+    let _g = guard();
+    let mut second = Interface::generic(0x044f, 0x1234, 4);
+    second.path.push('2');
+    second.product = Some(format!("  {}\u{7}  ", "N".repeat(130))); // trimmed, control characters dropped, 64 kept
+    let mut unnamed = Interface::generic(0x044f, 0x1234, 4);
+    unnamed.path.push('3');
+    unnamed.product = None;
+    let mut blank = Interface::generic(0x044f, 0x1234, 4);
+    blank.path.push('4');
+    blank.product = Some("   ".into());
+    state().interfaces = vec![Interface::generic(0x044f, 0x1234, 4), second, unnamed, blank];
+    let devices = hid::list(&hid_api()).unwrap();
+    let ids: Vec<_> = devices.iter().map(|d| d.id.as_str()).collect();
+    assert_eq!(ids, ["044f-1234", "044f-1234#2", "044f-1234#3", "044f-1234#4"]);
+    assert_eq!(devices[1].name, "N".repeat(64));
+    assert_eq!((devices[2].name.as_str(), devices[3].name.as_str()), ("Joystick 044F:1234", "Joystick 044F:1234"));
+    assert!(hid::selected(&[], &devices[0]));
+    assert!(hid::selected(&["044f-1234#2".into()], &devices[1]));
+    assert!(!hid::selected(&["044f-1234#2".into()], &devices[0]));
+}
+
+#[test]
+fn generic_layouts_come_from_the_descriptor() {
+    let _g = guard();
+    let mut odd = Interface::generic(0x044f, 0xb10a, 0);
+    odd.button_caps = vec![
+        button_range(3, 1), // reversed range reads as its minimum
+        ffi::HIDP_BUTTON_CAPS { UsagePage: 9, UsageMin: 200, ..Default::default() }, // capped at 128
+        ffi::HIDP_BUTTON_CAPS { UsagePage: 0x0c, UsageMin: 250, ..Default::default() }, // consumer page: ignored
+    ];
+    odd.value_caps = vec![
+        value(1, 0x30, 0, -1, 16),      // unsigned maximum returned sign-extended: 0..65535
+        value(1, 0x31, -512, 511, 10),  // signed
+        value(1, 0x32, 5, 5, 8),        // empty range: dropped
+        value(1, 0x33, 0, 255, 0),      // no bits: dropped
+        value(1, 0x34, 0, 255, 33),     // too wide: dropped
+        value(2, 0xbb, 0, 1023, 10),    // Simulation throttle
+        value(1, 0x30, 0, 7, 3),        // a second X is ignored
+        value(0xff00, 0x01, 0, 7, 3),   // vendor value: ignored
+        value(1, 0x39, 1, 4, 3),        // four-way hat
+    ];
+    state().interfaces = vec![odd];
+    let found = hid::scan(&hid_api()).unwrap();
+    let layout = &found[0].info.layout;
+    assert_eq!(layout.buttons, 128);
+    let axes: Vec<(&str, u32)> = layout.axes.iter().map(|a| (a.name.as_str(), a.max)).collect();
+    assert_eq!(axes, [("x", 65535), ("y", 1023), ("throttle", 1023)]);
+    assert!(layout.hat);
+    close(found);
+    // No button or value capabilities at all.
+    let mut bare = Interface::generic(0x044f, 0xb10a, 0);
+    bare.button_caps.clear();
+    bare.value_caps.clear();
+    state().interfaces = vec![bare];
+    let found = hid::scan(&hid_api()).unwrap();
+    assert_eq!(found[0].info.layout, models::Layout { buttons: 0, axes: vec![], hat: false });
+    close(found);
+    // A failing value capability read rejects the device.
+    let mut broken = Interface::generic(0x044f, 0xb10a, 4);
+    broken.value_status = 0;
+    state().interfaces = vec![broken];
+    assert!(hid::scan(&hid_api()).unwrap().is_empty());
+}
+
+#[test]
+fn values_sign_extend_and_clamp() {
+    let caps = |min, max, bits| ffi::HIDP_VALUE_CAPS { UsagePage: 1, LogicalMin: min, LogicalMax: max, BitSize: bits, ..Default::default() };
+    let signed = Value::new(&caps(-128, 127, 8), 0x35).unwrap();
+    assert_eq!((signed.relative(0x80), signed.relative(0x7f), signed.logical(0xff)), (0, 255, -1));
+    let hat = Value::new(&caps(1, 8, 4), 0x39).unwrap();
+    assert_eq!((hat.position(1), hat.position(8), hat.position(0), hat.position(15)), (Some(0), Some(7), None, None));
+    assert_eq!(hat.relative(15), 7);
+    let wide = Value::new(&caps(0, -1, 32), 0x30).unwrap();
+    assert_eq!((wide.span, wide.relative(u32::MAX)), (u32::MAX, u32::MAX));
+    assert_eq!(Value::new(&caps(0, 0, 8), 0x30), None);
+    assert_eq!(Value::new(&caps(-5, -10, 8), 0x30), None); // signed and reversed: no range
+}
+
+#[test]
+fn generic_reports_decode_buttons_axes_and_hat() {
+    let _g = guard();
+    let mut device = Interface::generic(0x044f, 0xb10a, 12);
+    device.extra_usages = vec![0, 129]; // out-of-range usages are ignored
+    state().interfaces = vec![device];
+    let found = hid::scan(&hid_api()).unwrap();
+    let api = hid_api();
+    let decoder = &found[0].decoder;
+    assert_eq!(decoder.name(), "generic");
+    let decode = |buttons: &[u16], values: &[u32]| decoder.decode(&api, &generic_report(64, buttons, values));
+    // X, Y, Z, Rz (signed 8-bit), hat.
+    assert_eq!(decode(&[1, 12], &[0, 1023, 255, 0x80, 3]), Some(InputState { buttons: 1 | 1 << 11, axes: vec![0, 1023, 255, 0], hat: Some(3) }));
+    assert_eq!(decode(&[], &[2000, 5, 0, 0x7f, 8]).unwrap(), InputState { buttons: 0, axes: vec![1023, 5, 0, 255], hat: None }); // clamped; hat null
+    close(found);
+    // Four-way hats report cardinals; other hat sizes are read as centred.
+    for (max, raw, expected) in [(3, 1, Some(2)), (3, 4, None), (5, 2, None)] {
+        let mut device = Interface::generic(0x044f, 0xb10a, 4);
+        device.value_caps[3] = value(1, 0x39, 0, max, 4);
+        state().interfaces = vec![device];
+        let found = hid::scan(&hid_api()).unwrap();
+        assert_eq!(found[0].decoder.decode(&api, &generic_report(64, &[], &[0, 0, 0, 0, raw])).unwrap().hat, expected, "{max} {raw}");
+        close(found);
+    }
+    // HidP refusals (another report id, a failing field) skip the report.
+    let mut refusing = Interface::generic(0x044f, 0xb10a, 4);
+    refusing.usages_status = 0;
+    let mut failing_axis = Interface::generic(0x044f, 0xb10a, 4);
+    failing_axis.path.push('2');
+    failing_axis.failing_usage = Some(0x31);
+    let mut failing_hat = Interface::generic(0x044f, 0xb10a, 4);
+    failing_hat.path.push('3');
+    failing_hat.failing_usage = Some(0x39);
+    let mut buttonless = Interface::generic(0x044f, 0xb10a, 4);
+    buttonless.path.push('4');
+    buttonless.button_caps.clear();
+    buttonless.usages_status = 0; // never asked
+    state().interfaces = vec![refusing, failing_axis, failing_hat, buttonless];
+    let found = hid::scan(&hid_api()).unwrap();
+    let report = generic_report(64, &[1], &[1, 2, 3, 4, 5]);
+    let decoded: Vec<_> = found.iter().map(|o| o.decoder.decode(&api, &report).is_some()).collect();
+    assert_eq!(decoded, [false, false, false, true]);
+    assert_eq!(found[3].decoder.decode(&api, &report).unwrap().buttons, 0);
+    close(found);
+    assert_eq!(Decoder::TcaQuadrant.layout(), models::tca_quadrant().layout);
+}
+
+#[test]
+fn reader_keeps_latest_decodable_report_and_flags_unexpected_failure() {
     let _g = guard();
     pair();
-    let (stick, quadrant) = tca::find_pair(&hid_api()).unwrap();
-    {
-        let mut s = state();
-        let mut wrong_id = stick_report(0, 1);
-        wrong_id[0] = 3;
-        s.reads.insert(0, [Read::Data(stick_report(1, 1)), Read::Data(vec![1, 2]), Read::Data(wrong_id), Read::Fail].into());
-    }
+    let found = hid::scan(&hid_api()).unwrap();
+    let mut found = found.into_iter();
+    let (stick, quadrant) = (found.next().unwrap(), found.next().unwrap());
+    let mut wrong_id = stick_report(0, 1);
+    wrong_id[0] = 3;
+    state().reads.insert(0, [Read::Data(stick_report(1, 1)), Read::Data(vec![1, 2]), Read::Data(wrong_id.clone()), Read::Fail].into());
     let reader = Reader::spawn(hid_api(), stick);
     wait_until(|| reader.failed.load(Ordering::SeqCst));
-    assert_eq!(reader.snapshot(), Some(stick_report(1, 1)));
+    assert_eq!(reader.snapshot(), hid::tca_stick(&stick_report(1, 1)));
+    assert_eq!(*reader.raw.lock().unwrap(), Some(wrong_id)); // raw bytes keep the last full-length report
     drop(reader);
     let quiet = Reader::spawn(hid_api(), quadrant);
     std::thread::sleep(Duration::from_millis(5));
     assert_eq!(quiet.snapshot(), None);
     drop(quiet); // blocked read cancelled: not a failure
+    assert_eq!(state().freed_preparsed.len(), 2);
 }
 
 #[test]
 fn reader_stops_cleanly_while_reports_keep_arriving() {
     let _g = guard();
     pair();
-    let (stick, _quadrant) = tca::find_pair(&hid_api()).unwrap();
+    let stick = hid::scan(&hid_api()).unwrap().into_iter().next().unwrap();
     state().reads.insert(0, [Read::Forever(stick_report(4, 1))].into());
     let reader = Reader::spawn(hid_api(), stick);
     wait_until(|| reader.snapshot().is_some());
     drop(reader); // stop is observed between successful reads, not via a failed read
 }
 
+#[test]
+fn probe_describes_devices_without_paths() {
+    let _g = guard();
+    assert!(hid::probe(hid_api(), Duration::from_millis(1)).unwrap().contains("No joysticks found"));
+    let mut pad = Interface::generic(0x1234, 0x0001, 2);
+    pad.path.push('2');
+    pad.value_caps.clear();
+    pad.fields.clear();
+    let mut quiet = Interface::generic(0x044f, 0xb10a, 2);
+    quiet.path.push('3');
+    quiet.usages_status = 0;
+    let mut silent = Interface::new(0x0407, 44);
+    silent.path.push('4'); // never sends a report: no live sample, no raw bytes
+    state().interfaces = vec![Interface::new(0x0405, 64), pad, quiet, silent];
+    {
+        let mut s = state();
+        let mut stick = stick_report(1 | 1 << 16, 100);
+        stick[7] = 2;
+        s.reads.insert(0, [Read::Forever(stick)].into());
+        s.reads.insert(1, [Read::Forever(generic_report(64, &[2], &[]))].into());
+        s.reads.insert(2, [Read::Forever(vec![9; 64])].into()); // never decodes: raw only
+    }
+    let text = hid::probe(hid_api(), Duration::from_millis(30)).unwrap();
+    assert!(!text.contains(r"\\?\") && !text.contains("hid#"), "{text}");
+    assert!(text.contains("device tca-stick \"TCA Sidestick Airbus\" 044F:0405 decoder=tca-stick default=yes"), "{text}");
+    assert!(text.contains("buttons 17, hat yes, axes: x 0..16383, y 0..16383, rz 0..255, slider 0..255"), "{text}");
+    assert!(text.contains("live: buttons [1 17], hat right, x=100 y=8192 rz=128 slider=128"), "{text}");
+    assert!(text.contains("device 1234-0001 \"Fake Stick\" 1234:0001 decoder=generic default=no (tick it under Axes and settings)"), "{text}");
+    assert!(text.contains("buttons 2, hat no, axes: none"), "{text}");
+    assert!(text.contains("live: buttons [2], hat centred, \n"), "{text}");
+    assert!(text.contains("live: no decodable report yet"), "{text}");
+    assert!(text.contains(&format!("raw: {}", "09".repeat(64))), "{text}");
+    state().list_invalid = true;
+    assert!(hid::probe(hid_api(), Duration::from_millis(1)).is_err());
+}
 #[test]
 fn software_device_outcomes() {
     let _g = guard();
@@ -202,7 +376,7 @@ fn ready_device() {
 }
 
 #[test]
-fn validation_session_streams_without_hidhide_or_tca() {
+fn validation_session_streams_without_hidhide_or_controllers() {
     let _g = guard();
     ready_device();
     let dir = temp("validation");
@@ -210,11 +384,12 @@ fn validation_session_streams_without_hidhide_or_tca() {
     let (deps, _) = deps(None, dir);
     let (notify, count) = counter();
     let session = Emulation::start(&deps, shared.clone(), Source::Validation, notify).unwrap();
-    assert_eq!(*shared.links.lock().unwrap(), Some(Links { source: "validation", hidden: false, tca: false, virtual_neo: true }));
+    assert_eq!(*shared.links.lock().unwrap(), Some(Links { source: "validation", hidden: false, inputs: 0, virtual_neo: true }));
     wait_until(|| state().frames.len() > 3);
     drop(session);
     assert_eq!((shared.status(), count.load(Ordering::SeqCst)), (Status::Idle, 1));
     assert_eq!(*shared.links.lock().unwrap(), None);
+    assert_eq!(*shared.devices.lock().unwrap(), None);
     assert_eq!(protocol::parse(state().frames.last().unwrap()), Some(neo::neutral()));
 }
 
@@ -227,9 +402,10 @@ fn tca_session_maps_hot_reloads_and_releases_on_disconnect() {
     let shared = Arc::new(Shared::new(dir.join("config.json"), config::defaults()));
     let (deps, _) = deps(None, dir.clone());
     let (notify, _) = counter();
-    let session = Emulation::start(&deps, shared.clone(), Source::Tca, notify).unwrap();
+    let session = Emulation::start(&deps, shared.clone(), Source::Hotas, notify).unwrap();
     assert!(dir.join("hidhide-session.json").exists());
-    assert_eq!(*shared.links.lock().unwrap(), Some(Links { source: "tca", hidden: true, tca: true, virtual_neo: true }));
+    assert_eq!(*shared.links.lock().unwrap(), Some(Links { source: "hotas", hidden: true, inputs: 2, virtual_neo: true }));
+    assert_eq!(shared.devices.lock().unwrap().as_ref().unwrap().len(), 2);
     std::thread::sleep(Duration::from_millis(10)); // no reports yet: neutral, nothing pressed
     assert!(shared.pressed.lock().unwrap().is_empty());
     {
@@ -240,21 +416,56 @@ fn tca_session_maps_hot_reloads_and_releases_on_disconnect() {
     // Left lever at idle (raw 65535, the NEO Z idle value too); default throttle is not inverted.
     let pressed_report = |button: u16| neo::input_report([0, 32768, 65535, 32768, 32768, 32768, 32768], button, 8);
     wait_until(|| state().frames.iter().any(|f| protocol::parse(f) == Some(pressed_report(1))));
-    assert_eq!(*shared.pressed.lock().unwrap(), ["s1"]);
+    assert_eq!(*shared.pressed.lock().unwrap(), ["tca-stick/b1"]);
     assert_eq!(*shared.levers.lock().unwrap(), Some([0.0, 1.0 - 32768.0 / 65535.0]));
+    assert_eq!(shared.axes.lock().unwrap()["tca-quadrant"], [1.0, 2.0 * 32768.0 / 65535.0 - 1.0]);
     let mut changed = config::defaults();
-    changed.buttons.insert("s1".into(), vec![15]);
+    let mut profile = config::tca_profile();
+    profile.buttons.insert("tca-stick/b1".into(), vec![15]);
+    changed.setups.insert(config::TCA_SETUP.into(), profile);
     shared.save(changed).unwrap();
     wait_until(|| state().frames.iter().any(|f| protocol::parse(f) == Some(pressed_report(1 << 14))));
     let mut hat_up = stick_report(1, 0);
     hat_up[7] = 0;
     state().reads.insert(0, [Read::Data(hat_up)].into());
-    wait_until(|| *shared.pressed.lock().unwrap() == ["s1", "hat-up"]);
+    wait_until(|| *shared.pressed.lock().unwrap() == ["tca-stick/b1", "tca-stick/hat-up"]);
     state().reads.insert(1, [Read::Fail].into());
     wait_until(|| shared.status() == Status::Error(DISCONNECTED.into()));
     assert!(!dir.join("hidhide-session.json").exists());
     assert!(shared.pressed.lock().unwrap().is_empty());
     assert_eq!(*shared.levers.lock().unwrap(), None);
+    assert!(shared.axes.lock().unwrap().is_empty());
+    assert_eq!(*shared.devices.lock().unwrap(), None);
+    drop(session);
+}
+
+#[test]
+fn generic_session_uses_the_convention_profile_and_the_device_list() {
+    let _g = guard();
+    ready_device();
+    let mut other = Interface::generic(0x1234, 0x0001, 4);
+    other.path.push('2');
+    state().interfaces = vec![Interface::generic(0x044f, 0xb10a, 16), other];
+    let dir = temp("generic");
+    let shared = Arc::new(Shared::new(dir.join("config.json"), config::defaults()));
+    let (deps, _) = deps(None, dir);
+    let (notify, _) = counter();
+    // Auto selection: the T.16000M only (the other vendor's stick stays visible and unused).
+    let session = Emulation::start(&deps, shared.clone(), Source::Hotas, notify.clone()).unwrap();
+    assert_eq!(shared.links.lock().unwrap().unwrap().inputs, 1);
+    // X full left, Y centre-ish, Z (the throttle) at 255, button 3, hat up: roll 0, throttle full, NEO 3, camera up.
+    state().reads.insert(0, [Read::Forever(generic_report(64, &[3], &[0, 512, 255, 0, 0]))].into());
+    let expected = |report: &neo::Report| report[4..6] == [0, 0] && report[8..10] == [0xff, 0xff] && report[12..14] == [0, 0] && report[14..16] == [0, 0x80] && (report[1] >> 4) & 0b100 != 0;
+    wait_until(|| state().frames.iter().any(|f| protocol::parse(f).is_some_and(|r| expected(&r))));
+    assert_eq!(*shared.pressed.lock().unwrap(), ["t16000m/b3", "t16000m/hat-up"]);
+    assert_eq!(*shared.levers.lock().unwrap(), None);
+    drop(session);
+    // Explicit list: the other vendor's stick alone.
+    let mut cfg = config::defaults();
+    cfg.devices = vec!["1234-0001".into()];
+    shared.save(cfg).unwrap();
+    let session = Emulation::start(&deps, shared.clone(), Source::Hotas, notify).unwrap();
+    assert_eq!(shared.devices.lock().unwrap().as_ref().unwrap()[0].id, "1234-0001");
     drop(session);
 }
 
@@ -267,7 +478,7 @@ fn sidestick_disconnect_also_stops_the_session() {
     let shared = Arc::new(Shared::new(dir.join("config.json"), config::defaults()));
     let (deps, _) = deps(None, dir);
     let (notify, _) = counter();
-    let session = Emulation::start(&deps, shared.clone(), Source::Tca, notify).unwrap();
+    let session = Emulation::start(&deps, shared.clone(), Source::Hotas, notify).unwrap();
     state().reads.insert(0, [Read::Fail].into());
     wait_until(|| shared.status() == Status::Error(DISCONNECTED.into()));
     drop(session);
@@ -282,18 +493,18 @@ fn startup_failures_release_everything_and_report_the_first_cause() {
     // Hiding factory error.
     let mut broken = deps(None, dir.clone()).0;
     broken.hiding = Box::new(|| Err("no hidhide".into()));
-    assert_eq!(Emulation::start(&broken, shared.clone(), Source::Tca, notify.clone()).err().unwrap(), "no hidhide");
+    assert_eq!(Emulation::start(&broken, shared.clone(), Source::Hotas, notify.clone()).err().unwrap(), "no hidhide");
     // HidHide refuses to start.
     let (failing, _) = deps(Some("--cloak-state"), dir.clone());
-    assert!(Emulation::start(&failing, shared.clone(), Source::Tca, notify.clone()).err().unwrap().contains("isolation"));
-    // No TCA present: HidHide restored.
+    assert!(Emulation::start(&failing, shared.clone(), Source::Hotas, notify.clone()).err().unwrap().contains("isolation"));
+    // No controller present: HidHide restored.
     let (no_tca, _) = deps(None, dir.clone());
-    assert!(Emulation::start(&no_tca, shared.clone(), Source::Tca, notify.clone()).err().unwrap().contains("exactly one"));
+    assert!(Emulation::start(&no_tca, shared.clone(), Source::Hotas, notify.clone()).err().unwrap().contains("supported Thrustmaster HOTAS"));
     assert!(!dir.join("hidhide-session.json").exists());
     // Pipe unavailable.
     pair();
     state().pipe_invalid = true;
-    assert!(Emulation::start(&no_tca, shared.clone(), Source::Tca, notify.clone()).err().unwrap().contains("already in use"));
+    assert!(Emulation::start(&no_tca, shared.clone(), Source::Hotas, notify.clone()).err().unwrap().contains("already in use"));
     state().pipe_invalid = false;
     // Device missing, and restoring HidHide then fails: the cleanup failure wins.
     let (restore_fails, fail) = deps(None, dir.clone());
@@ -307,10 +518,10 @@ fn startup_failures_release_everything_and_report_the_first_cause() {
         *fail_later.lock().unwrap() = Some("--dev-unhide".into());
         hiding
     });
-    assert_eq!(Emulation::start(&wrapped, shared.clone(), Source::Tca, notify.clone()).err().unwrap(), neo_daemon::hidhide::ERROR);
+    assert_eq!(Emulation::start(&wrapped, shared.clone(), Source::Hotas, notify.clone()).err().unwrap(), neo_daemon::hidhide::ERROR);
     // Device failure with clean restore reports the device error.
     let (device_fails, _) = deps(None, temp("failures2"));
-    assert!(Emulation::start(&device_fails, shared, Source::Tca, notify).err().unwrap().contains("could not start"));
+    assert!(Emulation::start(&device_fails, shared, Source::Hotas, notify).err().unwrap().contains("could not start"));
 }
 
 #[test]
@@ -322,7 +533,7 @@ fn restore_failure_after_a_clean_stop_is_reported() {
     let shared = Arc::new(Shared::new(dir.join("config.json"), config::defaults()));
     let (deps, fail) = deps(None, dir);
     let (notify, _) = counter();
-    let session = Emulation::start(&deps, shared.clone(), Source::Tca, notify).unwrap();
+    let session = Emulation::start(&deps, shared.clone(), Source::Hotas, notify).unwrap();
     *fail.lock().unwrap() = Some("--dev-unhide".into());
     drop(session);
     assert_eq!(shared.status(), Status::Error(neo_daemon::hidhide::ERROR.into()));

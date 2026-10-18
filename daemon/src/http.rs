@@ -1,5 +1,5 @@
 //! Loopback-only configuration page. Every API call needs the per-launch token and an exact Host header.
-use crate::{config, labels};
+use crate::{config, hid, labels, models};
 use crate::shared::Shared;
 use serde_json::json;
 use std::io::{Read, Write};
@@ -109,7 +109,21 @@ pub fn handle(request: &Request, shared: &Shared, port: u16, token: &str) -> Res
             Ok(count) => json_reply(200, json!({"saved": count})),
             Err(error) => json_reply(400, json!({"error": error})),
         },
-        ("GET", "/api/live") => json_reply(200, json!({"pressed": *shared.pressed.lock().unwrap(), "levers": *shared.levers.lock().unwrap(), "status": shared.status().label(), "links": *shared.links.lock().unwrap()})),
+        ("GET", "/api/devices") => match shared.present() {
+            Ok(devices) => {
+                let (_, config) = shared.config();
+                // While emulating, the session's controllers are the ones in use whatever the list says now.
+                let session = shared.devices.lock().unwrap().is_some();
+                let active: Vec<models::DeviceInfo> = devices.iter().filter(|d| session || hid::selected(&config.devices, d)).cloned().collect();
+                let ids: Vec<&str> = active.iter().map(|d| d.id.as_str()).collect();
+                json_reply(200, json!({"devices": devices, "active": ids, "setup": models::setup_key(&active), "profile": config.profile(&active), "default": config::default_profile(&active)}))
+            }
+            Err(error) => json_reply(400, json!({"error": error})),
+        },
+        ("GET", "/api/live") => json_reply(
+            200,
+            json!({"pressed": *shared.pressed.lock().unwrap(), "levers": *shared.levers.lock().unwrap(), "axes": *shared.axes.lock().unwrap(), "status": shared.status().label(), "links": *shared.links.lock().unwrap()}),
+        ),
         _ => json_reply(404, json!({"error": "Unknown request."})),
     }
 }

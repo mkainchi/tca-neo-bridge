@@ -3,9 +3,9 @@
 #![allow(dead_code, clippy::missing_safety_doc)]
 use neo_daemon::device::DeviceApi;
 use neo_daemon::driver::DriverApi;
-use neo_daemon::ffi::{self, GUID, HANDLE, HIDD_ATTRIBUTES, HIDP_CAPS, HRESULT, PCWSTR, SECURITY_ATTRIBUTES, SP_DEVICE_INTERFACE_DATA, SW_DEVICE_CREATE_INFO};
+use neo_daemon::ffi::{self, GUID, HANDLE, HIDD_ATTRIBUTES, HIDP_BUTTON_CAPS, HIDP_CAPS, HIDP_VALUE_CAPS, HRESULT, PCWSTR, SECURITY_ATTRIBUTES, SP_DEVICE_INTERFACE_DATA, SW_DEVICE_CREATE_INFO};
 use neo_daemon::hidhide::Runner;
-use neo_daemon::tca::HidApi;
+use neo_daemon::hid::HidApi;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::ffi::c_void;
 use std::path::Path;
@@ -37,12 +37,87 @@ pub struct Interface {
     pub attributes: bool,
     pub preparsed: bool,
     pub caps: i32,
+    /// Top-level collection (Generic Desktop joystick by default).
+    pub usage_page: u16,
+    pub usage: u16,
+    pub product: Option<String>,
+    pub button_caps: Vec<HIDP_BUTTON_CAPS>,
+    pub value_caps: Vec<HIDP_VALUE_CAPS>,
+    pub button_status: i32,
+    pub value_status: i32,
+    /// Fake generic reports: report[1..17] is the button bitmap, then one LE u32 per entry of `fields`.
+    pub fields: Vec<(u16, u16)>,
+    /// Usages HidP_GetUsages reports on top of the bitmap (out-of-range values included).
+    pub extra_usages: Vec<u16>,
+    pub usages_status: i32,
+    /// A usage whose value read fails.
+    pub failing_usage: Option<u16>,
 }
 
 impl Interface {
     pub fn new(pid: u16, input: u16) -> Self {
-        Self { path: format!(r"\\?\hid#vid_044f&pid_{pid:04x}#x"), vid: 0x044f, pid, input, open: true, attributes: true, preparsed: true, caps: ffi::HIDP_STATUS_SUCCESS }
+        Self::with_vid(0x044f, pid, input)
     }
+
+    pub fn with_vid(vid: u16, pid: u16, input: u16) -> Self {
+        Self {
+            path: format!(r"\\?\hid#vid_{vid:04x}&pid_{pid:04x}#x"),
+            vid,
+            pid,
+            input,
+            open: true,
+            attributes: true,
+            preparsed: true,
+            caps: ffi::HIDP_STATUS_SUCCESS,
+            usage_page: 1,
+            usage: 4,
+            product: None,
+            button_caps: Vec::new(),
+            value_caps: Vec::new(),
+            button_status: ffi::HIDP_STATUS_SUCCESS,
+            value_status: ffi::HIDP_STATUS_SUCCESS,
+            fields: Vec::new(),
+            extra_usages: Vec::new(),
+            usages_status: ffi::HIDP_STATUS_SUCCESS,
+            failing_usage: None,
+        }
+    }
+
+    /// A generic stick: buttons 1..=`buttons`, X/Y 0..1023, Z 0..255, Rz -128..127, an eight-way hat 0..7.
+    pub fn generic(vid: u16, pid: u16, buttons: u16) -> Self {
+        let mut interface = Self::with_vid(vid, pid, 64);
+        interface.product = Some("Fake Stick".into());
+        interface.button_caps = vec![button_range(1, buttons)];
+        interface.value_caps = vec![value_range(1, 0x30, 0x31, 0, 1023, 10), value(1, 0x32, 0, 255, 8), value(1, 0x35, -128, 127, 8), value(1, 0x39, 0, 7, 4)];
+        interface.fields = vec![(1, 0x30), (1, 0x31), (1, 0x32), (1, 0x35), (1, 0x39)];
+        interface
+    }
+}
+
+pub fn button_range(min: u16, max: u16) -> HIDP_BUTTON_CAPS {
+    HIDP_BUTTON_CAPS { UsagePage: 9, IsRange: 1, UsageMin: min, UsageMax: max, ..Default::default() }
+}
+
+pub fn value(page: u16, usage: u16, min: i32, max: i32, bits: u16) -> HIDP_VALUE_CAPS {
+    HIDP_VALUE_CAPS { UsagePage: page, UsageMin: usage, LogicalMin: min, LogicalMax: max, BitSize: bits, ..Default::default() }
+}
+
+pub fn value_range(page: u16, first: u16, last: u16, min: i32, max: i32, bits: u16) -> HIDP_VALUE_CAPS {
+    HIDP_VALUE_CAPS { IsRange: 1, UsageMax: last, ..value(page, first, min, max, bits) }
+}
+
+/// Report for `Interface::generic`-style fakes: pressed buttons, then one raw value per field.
+pub fn generic_report(length: usize, buttons: &[u16], values: &[u32]) -> Vec<u8> {
+    let mut report = vec![0u8; length];
+    report[0] = 1;
+    for button in buttons {
+        let bit = usize::from(button - 1);
+        report[1 + bit / 8] |= 1 << (bit % 8);
+    }
+    for (index, value) in values.iter().enumerate() {
+        report[17 + 4 * index..21 + 4 * index].copy_from_slice(&value.to_le_bytes());
+    }
+    report
 }
 
 pub enum Read {
@@ -61,6 +136,7 @@ pub struct State {
     pub next_handle: HANDLE,
     pub reads: HashMap<usize, VecDeque<Read>>,
     pub closed: Vec<HANDLE>,
+    pub freed_preparsed: Vec<isize>,
     pub list_destroyed: usize,
     // SwDevice
     pub sw_hr: HRESULT,
@@ -161,14 +237,65 @@ pub unsafe extern "system" fn preparsed(handle: HANDLE, out: *mut isize) -> u8 {
     u8::from(interface(handle).preparsed)
 }
 
-pub unsafe extern "system" fn free_preparsed(_: isize) -> u8 {
+pub unsafe extern "system" fn free_preparsed(data: isize) -> u8 {
+    state().freed_preparsed.push(data);
     1
 }
 
 pub unsafe extern "system" fn caps(data: isize, out: *mut HIDP_CAPS) -> i32 {
     let i = interface(data);
     (*out).InputReportByteLength = i.input;
+    (*out).UsagePage = i.usage_page;
+    (*out).Usage = i.usage;
+    (*out).counts[1] = i.button_caps.len() as u16;
+    (*out).counts[2] = i.value_caps.len() as u16;
     i.caps
+}
+
+pub unsafe extern "system" fn product(handle: HANDLE, buffer: *mut c_void, length: u32) -> u8 {
+    let Some(text) = interface(handle).product else { return 0 };
+    let units: Vec<u16> = text.encode_utf16().chain(Some(0)).take(length as usize / 2).collect();
+    std::ptr::copy_nonoverlapping(units.as_ptr(), buffer as *mut u16, units.len());
+    1
+}
+
+pub unsafe extern "system" fn button_caps(kind: i32, out: *mut HIDP_BUTTON_CAPS, length: *mut u16, data: isize) -> i32 {
+    assert_eq!(kind, ffi::HIDP_INPUT);
+    let i = interface(data);
+    assert_eq!(usize::from(*length), i.button_caps.len());
+    std::ptr::copy_nonoverlapping(i.button_caps.as_ptr(), out, i.button_caps.len());
+    i.button_status
+}
+
+pub unsafe extern "system" fn value_caps(kind: i32, out: *mut HIDP_VALUE_CAPS, length: *mut u16, data: isize) -> i32 {
+    assert_eq!(kind, ffi::HIDP_INPUT);
+    let i = interface(data);
+    assert_eq!(usize::from(*length), i.value_caps.len());
+    std::ptr::copy_nonoverlapping(i.value_caps.as_ptr(), out, i.value_caps.len());
+    i.value_status
+}
+
+pub unsafe extern "system" fn usages(_: i32, page: u16, _: u16, list: *mut u16, length: *mut u32, data: isize, report: *mut u8, report_length: u32) -> i32 {
+    assert_eq!(page, 9);
+    let i = interface(data);
+    let report = std::slice::from_raw_parts(report, report_length as usize);
+    let mut found: Vec<u16> = (0..128u16).filter(|bit| report[1 + usize::from(bit / 8)] & 1 << (bit % 8) != 0).map(|bit| bit + 1).collect();
+    found.extend(&i.extra_usages);
+    assert!(found.len() <= *length as usize);
+    std::ptr::copy_nonoverlapping(found.as_ptr(), list, found.len());
+    *length = found.len() as u32;
+    i.usages_status
+}
+
+pub unsafe extern "system" fn usage_value(_: i32, page: u16, _: u16, usage: u16, value: *mut u32, data: isize, report: *mut u8, report_length: u32) -> i32 {
+    let i = interface(data);
+    if i.failing_usage == Some(usage) {
+        return 0;
+    }
+    let report = std::slice::from_raw_parts(report, report_length as usize);
+    let index = i.fields.iter().position(|f| *f == (page, usage)).expect("field read that the fake does not describe");
+    *value = u32::from_le_bytes(report[17 + 4 * index..21 + 4 * index].try_into().unwrap());
+    ffi::HIDP_STATUS_SUCCESS
 }
 
 pub unsafe extern "system" fn read_file(handle: HANDLE, buffer: *mut u8, length: u32, read: *mut u32, _: *mut c_void) -> ffi::BOOL {
@@ -222,9 +349,14 @@ pub fn hid_api() -> HidApi {
         destroy_list,
         create_file,
         attributes,
+        product,
         preparsed,
         free_preparsed,
         caps,
+        button_caps,
+        value_caps,
+        usages,
+        usage_value,
         read_file,
         cancel_io,
         close,
@@ -339,7 +471,9 @@ pub fn hidhide_runner(fail: Arc<Mutex<Option<String>>>) -> Runner {
             "--inv-state" => "--inv-off".into(),
             "--dev-gaming" => serde_json::json!([{"devices": [
                 {"deviceInstancePath": "HID\\VID_044F&PID_0405\\A", "present": true, "gamingDevice": true},
-                {"deviceInstancePath": "HID\\VID_044F&PID_0407\\B", "present": true, "gamingDevice": true}]}])
+                {"deviceInstancePath": "HID\\VID_044F&PID_0407\\B", "present": true, "gamingDevice": true},
+                {"deviceInstancePath": "HID\\VID_044F&PID_B10A\\C", "present": true, "gamingDevice": true},
+                {"deviceInstancePath": "HID\\VID_1234&PID_0001\\D", "present": true, "gamingDevice": true}]}])
             .to_string(),
             "--app-reg" => {
                 apps.lock().unwrap().push(args[1].clone());

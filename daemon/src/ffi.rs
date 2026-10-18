@@ -16,6 +16,8 @@ pub const OPEN_EXISTING: u32 = 3;
 pub const ERROR_PIPE_CONNECTED: u32 = 535;
 pub const ERROR_ALREADY_EXISTS: u32 = 183;
 pub const HIDP_STATUS_SUCCESS: i32 = 0x0011_0000;
+/// HidP_Input report type.
+pub const HIDP_INPUT: i32 = 0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -57,6 +59,60 @@ pub struct HIDP_CAPS {
     pub FeatureReportByteLength: u16,
     pub Reserved: [u16; 17],
     pub counts: [u16; 10],
+}
+
+/// Input button capability; `UsageMin` is `NotRange.Usage` when `IsRange` is 0.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct HIDP_BUTTON_CAPS {
+    pub UsagePage: u16,
+    pub ReportID: u8,
+    pub IsAlias: u8,
+    pub BitField: u16,
+    pub LinkCollection: u16,
+    pub LinkUsage: u16,
+    pub LinkUsagePage: u16,
+    pub IsRange: u8,
+    pub IsStringRange: u8,
+    pub IsDesignatorRange: u8,
+    pub IsAbsolute: u8,
+    pub ReportCount: u16,
+    pub Reserved2: u16,
+    pub Reserved: [u32; 9],
+    pub UsageMin: u16,
+    pub UsageMax: u16,
+    pub Range: [u16; 6],
+}
+
+/// Input value capability; `UsageMin` is `NotRange.Usage` when `IsRange` is 0.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct HIDP_VALUE_CAPS {
+    pub UsagePage: u16,
+    pub ReportID: u8,
+    pub IsAlias: u8,
+    pub BitField: u16,
+    pub LinkCollection: u16,
+    pub LinkUsage: u16,
+    pub LinkUsagePage: u16,
+    pub IsRange: u8,
+    pub IsStringRange: u8,
+    pub IsDesignatorRange: u8,
+    pub IsAbsolute: u8,
+    pub HasNull: u8,
+    pub Reserved: u8,
+    pub BitSize: u16,
+    pub ReportCount: u16,
+    pub Reserved2: [u16; 5],
+    pub UnitsExp: u32,
+    pub Units: u32,
+    pub LogicalMin: i32,
+    pub LogicalMax: i32,
+    pub PhysicalMin: i32,
+    pub PhysicalMax: i32,
+    pub UsageMin: u16,
+    pub UsageMax: u16,
+    pub Range: [u16; 6],
 }
 
 #[repr(C)]
@@ -193,6 +249,11 @@ extern "system" {
     pub fn HidD_GetPreparsedData(device: HANDLE, data: *mut isize) -> u8;
     pub fn HidD_FreePreparsedData(data: isize) -> u8;
     pub fn HidP_GetCaps(data: isize, caps: *mut HIDP_CAPS) -> i32;
+    pub fn HidD_GetProductString(device: HANDLE, buffer: *mut c_void, length: u32) -> u8;
+    pub fn HidP_GetButtonCaps(kind: i32, caps: *mut HIDP_BUTTON_CAPS, length: *mut u16, data: isize) -> i32;
+    pub fn HidP_GetValueCaps(kind: i32, caps: *mut HIDP_VALUE_CAPS, length: *mut u16, data: isize) -> i32;
+    pub fn HidP_GetUsages(kind: i32, page: u16, collection: u16, usages: *mut u16, length: *mut u32, data: isize, report: *mut u8, report_length: u32) -> i32;
+    pub fn HidP_GetUsageValue(kind: i32, page: u16, collection: u16, usage: u16, value: *mut u32, data: isize, report: *mut u8, report_length: u32) -> i32;
 }
 
 #[link(name = "cfgmgr32", kind = "raw-dylib")]

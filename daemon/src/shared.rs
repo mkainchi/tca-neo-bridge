@@ -1,5 +1,8 @@
 //! State shared by the tray, the emulation loop and the configuration page.
 use crate::config::{self, Config};
+use crate::hid::{self, HidApi};
+use crate::models::DeviceInfo;
+use std::collections::BTreeMap;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
@@ -32,12 +35,12 @@ impl Status {
 /// What the running session holds, for the page's status pills; None while idle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Links {
-    /// "tca" or "validation".
+    /// "hotas" or "validation".
     pub source: &'static str,
-    /// HidHide hides the TCA from other applications.
+    /// HidHide hides the controllers from other applications.
     pub hidden: bool,
-    /// Both TCA devices are open.
-    pub tca: bool,
+    /// Controllers open for reading.
+    pub inputs: usize,
     /// The virtual NEO software device exists.
     pub virtual_neo: bool,
 }
@@ -47,8 +50,14 @@ pub struct Shared {
     /// Generation counter lets the emulation loop hot-reload without locking every frame.
     pub config: RwLock<(u64, Config)>,
     pub pressed: Mutex<Vec<String>>,
-    /// Latest quadrant lever positions (left, right) while emulating from the TCA.
+    /// Latest travel of the split High-G levers while emulating.
     pub levers: Mutex<Option<[f64; 2]>>,
+    /// Latest axis positions (-1..1) per device while emulating, for axis detection on the page.
+    pub axes: Mutex<BTreeMap<String, Vec<f64>>>,
+    /// The session's controllers while emulating from them.
+    pub devices: Mutex<Option<Vec<DeviceInfo>>>,
+    /// Lists present controllers while idle (the configuration page); None in tests that need no hardware.
+    pub hid: Option<HidApi>,
     pub status: Mutex<Status>,
     pub links: Mutex<Option<Links>>,
     /// Private diagnostics (status changes, panics). Never contains device paths or serials.
@@ -64,7 +73,31 @@ pub fn append(path: &std::path::Path, text: &str) {
 
 impl Shared {
     pub fn new(config_path: PathBuf, config: Config) -> Self {
-        Self { config_path, config: RwLock::new((0, config)), pressed: Mutex::new(Vec::new()), levers: Mutex::new(None), status: Mutex::new(Status::Idle), links: Mutex::new(None), log: None }
+        Self {
+            config_path,
+            config: RwLock::new((0, config)),
+            pressed: Mutex::new(Vec::new()),
+            levers: Mutex::new(None),
+            axes: Mutex::new(BTreeMap::new()),
+            devices: Mutex::new(None),
+            hid: None,
+            status: Mutex::new(Status::Idle),
+            links: Mutex::new(None),
+            log: None,
+        }
+    }
+
+    pub fn with_hid(mut self, hid: HidApi) -> Self {
+        self.hid = Some(hid);
+        self
+    }
+
+    /// The session's controllers while emulating from them, otherwise the controllers present now.
+    pub fn present(&self) -> Result<Vec<DeviceInfo>, String> {
+        if let Some(devices) = self.devices.lock().unwrap().clone() {
+            return Ok(devices);
+        }
+        self.hid.map_or(Ok(Vec::new()), |api| hid::list(&api))
     }
 
     pub fn with_log(mut self, path: PathBuf) -> Self {

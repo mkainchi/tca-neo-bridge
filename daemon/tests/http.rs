@@ -1,4 +1,6 @@
+mod common;
 use neo_daemon::config;
+use neo_daemon::models;
 use neo_daemon::http::{self, Request, Server};
 use neo_daemon::shared::{Links, Shared, Status};
 use std::io::{Read, Write};
@@ -72,20 +74,24 @@ fn routes_assets_tokens_and_host_checks() {
     assert_eq!(value["links"], serde_json::Value::Null);
     assert!(value["profile"].as_str().unwrap().ends_with("config.json"));
     assert_eq!(value["config"], value["defaults"]);
-    shared.pressed.lock().unwrap().push("s5".into());
+    shared.pressed.lock().unwrap().push("tca-stick/b5".into());
     shared.set_status(Status::Emulating);
-    assert_eq!(json(&get("/api/live", "secret").body), serde_json::json!({"pressed": ["s5"], "levers": null, "status": "Emulating", "links": null}));
-    *shared.links.lock().unwrap() = Some(Links { source: "tca", hidden: true, tca: true, virtual_neo: true });
-    assert_eq!(json(&get("/api/live", "secret").body)["links"], serde_json::json!({"source": "tca", "hidden": true, "tca": true, "virtual_neo": true}));
+    assert_eq!(json(&get("/api/live", "secret").body), serde_json::json!({"pressed": ["tca-stick/b5"], "levers": null, "axes": {}, "status": "Emulating", "links": null}));
+    *shared.links.lock().unwrap() = Some(Links { source: "hotas", hidden: true, inputs: 2, virtual_neo: true });
+    assert_eq!(json(&get("/api/live", "secret").body)["links"], serde_json::json!({"source": "hotas", "hidden": true, "inputs": 2, "virtual_neo": true}));
     *shared.levers.lock().unwrap() = Some([0.25, 1.0]);
-    assert_eq!(json(&get("/api/live", "secret").body)["levers"], serde_json::json!([0.25, 1.0]));
+    shared.axes.lock().unwrap().insert("tca-quadrant".into(), vec![-1.0, 0.5]);
+    let live = json(&get("/api/live", "secret").body);
+    assert_eq!((&live["levers"], &live["axes"]), (&serde_json::json!([0.25, 1.0]), &serde_json::json!({"tca-quadrant": [-1.0, 0.5]})));
 }
 
 #[test]
 fn saving_validates_persists_and_hot_reloads() {
     let shared = shared("save");
     let mut cfg = config::defaults();
-    cfg.buttons.insert("q9".into(), vec![15]);
+    let mut profile = config::tca_profile();
+    profile.buttons.insert("tca-quadrant/b9".into(), vec![15]);
+    cfg.setups.insert(config::TCA_SETUP.into(), profile);
     let put = |body: &str| http::handle(&request("PUT", "/api/config", "t", body), &shared, 8000, "t");
     let saved = put(&config::to_json(&cfg));
     assert_eq!((saved.status, json(&saved.body)), (200, serde_json::json!({"saved": true, "running": false})));
@@ -97,6 +103,40 @@ fn saving_validates_persists_and_hot_reloads() {
     assert_eq!(rejected.status, 400);
     assert!(json(&rejected.body)["error"].as_str().unwrap().contains("Deadzone"));
     assert_eq!(shared.generation(), 2);
+}
+
+#[test]
+fn devices_lists_present_controllers_with_the_active_setup() {
+    let _g = common::guard();
+    common::state().interfaces = vec![common::Interface::new(0x0405, 64), common::Interface::new(0x0407, 44), common::Interface::generic(0x1234, 0x0001, 4)];
+    let dir = std::env::temp_dir().join(format!("neo-http-devices-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let shared = Shared::new(dir.join("config.json"), config::defaults()).with_hid(common::hid_api());
+    let get = |shared: &Shared| json(&http::handle(&request("GET", "/api/devices", "t", ""), shared, 8000, "t").body);
+    // Auto selection: the two Thrustmaster devices; their setup has the TCA default.
+    let value = get(&shared);
+    assert_eq!(value["devices"].as_array().unwrap().len(), 3);
+    assert_eq!(value["active"], serde_json::json!(["tca-stick", "tca-quadrant"]));
+    assert_eq!(value["setup"], config::TCA_SETUP);
+    assert_eq!(value["profile"], value["default"]);
+    assert_eq!(value["profile"]["axes"]["roll"]["axis"], "x");
+    assert_eq!(value["devices"][0]["layout"]["axes"][0], serde_json::json!({"name": "x", "max": 16383}));
+    // Explicit selection.
+    let mut cfg = config::defaults();
+    cfg.devices = vec!["1234-0001".into()];
+    shared.save(cfg).unwrap();
+    assert_eq!(get(&shared)["setup"], "1234-0001");
+    // While emulating, the session's devices are in use whatever the list says.
+    *shared.devices.lock().unwrap() = Some(vec![models::tca_stick()]);
+    assert_eq!(get(&shared)["active"], serde_json::json!(["tca-stick"]));
+    // Listing failures are reported; without a HID table nothing is listed.
+    common::state().list_invalid = true;
+    let failing = Shared::new(dir.join("config.json"), config::defaults()).with_hid(common::hid_api());
+    let response = http::handle(&request("GET", "/api/devices", "t", ""), &failing, 8000, "t");
+    assert_eq!(response.status, 400);
+    assert!(json(&response.body)["error"].as_str().unwrap().contains("could not list"));
+    assert_eq!(get(&Shared::new(dir.join("config.json"), config::defaults()))["devices"], serde_json::json!([]));
 }
 
 #[test]
@@ -124,7 +164,7 @@ fn live_server_serves_rejects_and_stops() {
     assert_eq!(server.url(), format!("http://127.0.0.1:{}/#tok", server.port));
     let host = format!("Host: 127.0.0.1:{}", server.port);
     let page = exchange(server.port, format!("GET / HTTP/1.1\r\n{host}\r\n\r\n").as_bytes());
-    assert!(page.starts_with("HTTP/1.1 200 OK") && page.contains("TCA-NEO bridge configuration"));
+    assert!(page.starts_with("HTTP/1.1 200 OK") && page.contains("Any-TM-HOTAS bridge configuration"));
     let body = config::to_json(&config::defaults());
     let head = format!("PUT /api/config HTTP/1.1\r\n{host}\r\nX-Neo-Token: tok\r\nContent-Length: {}\r\n\r\n", body.len());
     // Split across two writes to exercise incremental reads.

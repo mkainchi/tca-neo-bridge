@@ -6,6 +6,14 @@ use std::time::Duration;
 
 const STICK: &str = r"HID\VID_044F&PID_0405&MI_00\7&ABC";
 const QUADRANT: &str = r"HID\VID_044F&PID_0407\7&DEF";
+/// The bridge's own virtual NEO: never hidden.
+const NEO: &str = r"HID\VID_044F&PID_2800\1&NEO";
+const OTHER_VENDOR: &str = r"HID\VID_1234&PID_0001\1&X";
+
+/// Default selection: every Thrustmaster joystick except the virtual NEO.
+fn thrustmaster(vid: u16, pid: u16) -> bool {
+    neo_daemon::models::wanted(&[], vid, pid)
+}
 
 #[derive(Clone)]
 struct Cli {
@@ -15,7 +23,6 @@ struct Cli {
     inverse: String,
     gaming: String,
     fail: Option<String>,
-    skip: usize,
     garbage: Option<String>,
     log: Vec<String>,
 }
@@ -29,7 +36,6 @@ impl Default for Cli {
             inverse: "--inv-off".into(),
             gaming: gaming(&[(STICK, true, true), (QUADRANT, true, true)]),
             fail: None,
-            skip: 0,
             garbage: None,
             log: Vec::new(),
         }
@@ -48,10 +54,7 @@ fn runner(cli: &Arc<Mutex<Cli>>) -> Runner {
         let command = args.join(" ");
         c.log.push(command.clone());
         if c.fail.as_deref() == Some(args[0].as_str()) {
-            if c.skip == 0 {
-                return Ok((Some(1), String::new()));
-            }
-            c.skip -= 1;
+            return Ok((Some(1), String::new()));
         }
         if c.garbage.as_deref() == Some(args[0].as_str()) {
             return Ok((Some(0), "garbage".into()));
@@ -138,7 +141,7 @@ fn session_hides_registers_verifies_and_restores_exactly() {
     let dir = temp("session");
     let cli = Arc::new(Mutex::new(Cli { apps: vec![r"C:\other.exe".into()], ..Default::default() }));
     let mut hiding = hiding(&cli, &dir).unwrap();
-    hiding.start().unwrap();
+    hiding.start(&thrustmaster).unwrap();
     {
         let c = cli.lock().unwrap();
         assert_eq!(c.cloak, "--cloak-on");
@@ -160,7 +163,7 @@ fn already_hidden_devices_and_registered_apps_are_left_alone() {
     let dir = temp("existing");
     let cli = Arc::new(Mutex::new(Cli { hidden: [STICK.to_string()].into(), apps: vec![r"c:\NEO\neo-daemon.exe".into()], cloak: "--cloak-on".into(), ..Default::default() }));
     let mut hiding = hiding(&cli, &dir).unwrap();
-    hiding.start().unwrap();
+    hiding.start(&thrustmaster).unwrap();
     hiding.close().unwrap();
     let c = cli.lock().unwrap();
     assert_eq!((c.cloak.as_str(), c.hidden.len(), c.apps.len()), ("--cloak-on", 1, 1));
@@ -172,10 +175,10 @@ fn start_refusals() {
         (Cli { inverse: "--inv-on".into(), ..Default::default() }, "inverse"),
         (Cli { cloak: "weird".into(), ..Default::default() }, "inverse"),
         (Cli { apps: vec![r"C:\Steam\steam.exe".into()], ..Default::default() }, "Remove Steam"),
-        (Cli { gaming: gaming(&[(STICK, true, true)]), ..Default::default() }, "both supported"),
-        (Cli { gaming: gaming(&[(QUADRANT, true, true), (r"HID\VID_044F&PID_04060", true, true)]), ..Default::default() }, "both supported"),
-        (Cli { gaming: gaming(&[(STICK, false, true), (QUADRANT, true, true)]), ..Default::default() }, "both supported"),
-        (Cli { gaming: gaming(&[(STICK, true, false), (QUADRANT, true, true)]), ..Default::default() }, "both supported"),
+        (Cli { gaming: gaming(&[]), ..Default::default() }, "selected controllers"),
+        (Cli { gaming: gaming(&[(r"HID\VID_044F&PID_04060", true, true), (NEO, true, true), (OTHER_VENDOR, true, true)]), ..Default::default() }, "selected controllers"),
+        (Cli { gaming: gaming(&[(STICK, false, true)]), ..Default::default() }, "selected controllers"),
+        (Cli { gaming: gaming(&[(STICK, true, false)]), ..Default::default() }, "selected controllers"),
         (Cli { hidden: ["OTHER".to_string()].into(), ..Default::default() }, "other hidden devices"),
         (Cli { gaming: "{}".into(), ..Default::default() }, "isolation failed"),
         (Cli { gaming: "[".into(), ..Default::default() }, "isolation failed"),
@@ -188,8 +191,32 @@ fn start_refusals() {
     for (state, message) in cases {
         let dir = temp("refusal");
         let mut hiding = hiding(&Arc::new(Mutex::new(state)), &dir).unwrap();
-        assert!(hiding.start().unwrap_err().contains(message), "{message}");
+        assert!(hiding.start(&thrustmaster).unwrap_err().contains(message), "{message}");
     }
+}
+
+#[test]
+fn instance_paths_yield_complete_ids_only() {
+    assert_eq!(hidhide::ids(STICK), Some((0x044f, 0x0405)));
+    assert_eq!(hidhide::ids(r"USB\VID_044F&PID_B10A"), Some((0x044f, 0xb10a)));
+    for bad in [r"HID\NOTHING", "VID_04", "VID_044F", "VID_044F&PXD_0405", "VID_044F&PID_04", "VID_044F&PID_04050", "VID_+44F&PID_0405", "VID_044F&PID_+405", "VID_04\u{e9}F&PID_0405", "VID_044F&PID_04\u{e9}"] {
+        assert_eq!(hidhide::ids(bad), None, "{bad}");
+    }
+}
+
+#[test]
+fn only_wanted_controllers_are_hidden() {
+    let dir = temp("wanted");
+    let cli = Arc::new(Mutex::new(Cli { gaming: gaming(&[(STICK, true, true), (NEO, true, true), (OTHER_VENDOR, true, true)]), ..Default::default() }));
+    let mut hiding = hiding(&cli, &dir).unwrap();
+    hiding.start(&thrustmaster).unwrap();
+    assert_eq!(cli.lock().unwrap().hidden, [STICK.to_string()].into());
+    hiding.close().unwrap();
+    // An explicit selection can take another vendor's device.
+    let mut hiding = Hiding::new(Some(PathBuf::from("HidHideCLI.exe")), runner(&cli), &dir, &apps()).unwrap();
+    hiding.start(&|vid, pid| neo_daemon::models::wanted(&["1234-0001".into()], vid, pid)).unwrap();
+    assert_eq!(cli.lock().unwrap().hidden, [OTHER_VENDOR.to_string()].into());
+    hiding.close().unwrap();
 }
 
 #[test]
@@ -199,7 +226,7 @@ fn group_without_device_list_is_ignored() {
     let mut groups: Vec<serde_json::Value> = serde_json::from_str(&state.gaming).unwrap();
     groups.push(serde_json::json!({"name": "empty"}));
     state.gaming = serde_json::to_string(&groups).unwrap();
-    hiding(&Arc::new(Mutex::new(state)), &dir).unwrap().start().unwrap();
+    hiding(&Arc::new(Mutex::new(state)), &dir).unwrap().start(&thrustmaster).unwrap();
 }
 
 #[test]
@@ -207,16 +234,13 @@ fn every_cli_failure_surfaces_the_isolation_error() {
     for failing in ["--dev-list", "--app-list", "--cloak-state", "--inv-state", "--dev-gaming", "--app-reg", "--dev-hide", "--cloak-on"] {
         let dir = temp("fail");
         let cli = Arc::new(Mutex::new(Cli { fail: Some(failing.into()), ..Default::default() }));
-        assert_eq!(hiding(&cli, &dir).unwrap().start().unwrap_err(), hidhide::ERROR, "{failing}");
+        assert_eq!(hiding(&cli, &dir).unwrap().start(&thrustmaster).unwrap_err(), hidhide::ERROR, "{failing}");
     }
-    let dir = temp("secondgaming");
-    let cli = Arc::new(Mutex::new(Cli { fail: Some("--dev-gaming".into()), skip: 1, ..Default::default() }));
-    assert_eq!(hiding(&cli, &dir).unwrap().start().unwrap_err(), hidhide::ERROR);
     for failing in ["--app-list", "--cloak-state", "--inv-state"] {
         let dir = temp("verifycall");
         let cli = Arc::new(Mutex::new(Cli::default()));
         let mut h = hiding(&cli, &dir).unwrap();
-        h.start().unwrap();
+        h.start(&thrustmaster).unwrap();
         cli.lock().unwrap().fail = Some(failing.into());
         assert_eq!(h.verify().unwrap_err(), hidhide::ERROR, "{failing}");
     }
@@ -225,7 +249,7 @@ fn every_cli_failure_surfaces_the_isolation_error() {
         let dir = temp("verify");
         let cli = Arc::new(Mutex::new(Cli::default()));
         let mut h = hiding(&cli, &dir).unwrap();
-        h.start().unwrap();
+        h.start(&thrustmaster).unwrap();
         let mut c = cli.lock().unwrap();
         if field == "cloak" { c.cloak = value.into() } else { c.inverse = value.into() }
         drop(c);
@@ -235,7 +259,7 @@ fn every_cli_failure_surfaces_the_isolation_error() {
         let dir = temp("verify2");
         let cli = Arc::new(Mutex::new(Cli::default()));
         let mut h = hiding(&cli, &dir).unwrap();
-        h.start().unwrap();
+        h.start(&thrustmaster).unwrap();
         let mut c = cli.lock().unwrap();
         match change {
             0 => { c.hidden.clear(); }
@@ -254,21 +278,21 @@ fn close_failures_and_unwritable_journal() {
         let dir = temp("closefail");
         let cli = Arc::new(Mutex::new(Cli::default()));
         let mut h = hiding(&cli, &dir).unwrap();
-        h.start().unwrap();
+        h.start(&thrustmaster).unwrap();
         cli.lock().unwrap().fail = Some(failing.into());
         assert_eq!(h.close().unwrap_err(), hidhide::ERROR);
     }
     let dir = temp("journalgone");
     let cli = Arc::new(Mutex::new(Cli::default()));
     let mut h = hiding(&cli, &dir).unwrap();
-    h.start().unwrap();
+    h.start(&thrustmaster).unwrap();
     std::fs::remove_file(dir.join("hidhide-session.json")).unwrap();
     assert_eq!(h.close().unwrap_err(), hidhide::ERROR);
     let dir = temp("nodir").join("absent");
     let mut h = Hiding::new(Some("x".into()), runner(&cli), &dir, &[]).unwrap();
     cli.lock().unwrap().hidden.clear();
     cli.lock().unwrap().cloak = "--cloak-off".into();
-    assert_eq!(h.start().unwrap_err(), hidhide::ERROR);
+    assert_eq!(h.start(&thrustmaster).unwrap_err(), hidhide::ERROR);
 }
 
 #[test]

@@ -1,9 +1,11 @@
-//! NEO report 01 encoding and the TCA-to-NEO mapping (port of tca_to_neo.py / contract_probe.py).
-use crate::config::{Config, Device, Direction, HatMode, Lever, SplitHighG};
+//! NEO report 01 encoding and the controller-to-NEO mapping (port of tca_to_neo.py / contract_probe.py,
+//! generalised from the TCA pair to any set of joysticks).
+use crate::config::{Binding, Config, Control, Direction, HatMode, Profile, SplitHighG};
+use crate::hid::InputState;
+use crate::models::DeviceInfo;
+use std::collections::BTreeMap;
 
 pub const REPORT_LEN: usize = 64;
-pub const STICK_LEN: usize = 64;
-pub const QUADRANT_LEN: usize = 44;
 pub type Report = [u8; REPORT_LEN];
 
 /// POV positions 0..7 as (x, y); 8 is neutral.
@@ -38,24 +40,21 @@ pub fn unit16(value: f64) -> u16 {
     ((value.clamp(-1.0, 1.0) + 1.0) * 65535.0 / 2.0).round_ties_even() as u16
 }
 
-/// Last meaningful movement wins; simultaneous samples keep ownership (app/model.py).
-#[derive(Debug, Clone)]
+/// Last meaningful movement wins; simultaneous moves keep ownership; the last axis owns it at start (app/model.py).
+#[derive(Debug, Clone, Default)]
 pub struct ThrottleSelector {
-    previous: Option<[f64; 2]>,
-    active: usize,
-}
-
-impl Default for ThrottleSelector {
-    fn default() -> Self {
-        Self { previous: None, active: 1 }
-    }
+    previous: Option<Vec<f64>>,
+    active: Option<usize>,
 }
 
 impl ThrottleSelector {
-    pub fn read(&mut self, stick: f64, quadrant: f64) -> f64 {
-        let values = [stick, quadrant];
-        let previous = self.previous.get_or_insert(values);
-        let moved: Vec<usize> = (0..2)
+    /// (owner index, its value); None without throttle axes.
+    pub fn read(&mut self, values: &[f64]) -> Option<(usize, f64)> {
+        if values.is_empty() {
+            return None;
+        }
+        let previous = self.previous.get_or_insert_with(|| values.to_vec());
+        let moved: Vec<usize> = (0..values.len())
             .filter(|&index| {
                 let changed = (values[index] - previous[index]).abs() > 0.02;
                 previous[index] = if changed { values[index] } else { previous[index] };
@@ -63,151 +62,206 @@ impl ThrottleSelector {
             })
             .collect();
         if moved.len() == 1 {
-            self.active = moved[0];
+            self.active = Some(moved[0]);
         }
-        values[self.active]
+        let active = *self.active.get_or_insert(values.len() - 1);
+        Some((active, values[active]))
     }
 }
 
 pub const HAT_NAMES: [&str; 8] = ["up", "up-right", "right", "down-right", "down", "down-left", "left", "up-left"];
 
-/// Sidestick hat direction (byte 7 low nibble), None when centred.
-pub fn hat(stick: &[u8]) -> Option<&'static str> {
-    HAT_NAMES.get(usize::from(stick[7] & 15)).copied()
-}
-
-/// Quadrant left and right lever travel, 0.0 at idle to 1.0 fully forward. The TCA reports forward as the low raw
-/// value (idle 65535, full forward 0), which is also the NEO Z convention, so the throttle axis itself uses raw values.
-pub fn levers(quadrant: &[u8]) -> [f64; 2] {
-    [3, 5].map(|offset| 1.0 - f64::from(u16::from_le_bytes([quadrant[offset], quadrant[offset + 1]])) / 65535.0)
-}
-
-/// One lever at or above the forward threshold and the other at or below the back threshold, in either order.
+/// One lever split rule check: one lever at or above the forward threshold and the other at or below the back one.
 pub fn split(rule: &SplitHighG, levers: [f64; 2]) -> bool {
     rule.enabled && levers[0].max(levers[1]) >= rule.forward && levers[0].min(levers[1]) <= rule.back
 }
 
-/// Pressed TCA sources as config keys ("s1".."s17", "q1".."q31").
-pub fn pressed(stick: &[u8], quadrant: &[u8]) -> Vec<String> {
-    let (stick_mask, quadrant_mask) = masks(stick, quadrant);
-    let mut result: Vec<String> = (0..17).filter(|i| stick_mask & 1 << i != 0).map(|i| format!("s{}", i + 1)).collect();
-    result.extend((0..31).filter(|i| quadrant_mask & 1 << i != 0).map(|i| format!("q{}", i + 1)));
+/// Pressed sources as profile keys, per device in order: buttons, then the hat's cardinal components
+/// ("tca-stick/b1", "tca-stick/hat-up"), matching the mappable hat sources.
+pub fn pressed(devices: &[DeviceInfo], inputs: &[Option<InputState>]) -> Vec<String> {
+    let mut result = Vec::new();
+    for (device, state) in devices.iter().zip(inputs) {
+        let Some(state) = state else { continue };
+        result.extend((0..128).filter(|i| state.buttons & 1 << i != 0).map(|i| format!("{}/b{}", device.id, i + 1)));
+        let hat = state.hat.map_or("", |h| HAT_NAMES[usize::from(h)]);
+        result.extend(hat.split('-').filter(|d| !d.is_empty()).map(|d| format!("{}/hat-{d}", device.id)));
+    }
     result
 }
 
-fn masks(stick: &[u8], quadrant: &[u8]) -> (u32, u32) {
-    let stick_mask = u32::from_le_bytes([stick[8], stick[9], stick[10], 0]) & 0x1ffff;
-    let quadrant_mask = u32::from(u16::from_le_bytes([quadrant[1], quadrant[2]]))
-        | u32::from(quadrant[9] & 15) << 16
-        | (u32::from(u16::from_le_bytes([quadrant[12], quadrant[13]])) & 0x7ff) << 20;
-    (stick_mask, quadrant_mask)
+/// Live axis positions per device, -1 at the low raw end to 1 at the high end.
+pub fn axes(devices: &[DeviceInfo], inputs: &[Option<InputState>]) -> BTreeMap<String, Vec<f64>> {
+    devices
+        .iter()
+        .zip(inputs)
+        .filter_map(|(device, state)| {
+            let state = state.as_ref()?;
+            Some((device.id.clone(), device.layout.axes.iter().zip(&state.axes).map(|(a, &v)| 2.0 * f64::from(v.min(a.max)) / f64::from(a.max) - 1.0).collect()))
+        })
+        .collect()
 }
 
-fn valid(report: Option<&[u8]>, length: usize) -> Option<&[u8]> {
-    report.filter(|r| r.len() == length && r[0] == 1)
+#[derive(Debug, Clone, Copy)]
+struct Bound {
+    device: usize,
+    axis: usize,
+    max: u32,
+    invert: bool,
+}
+
+#[derive(Debug, Clone)]
+struct Slot {
+    targets: Vec<u16>,
+    pov: Vec<Option<Direction>>,
+    hat_targets: [u16; 4],
+    hat_pov: [Option<Direction>; 4],
 }
 
 #[derive(Debug, Clone)]
 pub struct Mapper {
-    config: Config,
-    stick_targets: [u16; 17],
-    quadrant_targets: [u16; 31],
-    stick_pov: [Option<Direction>; 17],
-    quadrant_pov: [Option<Direction>; 31],
-    hat_targets: [u16; 4],
-    hat_pov: [Option<Direction>; 4],
-    throttle: ThrottleSelector,
+    deadzone: f64,
+    strength: f64,
+    hat: HatMode,
+    camera: Option<usize>,
+    slots: Vec<Slot>,
+    roll: Option<Bound>,
+    pitch: Option<Bound>,
+    yaw: Option<Bound>,
+    throttle: Vec<Bound>,
+    rule: SplitHighG,
+    levers: Option<[Bound; 2]>,
+    selector: ThrottleSelector,
+}
+
+fn resolve(devices: &[DeviceInfo], binding: &Binding) -> Option<Bound> {
+    let device = devices.iter().position(|d| d.id == binding.device)?;
+    let axis = devices[device].layout.axis(&binding.axis)?;
+    Some(Bound { device, axis, max: devices[device].layout.axes[axis].max.max(1), invert: binding.invert })
 }
 
 impl Mapper {
-    /// The config must already be validated (config::validate).
-    pub fn new(config: &Config) -> Self {
-        let mut mapper = Self {
-            config: config.clone(),
-            stick_targets: [0; 17],
-            quadrant_targets: [0; 31],
-            stick_pov: [None; 17],
-            quadrant_pov: [None; 31],
-            hat_targets: [0; 4],
-            hat_pov: [None; 4],
-            throttle: ThrottleSelector::default(),
+    /// `devices` are the session's devices in input order. The config must already be validated; bindings and
+    /// sources naming absent devices, axes or buttons are ignored.
+    pub fn new(config: &Config, devices: &[DeviceInfo]) -> Self {
+        Self::with_profile(config, &config.profile(devices), devices)
+    }
+
+    pub fn with_profile(config: &Config, profile: &Profile, devices: &[DeviceInfo]) -> Self {
+        let mut slots: Vec<Slot> = devices
+            .iter()
+            .map(|d| Slot { targets: vec![0; usize::from(d.layout.buttons)], pov: vec![None; usize::from(d.layout.buttons)], hat_targets: [0; 4], hat_pov: [None; 4] })
+            .collect();
+        let locate = |key: &str| {
+            let (id, control) = crate::config::source(key)?;
+            Some((devices.iter().position(|d| d.id == id)?, control))
         };
-        for (key, targets) in &config.buttons {
+        for (key, targets) in &profile.buttons {
             let mask = targets.iter().fold(0u16, |mask, target| mask | 1 << (target - 1));
-            match crate::config::source(key).expect("validated source") {
-                (Device::Stick, index) => mapper.stick_targets[index] |= mask,
-                (Device::Quadrant, index) => mapper.quadrant_targets[index] |= mask,
-                (Device::Hat, index) => mapper.hat_targets[index] |= mask,
+            match locate(key) {
+                Some((device, Control::Button(index))) if index < slots[device].targets.len() => slots[device].targets[index] |= mask,
+                Some((device, Control::Hat(index))) => slots[device].hat_targets[index] |= mask,
+                _ => {}
             }
         }
-        for (key, direction) in &config.pov {
-            match crate::config::source(key).expect("validated source") {
-                (Device::Stick, index) => mapper.stick_pov[index] = Some(*direction),
-                (Device::Quadrant, index) => mapper.quadrant_pov[index] = Some(*direction),
-                (Device::Hat, index) => mapper.hat_pov[index] = Some(*direction),
+        for (key, direction) in &profile.pov {
+            match locate(key) {
+                Some((device, Control::Button(index))) if index < slots[device].pov.len() => slots[device].pov[index] = Some(*direction),
+                Some((device, Control::Hat(index))) => slots[device].hat_pov[index] = Some(*direction),
+                _ => {}
             }
         }
-        mapper
+        let hatted = |id: &str| devices.iter().position(|d| d.id == id && d.layout.hat);
+        let camera = profile.camera.as_deref().and_then(hatted).or_else(|| devices.iter().position(|d| d.layout.hat));
+        let axes = &profile.axes;
+        let bind = |binding: &Option<Binding>| binding.as_ref().and_then(|b| resolve(devices, b));
+        let levers: Vec<Bound> = profile.split_high_g.levers.iter().filter_map(|b| resolve(devices, b)).collect();
+        Self {
+            deadzone: config.deadzone,
+            strength: config.camera_strength,
+            hat: profile.hat,
+            camera,
+            slots,
+            roll: bind(&axes.roll),
+            pitch: bind(&axes.pitch),
+            yaw: bind(&axes.yaw),
+            throttle: axes.throttle.iter().filter_map(|b| resolve(devices, b)).collect(),
+            rule: profile.split_high_g.clone(),
+            levers: <[Bound; 2]>::try_from(levers).ok(),
+            selector: ThrottleSelector::default(),
+        }
     }
 
-    fn flight_axis(&self, raw: u32, maximum: u32, invert: bool) -> u16 {
-        let raw = raw.min(maximum);
-        if self.config.deadzone == 0.0 {
+    fn flight_axis(&self, bound: Option<Bound>, inputs: &[&InputState]) -> u16 {
+        let Some(bound) = bound else { return 32768 };
+        let (raw, maximum) = (u64::from(inputs[bound.device].axes[bound.axis].min(bound.max)), u64::from(bound.max));
+        if self.deadzone == 0.0 {
             let result = (raw * 65535 / maximum) as u16;
-            return if invert { 65535 - result } else { result };
+            return if bound.invert { 65535 - result } else { result };
         }
-        let value = centered(2.0 * f64::from(raw) / f64::from(maximum) - 1.0, self.config.deadzone);
-        unit16(if invert { -value } else { value })
+        let value = centered(2.0 * raw as f64 / maximum as f64 - 1.0, self.deadzone);
+        unit16(if bound.invert { -value } else { value })
     }
 
-    /// Missing or malformed input resets throttle ownership and yields the neutral report.
-    pub fn convert(&mut self, stick: Option<&[u8]>, quadrant: Option<&[u8]>) -> Report {
-        let (Some(stick), Some(quadrant)) = (valid(stick, STICK_LEN), valid(quadrant, QUADRANT_LEN)) else {
-            self.throttle = ThrottleSelector::default();
+    /// Lever travel of the split rule's two levers (0 idle, 1 fully forward), when both are bound and reporting.
+    pub fn levers(&self, inputs: &[Option<InputState>]) -> Option<[f64; 2]> {
+        let levers = self.levers?;
+        let travel = |b: Bound| {
+            let state = inputs.get(b.device)?.as_ref()?;
+            let fraction = f64::from(state.axes[b.axis]) / f64::from(b.max);
+            Some(if self.rule.reverse { fraction } else { 1.0 - fraction })
+        };
+        Some([travel(levers[0])?, travel(levers[1])?])
+    }
+
+    /// Missing input from any device resets throttle ownership and yields the neutral report.
+    pub fn convert(&mut self, inputs: &[Option<InputState>]) -> Report {
+        let present: Option<Vec<&InputState>> = inputs.iter().map(Option::as_ref).collect();
+        let Some(states) = present.filter(|s| s.len() == self.slots.len() && !s.is_empty()) else {
+            self.selector = ThrottleSelector::default();
             return neutral();
         };
-        let invert = &self.config.invert;
-        let roll = u32::from(u16::from_le_bytes([stick[1], stick[2]]));
-        let pitch = u32::from(u16::from_le_bytes([stick[3], stick[4]]));
-        let lever_offset = match self.config.throttle_lever {
-            Lever::Left => 3,
-            Lever::Right => 5,
-        };
-        let lever = u16::from_le_bytes([quadrant[lever_offset], quadrant[lever_offset + 1]]);
-        let active = self.throttle.read(2.0 * f64::from(stick[6]) / 255.0 - 1.0, 2.0 * f64::from(lever) / 65535.0 - 1.0);
-        let signed = |value: f64| if invert.throttle { -value } else { value };
-        let positions = levers(quadrant);
+        let values: Vec<f64> = self.throttle.iter().map(|b| 2.0 * f64::from(states[b.device].axes[b.axis].min(b.max)) / f64::from(b.max) - 1.0).collect();
+        let active = self.selector.read(&values);
+        let positions = self.levers(inputs);
         // Split High-G: the throttle follows the forward lever (the greater travel), converted back to the raw axis
-        // convention (2 * raw - 1 = 1 - 2 * travel) with the same inversion as normal throttle; NEO 5 is held below.
-        let split = split(&self.config.split_high_g, positions);
-        let throttle = if split { unit16(signed(1.0 - 2.0 * positions[0].max(positions[1]))) } else { unit16(signed(active)) };
-        let hat = HATS.get(usize::from(stick[7] & 15)).copied().unwrap_or((0, 0));
-        // Camera mode: the hat moves the mini-stick. Mapped mode: the camera rests and hat directions act as sources.
-        let mapped = self.config.hat == HatMode::Mapped;
-        let camera = if mapped { (0, 0) } else { hat };
-        let held = [hat.1 < 0, hat.0 > 0, hat.1 > 0, hat.0 < 0].map(|on| on && mapped);
-        let strength = self.config.camera_strength;
+        // convention with that lever's inversion; NEO 5 is held below.
+        let split = positions.is_some_and(|p| split(&self.rule, p));
+        let throttle = match (positions.filter(|_| split), active) {
+            (Some(p), _) => {
+                let lever = self.levers.unwrap()[usize::from(p[1] > p[0])];
+                let travel = p[0].max(p[1]);
+                let value = if self.rule.reverse { 2.0 * travel - 1.0 } else { 1.0 - 2.0 * travel };
+                unit16(if lever.invert { -value } else { value })
+            }
+            (None, Some((index, value))) => unit16(if self.throttle[index].invert { -value } else { value }),
+            (None, None) => 32768,
+        };
+        // Camera mode: the camera hat moves the mini-stick. Other hats, and every hat in mapped mode, act as sources.
+        let camera = self.camera.filter(|_| self.hat == HatMode::Camera);
+        let view = camera.and_then(|c| states[c].hat).map_or((0, 0), |h| HATS[usize::from(h)]);
         let axes = [
-            self.flight_axis(roll, 16383, invert.roll),
-            self.flight_axis(pitch, 16383, invert.pitch),
+            self.flight_axis(self.roll, &states),
+            self.flight_axis(self.pitch, &states),
             throttle,
-            unit16(f64::from(camera.0) * strength),
-            unit16(f64::from(camera.1) * strength),
-            self.flight_axis(u32::from(stick[5]), 255, invert.yaw),
+            unit16(f64::from(view.0) * self.strength),
+            unit16(f64::from(view.1) * self.strength),
+            self.flight_axis(self.yaw, &states),
             32768,
         ];
-        let (stick_mask, quadrant_mask) = masks(stick, quadrant);
         let mut buttons = u16::from(split) << 4;
         let mut order = (0i8, 0i8);
-        let sources = (0..17)
-            .filter(|i| stick_mask & 1 << i != 0)
-            .map(|i| (self.stick_targets[i], self.stick_pov[i]))
-            .chain((0..31).filter(|i| quadrant_mask & 1 << i != 0).map(|i| (self.quadrant_targets[i], self.quadrant_pov[i])))
-            .chain((0..4).filter(|&i| held[i]).map(|i| (self.hat_targets[i], self.hat_pov[i])));
-        for (targets, direction) in sources {
-            buttons |= targets;
-            let (x, y) = direction.map_or((0, 0), Direction::vector);
-            order = (order.0 + x, order.1 + y);
+        for (index, (slot, state)) in self.slots.iter().zip(&states).enumerate() {
+            let hat = state.hat.filter(|_| camera != Some(index)).map_or((0, 0), |h| HATS[usize::from(h)]);
+            let held = [hat.1 < 0, hat.0 > 0, hat.1 > 0, hat.0 < 0];
+            let sources = (0..slot.targets.len())
+                .filter(|&i| state.buttons & 1 << i != 0)
+                .map(|i| (slot.targets[i], slot.pov[i]))
+                .chain((0..4).filter(|&i| held[i]).map(|i| (slot.hat_targets[i], slot.hat_pov[i])));
+            for (targets, direction) in sources {
+                buttons |= targets;
+                let (x, y) = direction.map_or((0, 0), Direction::vector);
+                order = (order.0 + x, order.1 + y);
+            }
         }
         let order = (order.0.clamp(-1, 1), order.1.clamp(-1, 1));
         let hat = HATS.iter().position(|&h| h == order).map_or(8, |p| p as u8);
