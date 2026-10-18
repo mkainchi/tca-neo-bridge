@@ -1,92 +1,98 @@
 # Any-TM-HOTAS experimental bridge
 
-> **Experimental release line.** This branch (`release/any-tm-hotas-experimental-bridge`) extends TCA-NEO bridge to **any Thrustmaster HOTAS**: T.16000M + TWCS, HOTAS Warthog, T.Flight HOTAS X / 4 / One, TCA Boeing and others. **It has not been tested on those controllers by anyone on the project**; players are the testers.
+Fly **ACE COMBAT 8** with **any Thrustmaster HOTAS**, using the game's **native HOTAS controls**.
+
+ACE COMBAT 8 natively supports one HOTAS, the Thrustmaster T.Flight Hotas NEO. This bridge is a small Windows tray app plus a user-mode driver. Together they present your controllers to Windows as a virtual T.Flight Hotas NEO, so the game uses its NEO profile: separate throttle, camera mini-stick and native button actions. You choose which control drives which NEO control on a mapping page.
+
+> **Experimental and untested.** This is the experimental release line of [TCA-NEO bridge](https://github.com/mkainchi/tca-neo-bridge). The maintainer owns only the TCA Airbus sidestick + quadrant; nobody on the project has run this build on a T.16000M, TWCS, Warthog, T.Flight Hotas or TCA Boeing. Players are the testers.
 >
-> - Players: start with the **[guide for players](docs/EXPERIMENTAL-ANY-HOTAS.md)** (shipped as `EXPERIMENTAL.md` in the zip), and send a [HOTAS test report](https://github.com/mkainchi/tca-neo-bridge/issues/new?template=hotas-test-report.yml).
-> - Contributors: see [CONTRIBUTING.md](CONTRIBUTING.md). HOTAS support work goes to this branch; stable TCA fixes go to `main`.
->
-> Differences from the stable bridge described below: it is named "Any-TM-HOTAS bridge" in the tray, keeps its data in `%LOCALAPPDATA%\any-tm-hotas-bridge` (copying the stable profile once, never changing it), reads every Thrustmaster joystick through its HID description, keeps one mapping per set of controllers, lets you choose each axis source (with **Detect**) under *Axes and settings*, and adds `neo-daemon.exe --probe` for test reports. Everything about the TCA Airbus pair below still applies.
-
----
-
-# TCA-NEO bridge
-
-Fly **ACE COMBAT 8** with a **Thrustmaster TCA Sidestick Airbus Edition** and **TCA Quadrant Eng 1&2**, using the game's **native HOTAS controls**.
-
-ACE COMBAT 8 natively supports the Thrustmaster T.Flight Hotas NEO, but not the TCA Airbus Edition. TCA-NEO bridge is a small Windows tray application plus a user-mode driver. Together they present your TCA sidestick and quadrant to Windows as a virtual T.Flight Hotas NEO, so the game uses its NEO profile: separate throttle, camera mini-stick and native button actions. You choose which TCA control drives which NEO control on a visual mapping page.
-
-> **Status (October 2026):** the virtual NEO is recognised and read correctly by the Thrustmaster SDK, including ten-minute runs and live TCA input. In-game verification with ACE COMBAT 8 is in progress; please report your results in Issues. See [docs/ENGINEERING.md](docs/ENGINEERING.md) for the test evidence and known issues.
+> - **Players:** start with the [guide for players](docs/EXPERIMENTAL-ANY-HOTAS.md) (`EXPERIMENTAL.md` in the zip), then send a [HOTAS test report](https://github.com/mkainchi/tca-neo-bridge/issues/new?template=hotas-test-report.yml).
+> - **TCA Airbus owners:** the stable [TCA-NEO bridge](https://github.com/mkainchi/tca-neo-bridge/releases) is the tested choice.
+> - **Contributors:** see [CONTRIBUTING.md](CONTRIBUTING.md). HOTAS support goes to this branch, `release/any-tm-hotas-experimental-bridge`; stable fixes go to `main`.
 
 Not affiliated with Thrustmaster/Guillemot, Bandai Namco or Microsoft. See [Trademarks](#licence-and-trademarks).
 
 ## How it works
 
 ```text
-TCA Sidestick + Quadrant ─► TCA-NEO bridge (tray app) ─► virtual NEO driver ─► ACE COMBAT 8
-       (hidden from the game by HidHide)       your mapping          (user mode)
+Your HOTAS ─► Any-TM-HOTAS bridge (tray app) ─► virtual NEO driver ─► ACE COMBAT 8
+(hidden from the game by HidHide)   your mapping          (user mode)
 ```
 
-- The tray app reads the TCA devices, applies your mapping and streams NEO input reports to the driver.
-- **HidHide** hides the physical TCA devices from the game while emulating, so the game sees only the NEO.
-- The driver is a **user-mode** (UMDF) driver built from Microsoft's open-source sample. It is signed on your own PC at install time with a single-use certificate whose private key is deleted immediately; see [SECURITY.md](SECURITY.md).
+- The tray app reads your controllers, applies your mapping and streams NEO input reports to the driver.
+- Controllers are read through their own USB HID description: buttons, axes and hat. The TCA Airbus pair keeps the decoders tested on real hardware.
+- **HidHide** hides your physical controllers from the game while emulating, so the game sees only the NEO.
+- The driver is a **user-mode** (UMDF) driver built from Microsoft's open-source sample, the same one the stable bridge uses. It is signed on your own PC at install time with a single-use certificate whose private key is deleted immediately; see [SECURITY.md](SECURITY.md).
 
 ## Prerequisites
 
 - **Windows 11 x64**, build 22000 or later.
-- **TCA Sidestick Airbus Edition** (Pilot or Copilot) and **TCA Quadrant Eng 1&2**, both connected by USB. No Thrustmaster software is needed.
+- **A Thrustmaster HOTAS** connected by USB: stick, throttle, pedals or all of them. No Thrustmaster software is needed.
 - **[HidHide](https://github.com/nefarius/HidHide/releases)** by Nefarius, installed (reboot if its installer asks). Leave its application list free of Steam and keep "inverse application cloak" off.
 - **Administrator rights.** Creating the virtual device and installing the driver require them.
 - ACE COMBAT 8. If you play through Steam, **disable Steam Input** for the game so Steam doesn't remap the NEO.
 
 ## Installation
 
-1. Download `tca-neo-bridge-<version>-x64.zip` from [Releases](../../releases). Optionally check it against the `.sha256` file published next to it.
-2. Extract it to a permanent folder, for example `C:\Tools\tca-neo-bridge`. Keep `neo-daemon.exe` and the `driver` folder together.
-3. Right-click `neo-daemon.exe` → **Run as administrator**. Its cyan bridge icon appears in the notification area; the tooltip shows "TCA-NEO bridge" and the current status.
-4. Right-click the icon → **Install driver…** and approve the Windows prompt. A window shows the steps, and a notification confirms "Driver installed". The log is in `%LOCALAPPDATA%\tca-neo-bridge\driver-install.log`.
+1. Download `any-tm-hotas-experimental-bridge-<version>-x64.zip` from the **Pre-release** on [Releases](https://github.com/mkainchi/tca-neo-bridge/releases). To check the download, run `Get-FileHash any-tm-hotas-experimental-bridge-<version>-x64.zip` in PowerShell and compare the result with the `.sha256` file next to it.
+2. Extract it to a folder of its own, for example `C:\Tools\any-tm-hotas-bridge`. Keep `neo-daemon.exe` and the `driver` folder together.
+3. If the stable TCA-NEO bridge is running, quit it. Only one bridge can emulate at a time.
+4. Right-click `neo-daemon.exe` → **Run as administrator**. Its bridge icon appears in the notification area; the tooltip shows "Any-TM-HOTAS bridge" and the current status.
+5. Right-click the icon → **Install driver…** and approve the Windows prompt. Skip this if you installed the driver with the stable bridge. A notification confirms "Driver installed".
+
+On first start, a profile saved by the stable bridge is **copied** into this bridge's folder. The stable bridge's own files are never changed.
 
 ## Usage
 
 1. **Close Steam and the game.**
 2. Right-click the tray icon → **Start emulation**. The tooltip shows *Emulating*.
-3. Start Steam and ACE COMBAT 8. The game should list the controller as a T.Flight Hotas NEO and use its HOTAS controls.
-4. When you're done, choose **Stop emulation**, or **Quit**. Both release every control, remove the virtual NEO and restore HidHide's previous settings.
+3. Right-click → **Configure…** to check your axes and map your buttons (see below). Changes apply immediately.
+4. Start Steam and ACE COMBAT 8. The game should list a T.Flight Hotas NEO and use its HOTAS controls.
+5. When you're done, choose **Stop emulation**, or **Quit**. Both release every control, remove the virtual NEO and restore HidHide's previous settings.
 
 ### Tray menu
 
-The icon's badge shows the emulation status: a gray hollow circle when idle, a green check when emulating, amber dots while starting or stopping, and a red exclamation mark on error. Hover over the icon for the full status or error message. Driver installation uses its menu label and notifications.
+The icon's badge shows the emulation status: a gray hollow circle when idle, a green check when emulating, amber dots while starting or stopping, and a red exclamation mark on error. Hover over the icon for the full status or error message. While the driver installs, its menu item reads **Installing driver…**, and a notification reports the result.
 
 | Item | What it does |
 | --- | --- |
-| Start emulation / Stop emulation | Hide the TCA devices and create the virtual NEO, or undo both. |
+| Start emulation / Stop emulation | Hide your controllers and create the virtual NEO, or undo both. |
 | Configure… | Opens the configuration page in your browser (local only). Double-clicking the icon does the same. |
 | Install driver… / Reinstall driver… | Installs the driver, or replaces it with a freshly signed copy. Available while not emulating. |
 | Quit | Stops emulation and exits. |
 
 ### Mapping tab
 
-![Mapping tab: quadrant button 5 selected, adding NEO 3 to its mapping](docs/images/mapping.png)
+The header shows the bridge status and, while emulating, how many controllers are open, whether HidHide hides them and whether the virtual NEO exists. The left panel shows your controllers: the TCA Airbus pair as diagrams, any other controller as a numbered button panel. The middle panel is the T.Flight Hotas NEO with its numbered buttons and POV hat. Below them, a table lists NEO buttons 1–15 with their ACE COMBAT 8 actions and the controls that feed each one.
 
-The header shows the daemon status and, while emulating, whether the TCA is open, whether HidHide hides it and whether the virtual NEO exists. The left panel shows the TCA sidestick (switch **L / R** for a left- or right-hand setup) and quadrant, the middle one a T.Flight Hotas NEO with its numbered buttons and POV hat. Below them, a table lists NEO buttons 1–15 with their ACE COMBAT 8 actions and the TCA controls that feed each one.
-
-- **Click a TCA control,** or press it while emulating. Its current NEO targets light up.
-- **Click NEO buttons or POV arrows** to build its new mapping. Blue ring means kept, yellow ring means added, red dashed ring means removed. Then choose **Record mapping**. Changes apply immediately, even while emulating.
-- **With nothing selected,** clicking a NEO control or a row of the NEO button table highlights every TCA control that feeds it.
-- **Under *Other TCA inputs*,** set the **sidestick hat** to drive either the **Camera** (the NEO mini-stick, the default) or **Mapped controls**. In Mapped mode, its four directions can be mapped like buttons, and the camera gets no input.
+- **Click a control,** or press it while emulating. Its current NEO targets light up.
+- **Click NEO buttons or POV arrows** to build its new mapping. Blue ring means kept, yellow ring means added, red dashed ring means removed. Then choose **Record mapping**.
+- **With nothing selected,** clicking a NEO control or a row of the NEO button table highlights every control that feeds it.
+- **Under *Hats and other inputs*,** choose which hat is the **camera hat**, and whether it drives the **Camera** (the NEO mini-stick, the default) or **Mapped controls**. Other hats are always mappable like buttons.
 - **Recorded corrections** keeps a log of every change you record.
 
 ### Axes and settings tab
 
-![Axes and settings tab: flight axes and split-lever High-G with live lever positions](docs/images/settings.png)
-
 | Setting | Meaning |
 | --- | --- |
-| Stick deadzone, camera strength | Applied to roll/pitch/twist and to the camera respectively. Each has a number field and a slider. |
-| Axis sources | Which controller axis drives NEO roll, pitch, yaw and throttle, each with **Invert**; **Detect** binds the next axis you move during emulation. Every throttle axis in the list shares the throttle; the last one moved takes over (TCA default: sidestick slider and left quadrant lever). |
-| High-G from split levers | Two levers and their thresholds, as lever travel: 0 % at idle, 100 % fully forward. While one lever is at or above the *forward* threshold and the other at or below the *back* threshold, NEO 5 (High-G) is held. The throttle follows the forward lever. While emulating, live bars show both lever positions against the saved thresholds. |
-| Controllers | Automatic (every connected Thrustmaster joystick) or the ones you tick. Each set of controllers keeps its own mapping. |
+| Stick deadzone, camera strength | Applied to roll, pitch and yaw, and to the camera. Each has a number field and a slider. |
+| Axis sources | Which controller axis drives NEO roll, pitch, yaw and throttle, each with **Invert**. **Detect** binds the next axis you move while emulating. Every throttle axis in the list shares the throttle; the last one moved takes over. |
+| High-G from split levers | Two levers and their thresholds, as lever travel: 0 % at idle, 100 % fully forward. While one lever is at or above the *forward* threshold and the other at or below the *back* threshold, NEO 5 (High-G) is held and the throttle follows the forward lever. Tick *Forward is the high raw value* for throttles that report forward as a high number. |
+| Controllers | **Automatic** uses every connected Thrustmaster controller; or tick the ones you want, including another brand's. Each set of controllers keeps its own mapping. |
 
 ### Default mapping
+
+**Any controller set except the TCA Airbus pair** starts from a guess, which you should check in the game:
+
+| Your HOTAS | NEO |
+| --- | --- |
+| X / Y of the first device that has both | Roll / pitch |
+| Its twist (Rz), or any device's Rz or rudder | Yaw |
+| Each device's throttle, Z or slider axis | Throttle (shared) |
+| Buttons 1–15 of that stick | NEO buttons 1–15 |
+| The stick's hat (or the first hat) | Camera |
+
+**TCA Airbus sidestick + quadrant** keeps the stable bridge's tested default:
 
 | TCA | NEO | ACE COMBAT 8 action |
 | --- | --- | --- |
@@ -100,16 +106,17 @@ The header shows the daemon status and, while emulating, whether the TCA is open
 | Sidestick hat | Rx/Ry mini-stick | Camera |
 | Levers split (one ≥ 75 %, other ≤ 25 %) | 5 | High-G |
 
-The ENG switches and the mode selector **latch**: while one rests in an active position, its NEO button stays held. Remap them on the Mapping tab if that doesn't suit you. **Reset everything to defaults** on the settings tab restores this table.
+The TCA's ENG switches and mode selector **latch**: while one rests in an active position, its NEO button stays held. **Reset everything to defaults** on the settings tab restores the default of the current controller set.
 
 ## Files and data
 
-Everything is kept per user in `%LOCALAPPDATA%\tca-neo-bridge`:
+Everything is kept per user in `%LOCALAPPDATA%\any-tm-hotas-bridge`:
 
-- `config.json`: your profile.
+- `config.json`: your profile, one mapping per controller set.
 - `label-map.json`: the recorded corrections.
 - `neo-daemon.log`: status changes and errors (never device paths or serial numbers).
 - `driver-install.log`.
+- `probe.txt`: written by `neo-daemon.exe --probe` for test reports.
 - `hidhide-session.json`: only while emulating; used to restore HidHide after an interruption.
 
 Run `neo-daemon.exe --data <folder>` to use another folder.
@@ -118,19 +125,28 @@ Run `neo-daemon.exe --data <folder>` to use another folder.
 
 | Symptom | What to do |
 | --- | --- |
+| "Connect a supported Thrustmaster HOTAS (or tick your controllers…)" | Plug your controllers in. For another brand, tick it under **Axes and settings → Controllers**. |
+| "HidHide must detect the selected controllers" | Reconnect them, close HidHide's configuration client, and start emulation again. |
+| Other HidHide errors | Install HidHide, close its configuration client, remove Steam from its application list, turn *inverse application cloak* off. |
 | "The virtual NEO could not start / did not appear" | Use **Install driver…** (or **Reinstall driver…**) and make sure the app runs as administrator. |
 | "Creating the virtual NEO requires administrator rights" | Restart `neo-daemon.exe` with **Run as administrator**. |
-| HidHide errors | Install HidHide, close its configuration client, remove Steam from its application list, turn *inverse application cloak* off, reconnect both TCA devices. |
-| "Connect exactly one supported TCA sidestick and one Quadrant" | Both devices must be plugged in, and only one of each. |
-| A control is "stuck" | A latching quadrant switch is in an active position; see *Default mapping*. |
-| The game sees the TCA devices as well | Start emulation **before** starting Steam and the game. |
-| Something else | Check `neo-daemon.log` and `driver-install.log`, then open an issue with their content. |
+| "The report pipe is already in use" | Another bridge is running, maybe the stable one. Quit it. |
+| An axis moves the wrong way, or the wrong axis moves | Under **Axis sources**, pick or **Detect** the right axis and tick **Invert**. |
+| A control is "stuck" | A switch or lever rests in an active position; remap it or move it. |
+| The game sees your real controllers as well | Start emulation **before** starting Steam and the game. |
+| Something else | Run `neo-daemon.exe --probe`, then [open a HOTAS test report](https://github.com/mkainchi/tca-neo-bridge/issues/new?template=hotas-test-report.yml) with `probe.txt`, `neo-daemon.log` and `driver-install.log`. |
 
 ## Uninstall
 
 1. Quit the tray app.
-2. From an elevated PowerShell, run `driver\uninstall-driver.ps1`. This removes the driver package and its certificate.
-3. Delete the program folder, and `%LOCALAPPDATA%\tca-neo-bridge` if you don't want to keep your profile.
+2. Right-click **Start** → **Terminal (Admin)**, then run the uninstall script from the program folder. It removes the driver package and its certificate. Skip this if you still use the stable bridge; it uses the same driver.
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File C:\Tools\any-tm-hotas-bridge\driver\uninstall-driver.ps1
+   ```
+
+   Replace `C:\Tools\any-tm-hotas-bridge` with your program folder.
+3. Delete the program folder, and `%LOCALAPPDATA%\any-tm-hotas-bridge` if you don't want to keep your profile.
 
 ## Building from source
 

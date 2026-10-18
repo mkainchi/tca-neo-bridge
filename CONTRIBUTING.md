@@ -9,8 +9,8 @@ Thanks for helping. The project has two release lines:
 
 ## Ways to help
 
-- **Test reports (most wanted).** Own a T.16000M, TWCS, Warthog, T.Flight HOTAS, TCA Boeing or another Thrustmaster controller? Follow the [guide for players](https://github.com/mkainchi/tca-neo-bridge/blob/release/any-tm-hotas-experimental-bridge/docs/EXPERIMENTAL-ANY-HOTAS.md) and open a [HOTAS test report](https://github.com/mkainchi/tca-neo-bridge/issues/new?template=hotas-test-report.yml) with the output of `neo-daemon.exe --probe`.
-- **Default mappings.** If you found settings that work well for your model (axis sources, inversions, button mapping), post your `config.json` mapping for that controller set in your report or as a pull request.
+- **Test reports (most wanted).** Own a T.16000M, TWCS, Warthog, T.Flight Hotas, TCA Boeing or another Thrustmaster controller? Follow the [guide for players](https://github.com/mkainchi/tca-neo-bridge/blob/release/any-tm-hotas-experimental-bridge/docs/EXPERIMENTAL-ANY-HOTAS.md) and open a [HOTAS test report](https://github.com/mkainchi/tca-neo-bridge/issues/new?template=hotas-test-report.yml) with the output of `neo-daemon.exe --probe`.
+- **Default mappings.** If you found settings that work well for your model (axis sources, inversions, button mapping), attach your `config.json` (in `%LOCALAPPDATA%\any-tm-hotas-bridge`) to your report, or propose it as a pull request.
 - **Code**: bug fixes, support for a device the generic path misreads, page improvements.
 - **Diagrams**: an SVG of your controller with numbered callouts, like `daemon/web/device/sidestick-right.svg`. Draw it yourself; never copy vendor artwork.
 
