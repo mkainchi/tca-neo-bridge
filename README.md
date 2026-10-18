@@ -8,6 +8,16 @@ ACE COMBAT 8 natively supports the Thrustmaster T.Flight Hotas NEO, but not the 
 
 Not affiliated with Thrustmaster/Guillemot, Bandai Namco or Microsoft. See [Trademarks](#licence-and-trademarks).
 
+## Another Thrustmaster HOTAS?
+
+This bridge supports only the TCA Airbus sidestick + quadrant. For a T.16000M (+ TWCS), HOTAS Warthog, T.Flight Hotas X / 4 / One, TCA Boeing or another Thrustmaster HOTAS, try the **Any-TM-HOTAS experimental bridge**.
+
+- **It is untested.** The maintainer owns only the TCA Airbus pair, so players are the testers.
+- **Download** the `any-tm-hotas-experimental-bridge-…` zip marked **Pre-release** from [Releases](https://github.com/mkainchi/tca-neo-bridge/releases). It installs beside this bridge and never changes this bridge's settings.
+- **Read** the [guide for players](https://github.com/mkainchi/tca-neo-bridge/blob/release/any-tm-hotas-experimental-bridge/docs/EXPERIMENTAL-ANY-HOTAS.md) first.
+- **Report** how it went with a [HOTAS test report](https://github.com/mkainchi/tca-neo-bridge/issues/new?template=hotas-test-report.yml), even if everything worked.
+- **Improve it:** the source is on the [`release/any-tm-hotas-experimental-bridge`](https://github.com/mkainchi/tca-neo-bridge/tree/release/any-tm-hotas-experimental-bridge) branch; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## How it works
 
 ```text
@@ -27,18 +37,9 @@ TCA Sidestick + Quadrant ─► TCA-NEO bridge (tray app) ─► virtual NEO dri
 - **Administrator rights.** Creating the virtual device and installing the driver require them.
 - ACE COMBAT 8. If you play through Steam, **disable Steam Input** for the game so Steam doesn't remap the NEO.
 
-### Don't have the TCA Airbus sidestick + quadrant?
-
-Try the **Any-TM-HOTAS experimental bridge**, a separate release line for other Thrustmaster HOTAS: T.16000M + TWCS, HOTAS Warthog, T.Flight HOTAS X / 4 / One, TCA Boeing and others.
-
-- **It is untested by the maintainer**, who owns only the TCA Airbus pair. Players are the testers.
-- Download it from [Releases](https://github.com/mkainchi/tca-neo-bridge/releases): the `any-tm-hotas-experimental-bridge-…` zip marked **Pre-release**. It installs beside this bridge without touching its settings.
-- Read the [guide for players](https://github.com/mkainchi/tca-neo-bridge/blob/release/any-tm-hotas-experimental-bridge/docs/EXPERIMENTAL-ANY-HOTAS.md) first, then tell us how it went with a [HOTAS test report](https://github.com/mkainchi/tca-neo-bridge/issues/new?template=hotas-test-report.yml).
-- Source code: the [`release/any-tm-hotas-experimental-bridge`](https://github.com/mkainchi/tca-neo-bridge/tree/release/any-tm-hotas-experimental-bridge) branch. Improvements are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
-
 ## Installation
 
-1. Download `tca-neo-bridge-<version>-x64.zip` from [Releases](../../releases). Optionally check it against the `.sha256` file published next to it.
+1. Download `tca-neo-bridge-<version>-x64.zip` from [Releases](https://github.com/mkainchi/tca-neo-bridge/releases). To check the download, run `Get-FileHash tca-neo-bridge-<version>-x64.zip` in PowerShell and compare the result with the `.sha256` file published next to it.
 2. Extract it to a permanent folder, for example `C:\Tools\tca-neo-bridge`. Keep `neo-daemon.exe` and the `driver` folder together.
 3. Right-click `neo-daemon.exe` → **Run as administrator**. Its cyan bridge icon appears in the notification area; the tooltip shows "TCA-NEO bridge" and the current status.
 4. Right-click the icon → **Install driver…** and approve the Windows prompt. A window shows the steps, and a notification confirms "Driver installed". The log is in `%LOCALAPPDATA%\tca-neo-bridge\driver-install.log`.
@@ -52,7 +53,7 @@ Try the **Any-TM-HOTAS experimental bridge**, a separate release line for other 
 
 ### Tray menu
 
-The icon's badge shows the emulation status: a gray hollow circle when idle, a green check when emulating, amber dots while starting or stopping, and a red exclamation mark on error. Hover over the icon for the full status or error message. Driver installation uses its menu label and notifications.
+The icon's badge shows the emulation status: a gray hollow circle when idle, a green check when emulating, amber dots while starting or stopping, and a red exclamation mark on error. Hover over the icon for the full status or error message. While the driver installs, its menu item reads **Installing driver…**, and a notification reports the result.
 
 | Item | What it does |
 | --- | --- |
@@ -119,15 +120,21 @@ Run `neo-daemon.exe --data <folder>` to use another folder.
 | "The virtual NEO could not start / did not appear" | Use **Install driver…** (or **Reinstall driver…**) and make sure the app runs as administrator. |
 | "Creating the virtual NEO requires administrator rights" | Restart `neo-daemon.exe` with **Run as administrator**. |
 | HidHide errors | Install HidHide, close its configuration client, remove Steam from its application list, turn *inverse application cloak* off, reconnect both TCA devices. |
-| "Connect exactly one supported TCA sidestick and one Quadrant" | Both devices must be plugged in, and only one of each. Using another Thrustmaster HOTAS? See the [experimental bridge](#dont-have-the-tca-airbus-sidestick--quadrant). |
+| "Connect exactly one supported TCA sidestick and one Quadrant" | Plug in both devices, and only one of each. Using another Thrustmaster HOTAS? See [Another Thrustmaster HOTAS?](#another-thrustmaster-hotas) |
 | A control is "stuck" | A latching quadrant switch is in an active position; see *Default mapping*. |
 | The game sees the TCA devices as well | Start emulation **before** starting Steam and the game. |
-| Something else | Check `neo-daemon.log` and `driver-install.log`, then open an issue with their content. |
+| Something else | Check `neo-daemon.log` and `driver-install.log` (see *Files and data*), then [open an issue](https://github.com/mkainchi/tca-neo-bridge/issues/new) and attach both. |
 
 ## Uninstall
 
 1. Quit the tray app.
-2. From an elevated PowerShell, run `driver\uninstall-driver.ps1`. This removes the driver package and its certificate.
+2. Right-click **Start** → **Terminal (Admin)**, then run the uninstall script from the program folder. It removes the driver package and its certificate:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File C:\Tools\tca-neo-bridge\driver\uninstall-driver.ps1
+   ```
+
+   Replace `C:\Tools\tca-neo-bridge` with your program folder.
 3. Delete the program folder, and `%LOCALAPPDATA%\tca-neo-bridge` if you don't want to keep your profile.
 
 ## Building from source
