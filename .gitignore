@@ -9,6 +9,7 @@ node_modules/
 coverage/
 *.log
 *.tmp
+/logs/
 
 # Signing material is created on the user's PC at install time and never committed
 *.pfx
