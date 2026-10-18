@@ -1,6 +1,6 @@
 /*
  * neohid: UMDF2 HID minidriver for the TCA-NEO bridge virtual NEO.
- * Derived from Microsoft Windows-driver-samples hid/vhidmini2 (MS-PL; see LICENSE-vhidmini2.txt),
+ * Derived from Microsoft Windows-driver-samples hid/vhidmini2 (MS-PL; see LICENSE-MS-PL.txt),
  * commit 2dc3fd3a0cc84a2933f2194e7ec0871584979071. Changes: NEO descriptor/attributes/strings,
  * removal of the sample's control collection and registry descriptor, and a periodic timer that
  * reads frames from neo-daemon's pipe and completes pending input reads (Pi f_hid behaviour:
