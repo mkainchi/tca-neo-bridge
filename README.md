@@ -1,3 +1,14 @@
+# Any-TM-HOTAS experimental bridge
+
+> **Experimental release line.** This branch (`release/any-tm-hotas-experimental-bridge`) extends TCA-NEO bridge to **any Thrustmaster HOTAS**: T.16000M + TWCS, HOTAS Warthog, T.Flight HOTAS X / 4 / One, TCA Boeing and others. **It has not been tested on those controllers by anyone on the project**; players are the testers.
+>
+> - Players: start with the **[guide for players](docs/EXPERIMENTAL-ANY-HOTAS.md)** (shipped as `EXPERIMENTAL.md` in the zip), and send a [HOTAS test report](https://github.com/mkainchi/tca-neo-bridge/issues/new?template=hotas-test-report.yml).
+> - Contributors: see [CONTRIBUTING.md](CONTRIBUTING.md). HOTAS support work goes to this branch; stable TCA fixes go to `main`.
+>
+> Differences from the stable bridge described below: it is named "Any-TM-HOTAS bridge" in the tray, keeps its data in `%LOCALAPPDATA%\any-tm-hotas-bridge` (copying the stable profile once, never changing it), reads every Thrustmaster joystick through its HID description, keeps one mapping per set of controllers, lets you choose each axis source (with **Detect**) under *Axes and settings*, and adds `neo-daemon.exe --probe` for test reports. Everything about the TCA Airbus pair below still applies.
+
+---
+
 # TCA-NEO bridge
 
 Fly **ACE COMBAT 8** with a **Thrustmaster TCA Sidestick Airbus Edition** and **TCA Quadrant Eng 1&2**, using the game's **native HOTAS controls**.
@@ -71,9 +82,9 @@ The header shows the daemon status and, while emulating, whether the TCA is open
 | Setting | Meaning |
 | --- | --- |
 | Stick deadzone, camera strength | Applied to roll/pitch/twist and to the camera respectively. Each has a number field and a slider. |
-| Quadrant throttle lever | Left or right lever. It shares the throttle with the sidestick slider; the last one moved takes over. |
-| Invert | Per axis. |
-| High-G from split levers | Thresholds are lever travel: 0 % at idle, 100 % fully forward. While one quadrant lever is at or above the *forward* threshold and the other at or below the *back* threshold, NEO 5 (High-G) is held. The throttle follows the forward lever. While emulating, live bars show both lever positions against the saved thresholds. |
+| Axis sources | Which controller axis drives NEO roll, pitch, yaw and throttle, each with **Invert**; **Detect** binds the next axis you move during emulation. Every throttle axis in the list shares the throttle; the last one moved takes over (TCA default: sidestick slider and left quadrant lever). |
+| High-G from split levers | Two levers and their thresholds, as lever travel: 0 % at idle, 100 % fully forward. While one lever is at or above the *forward* threshold and the other at or below the *back* threshold, NEO 5 (High-G) is held. The throttle follows the forward lever. While emulating, live bars show both lever positions against the saved thresholds. |
+| Controllers | Automatic (every connected Thrustmaster joystick) or the ones you tick. Each set of controllers keeps its own mapping. |
 
 ### Default mapping
 

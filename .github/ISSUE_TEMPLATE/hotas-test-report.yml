@@ -1,0 +1,58 @@
+name: HOTAS test report (experimental bridge)
+description: Tell us how the Any-TM-HOTAS experimental bridge works with your controllers.
+title: "[HOTAS report] <your controllers>"
+labels: ["hotas-report", "experimental"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! Nobody on the project owns these controllers, so your report is the test.
+        Run `neo-daemon.exe --probe` while moving every axis, then attach `probe.txt` and `neo-daemon.log` from `%LOCALAPPDATA%\any-tm-hotas-bridge`. Neither file contains device paths or serial numbers.
+  - type: input
+    id: controllers
+    attributes:
+      label: Controllers
+      description: Model names, as printed on the box (for example "T.16000M + TWCS + TFRP pedals").
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Bridge version
+      description: From the zip name, for example 0.3.0-experimental.1.
+    validations:
+      required: true
+  - type: textarea
+    id: probe
+    attributes:
+      label: Probe output
+      description: Paste or attach `probe.txt`.
+      render: text
+    validations:
+      required: true
+  - type: checkboxes
+    id: results
+    attributes:
+      label: What worked in the game
+      description: Tick what behaved correctly in ACE COMBAT 8 (or the game you tested).
+      options:
+        - label: The game lists a T.Flight Hotas NEO
+        - label: Roll and pitch
+        - label: Yaw
+        - label: Throttle
+        - label: Camera (hat)
+        - label: Buttons, after mapping them on the Mapping tab
+        - label: Split-lever High-G (if your throttle has two levers)
+  - type: textarea
+    id: details
+    attributes:
+      label: What happened
+      description: Which game, what you mapped, anything inverted, missing or stuck. Settings you had to change are useful defaults for other players.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: neo-daemon.log
+      description: Attach or paste the log (status changes and errors only).
+      render: text

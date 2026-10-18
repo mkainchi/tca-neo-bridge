@@ -26,7 +26,9 @@ cargo run -- --source validation      # tray app with a synthetic input pattern 
 
 The daemon needs administrator rights to create the virtual device, and `driver\install-driver.ps1` beside the executable for the **Install driver…** menu, so a development build does not offer installation. Use a release package (below) or run `scripts\install-driver.ps1` from `driver\out\package` after copying the script and a `SHA256SUMS` there.
 
-Command-line options: `--data <dir>` (default `%LOCALAPPDATA%\tca-neo-bridge`), `--source tca|validation`, `--autostart`, `--self-test`.
+Command-line options: `--data <dir>` (default `%LOCALAPPDATA%\any-tm-hotas-bridge`), `--source hotas|validation` (`tca` is accepted for `hotas`), `--autostart`, `--self-test`, `--probe` (writes `probe.txt` to the data folder and opens it: controller identities, layouts and one live sample; no paths or serial numbers).
+
+Packaging on this branch builds `dist\any-tm-hotas-experimental-bridge-<version>-x64.zip` (`scripts\package.ps1 -Name <name>` overrides it) and adds the players' guide as `EXPERIMENTAL.md`.
 
 ### Icon artwork
 

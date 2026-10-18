@@ -155,3 +155,12 @@ The project was built by its maintainer with an AI coding assistant (Claude Code
 - Latching quadrant switches (ENG 1/2, the mode selector) hold their NEO button while latched. That is by design, but it surprises people.
 - Creating the virtual device needs administrator rights (`SwDeviceCreate`).
 - Windows 11 (build 22000+) only, because the driver package depends on `MsHidUmdf.inf`.
+
+## 9. Experimental: any Thrustmaster HOTAS
+
+The `release/any-tm-hotas-experimental-bridge` branch generalises the input side; the NEO output, driver and pipe are unchanged.
+
+- **Reading any joystick.** Every HID interface whose top-level collection is a joystick or game pad is opened read-only. Its layout comes from the descriptor through `HidP_GetButtonCaps` / `HidP_GetValueCaps`: Button-page usages, Generic Desktop axes (X…Wheel), Simulation axes (rudder, throttle, accelerator, brake) and the first hat switch. Reports are decoded with `HidP_GetUsages` / `HidP_GetUsageValue`. The TCA Airbus pair keeps its byte-exact decoders, so the research vectors still pass unchanged. The virtual NEO (`VID_044F&PID_2800`) is never read or hidden.
+- **Identity.** Known Thrustmaster product ids get model ids (`t16000m`, `warthog-throttle`, …); any other device is `<vid>-<pid>`, and identical devices get `#2`, `#3`. HidHide hides exactly the selected devices by vendor and product id.
+- **Profiles.** Version 2 keeps one mapping per controller set (sorted ids joined by `+`). Sources are device-qualified (`twcs/b3`, `t16000m/hat-up`), and each NEO axis takes a device axis with its own inversion. Version 1 TCA profiles migrate to the `tca-quadrant+tca-stick` set with identical output, which the mapping vectors prove.
+- **Evidence status.** Generic decoding is tested only against simulated descriptors and reports (**Hypothesis** for every real controller). Model ids come from public device lists. Real-device evidence comes from players' `--probe` reports; see [EXPERIMENTAL-ANY-HOTAS.md](EXPERIMENTAL-ANY-HOTAS.md).
