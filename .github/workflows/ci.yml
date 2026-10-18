@@ -21,7 +21,7 @@ jobs:
           cargo install cargo-llvm-cov --locked
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
       - name: Page test dependencies
         run: npm ci
       - name: Lint and 100% coverage gates
