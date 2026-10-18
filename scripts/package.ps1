@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-  Builds a release zip: dist\tca-neo-bridge-<version>-x64.zip.
+  Builds a release zip: dist\<name>-<version>-x64.zip (this branch: any-tm-hotas-experimental-bridge).
 .DESCRIPTION
   Requires the Rust toolchain, Visual Studio Build Tools (C++) and the Windows Driver Kit (see docs/BUILDING.md).
   The driver package is shipped unsigned; install-driver.ps1 signs it on the user's PC. The zip content is
   checked against an explicit allowlist so no build byproducts or private files can slip in.
 #>
-param([string]$Version)
+param([string]$Version, [string]$Name = 'any-tm-hotas-experimental-bridge')
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
 $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
@@ -22,14 +22,19 @@ try {
 } finally {
     Remove-Item Env:\RUSTFLAGS
 }
-& (Join-Path $root 'driver\build.ps1') -DriverVersion "$Version.0"
+# Driver versions are four numbers: 0.3.0-experimental.1 → 0.3.0.1, 0.3.0 → 0.3.0.0.
+if ($Version -notmatch '^(\d+\.\d+\.\d+)(?:-[a-z]+\.(\d+))?$') { throw "Unsupported version $Version" }
+$driverVersion = "$($Matches[1]).$(if ($Matches[2]) { $Matches[2] } else { '0' })"
+& (Join-Path $root 'driver\build.ps1') -DriverVersion $driverVersion
 
-$name = "tca-neo-bridge-$Version-x64"
+$name = "$Name-$Version-x64"
 $stage = Join-Path $root "dist\$name"
 Remove-Item -Recurse -Force $stage, "$stage.zip" -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force (Join-Path $stage 'driver') | Out-Null
 Copy-Item (Join-Path $root 'daemon\target\release\neo-daemon.exe') $stage
 foreach ($file in 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'SECURITY.md') { Copy-Item (Join-Path $root $file) $stage }
+# Players' guide to the experimental bridge, at the top of the zip.
+Copy-Item (Join-Path $root 'docs\EXPERIMENTAL-ANY-HOTAS.md') (Join-Path $stage 'EXPERIMENTAL.md')
 $package = Join-Path $root 'driver\out\package'
 foreach ($file in 'neohid.dll', 'neohid.inf', 'neohid.cat') { Copy-Item (Join-Path $package $file) (Join-Path $stage 'driver') }
 Copy-Item (Join-Path $root 'driver\LICENSE-MS-PL.txt') (Join-Path $stage 'driver')
@@ -38,7 +43,7 @@ Get-FileHash (Join-Path $stage 'driver\neohid.*') -Algorithm SHA256 |
     ForEach-Object { '{0}  {1}' -f $_.Hash.ToLowerInvariant(), (Split-Path $_.Path -Leaf) } |
     Set-Content (Join-Path $stage 'driver\SHA256SUMS') -Encoding ASCII
 
-$expected = @('LICENSE', 'README.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md', 'neo-daemon.exe',
+$expected = @('EXPERIMENTAL.md', 'LICENSE', 'README.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md', 'neo-daemon.exe',
     'driver\LICENSE-MS-PL.txt', 'driver\SHA256SUMS', 'driver\install-driver.ps1', 'driver\neohid.cat',
     'driver\neohid.dll', 'driver\neohid.inf', 'driver\uninstall-driver.ps1') | Sort-Object
 $actual = Get-ChildItem $stage -Recurse -File | ForEach-Object { $_.FullName.Substring($stage.Length + 1) } | Sort-Object

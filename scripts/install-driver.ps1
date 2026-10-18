@@ -101,7 +101,7 @@ try {
         Remove-Trust
         throw
     }
-    Say 'Driver installed. Start emulation from the TCA-NEO bridge tray menu.'
+    Say 'Driver installed. Start emulation from the bridge tray menu.'
     exit 0
 } catch {
     Say "FAILED: $($_.Exception.Message)"

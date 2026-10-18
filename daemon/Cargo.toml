@@ -1,9 +1,9 @@
 [package]
 name = "neo-daemon"
-version = "0.2.2"
+version = "0.3.0-experimental.1"
 edition = "2021"
 publish = false
-description = "Tray daemon that presents a Thrustmaster TCA Sidestick + Quadrant as a virtual T.Flight Hotas NEO"
+description = "Experimental tray daemon that presents a Thrustmaster HOTAS as a virtual T.Flight Hotas NEO"
 license = "MIT"
 repository = "https://github.com/mkainchi/tca-neo-bridge"
 
