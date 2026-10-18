@@ -39,7 +39,7 @@ The TCA sidestick (right- and left-hand setups) and quadrant diagrams and the NE
 
 ## Not included
 
-No Thrustmaster software, SDK, drivers, firmware or manuals, and no game files, are included or needed to build this project. HidHide (Nefarius Software Solutions) is a prerequisite that users install themselves.
+No proprietary source code was used in this project. No Thrustmaster software, SDK, drivers, firmware or manuals, and no game files, are included or needed to build this project. HidHide (Nefarius Software Solutions) is a prerequisite that users install themselves.
 
 ## Trademarks
 
