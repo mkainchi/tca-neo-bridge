@@ -12,14 +12,14 @@ jobs:
   daemon:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Rust toolchains
         shell: pwsh
         run: |
           rustup component add clippy llvm-tools-preview
           rustup toolchain install nightly --profile minimal --component llvm-tools-preview
           cargo install cargo-llvm-cov --locked
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - name: Page test dependencies
@@ -31,12 +31,18 @@ jobs:
   driver:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Build driver package (needs WDK 10.0.26100 on the runner)
+      - uses: actions/checkout@v7
+      - name: Install WDK 10.0.26100
         shell: pwsh
         run: |
-          if (-not (Test-Path 'C:\Program Files (x86)\Windows Kits\10\Lib\wdf\umdf\x64\2.33\WdfDriverStubUm.lib')) {
-            Write-Output '::notice::WDK 10.0.26100 not present on this runner image; driver build skipped.'
-            exit 0
-          }
-          ./driver/build.ps1
+          $stub = 'C:\Program Files (x86)\Windows Kits\10\Lib\wdf\umdf\x64\2.33\WdfDriverStubUm.lib'
+          if (Test-Path $stub) { exit 0 }
+          $setup = Join-Path $env:RUNNER_TEMP 'wdksetup.exe'
+          Invoke-WebRequest 'https://download.microsoft.com/download/41fb59c2-1723-45f9-a270-96b73ad58233/KIT_BUNDLE_WDK_MEDIACREATION/wdksetup.exe' -OutFile $setup
+          if ((Get-FileHash $setup -Algorithm SHA256).Hash -ne 'ED82C46BD98E0F1D07FD6E5075900E42AEDC3FA5E68C06A8764B3DC5303CFF1B') { throw 'wdksetup.exe hash mismatch' }
+          $p = Start-Process $setup -ArgumentList '/quiet', '/norestart', '/log', "$env:RUNNER_TEMP\wdk.log" -Wait -PassThru
+          if ($p.ExitCode -notin 0, 3010) { Get-Content "$env:RUNNER_TEMP\wdk.log" -Tail 50; throw "wdksetup failed ($($p.ExitCode))" }
+          if (-not (Test-Path $stub)) { throw 'WDK installed but UMDF 2.33 stub library is missing' }
+      - name: Build driver package
+        shell: pwsh
+        run: ./driver/build.ps1
