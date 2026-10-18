@@ -27,6 +27,15 @@ TCA Sidestick + Quadrant ─► TCA-NEO bridge (tray app) ─► virtual NEO dri
 - **Administrator rights.** Creating the virtual device and installing the driver require them.
 - ACE COMBAT 8. If you play through Steam, **disable Steam Input** for the game so Steam doesn't remap the NEO.
 
+### Don't have the TCA Airbus sidestick + quadrant?
+
+Try the **Any-TM-HOTAS experimental bridge**, a separate release line for other Thrustmaster HOTAS: T.16000M + TWCS, HOTAS Warthog, T.Flight HOTAS X / 4 / One, TCA Boeing and others.
+
+- **It is untested by the maintainer**, who owns only the TCA Airbus pair. Players are the testers.
+- Download it from [Releases](https://github.com/mkainchi/tca-neo-bridge/releases): the `any-tm-hotas-experimental-bridge-…` zip marked **Pre-release**. It installs beside this bridge without touching its settings.
+- Read the [guide for players](https://github.com/mkainchi/tca-neo-bridge/blob/release/any-tm-hotas-experimental-bridge/docs/EXPERIMENTAL-ANY-HOTAS.md) first, then tell us how it went with a [HOTAS test report](https://github.com/mkainchi/tca-neo-bridge/issues/new?template=hotas-test-report.yml).
+- Source code: the [`release/any-tm-hotas-experimental-bridge`](https://github.com/mkainchi/tca-neo-bridge/tree/release/any-tm-hotas-experimental-bridge) branch. Improvements are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Installation
 
 1. Download `tca-neo-bridge-<version>-x64.zip` from [Releases](../../releases). Optionally check it against the `.sha256` file published next to it.
@@ -110,7 +119,7 @@ Run `neo-daemon.exe --data <folder>` to use another folder.
 | "The virtual NEO could not start / did not appear" | Use **Install driver…** (or **Reinstall driver…**) and make sure the app runs as administrator. |
 | "Creating the virtual NEO requires administrator rights" | Restart `neo-daemon.exe` with **Run as administrator**. |
 | HidHide errors | Install HidHide, close its configuration client, remove Steam from its application list, turn *inverse application cloak* off, reconnect both TCA devices. |
-| "Connect exactly one supported TCA sidestick and one Quadrant" | Both devices must be plugged in, and only one of each. |
+| "Connect exactly one supported TCA sidestick and one Quadrant" | Both devices must be plugged in, and only one of each. Using another Thrustmaster HOTAS? See the [experimental bridge](#dont-have-the-tca-airbus-sidestick--quadrant). |
 | A control is "stuck" | A latching quadrant switch is in an active position; see *Default mapping*. |
 | The game sees the TCA devices as well | Start emulation **before** starting Steam and the game. |
 | Something else | Check `neo-daemon.log` and `driver-install.log`, then open an issue with their content. |
