@@ -219,6 +219,9 @@ extern "system" {
     pub fn SetForegroundWindow(hwnd: HWND) -> BOOL;
     pub fn GetCursorPos(point: *mut POINT) -> BOOL;
     pub fn LoadIconW(instance: HANDLE, name: PCWSTR) -> HANDLE;
+    pub fn LoadImageW(instance: HANDLE, name: PCWSTR, kind: u32, width: i32, height: i32, flags: u32) -> HANDLE;
+    pub fn GetSystemMetrics(index: i32) -> i32;
+    pub fn DestroyIcon(icon: HANDLE) -> BOOL;
     pub fn RegisterWindowMessageW(name: PCWSTR) -> u32;
 }
 

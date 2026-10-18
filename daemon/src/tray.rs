@@ -48,6 +48,9 @@ pub struct UiApi {
     pub set_foreground: unsafe extern "system" fn(HWND) -> ffi::BOOL,
     pub cursor_pos: unsafe extern "system" fn(*mut POINT) -> ffi::BOOL,
     pub load_icon: unsafe extern "system" fn(HANDLE, PCWSTR) -> HANDLE,
+    pub load_image: unsafe extern "system" fn(HANDLE, PCWSTR, u32, i32, i32, u32) -> HANDLE,
+    pub system_metrics: unsafe extern "system" fn(i32) -> i32,
+    pub destroy_icon: unsafe extern "system" fn(HANDLE) -> ffi::BOOL,
     pub register_message: unsafe extern "system" fn(PCWSTR) -> u32,
     pub notify_icon: unsafe extern "system" fn(u32, *const NOTIFYICONDATAW) -> ffi::BOOL,
     pub shell_execute: unsafe extern "system" fn(HWND, PCWSTR, PCWSTR, PCWSTR, PCWSTR, i32) -> HANDLE,
@@ -73,10 +76,56 @@ impl UiApi {
             set_foreground: ffi::SetForegroundWindow,
             cursor_pos: ffi::GetCursorPos,
             load_icon: ffi::LoadIconW,
+            load_image: ffi::LoadImageW,
+            system_metrics: ffi::GetSystemMetrics,
+            destroy_icon: ffi::DestroyIcon,
             register_message: ffi::RegisterWindowMessageW,
             notify_icon: ffi::Shell_NotifyIconW,
             shell_execute: ffi::ShellExecuteW,
             module_handle: ffi::GetModuleHandleW,
+        }
+    }
+}
+
+/// Private LoadImageW handles; the shared system fallback is never destroyed.
+pub struct IconSet {
+    api: UiApi,
+    owned: [HANDLE; 4],
+    fallback: HANDLE,
+}
+
+impl IconSet {
+    pub fn load(api: UiApi, instance: HANDLE) -> Self {
+        // SAFETY: numeric resource IDs (2..=5) in our executable; no LR_SHARED, so we own the handles.
+        let owned = unsafe {
+            let width = (api.system_metrics)(49); // SM_CXSMICON
+            let height = (api.system_metrics)(50); // SM_CYSMICON
+            [2, 3, 4, 5].map(|id| (api.load_image)(instance, id as PCWSTR, 1, width, height, 0))
+        };
+        // SAFETY: LoadIconW returns a shared system handle (IDI_APPLICATION).
+        let fallback = unsafe { (api.load_icon)(0, 32512 as PCWSTR) };
+        Self { api, owned, fallback }
+    }
+
+    pub fn for_status(&self, status: &Status) -> HANDLE {
+        let index = match status {
+            Status::Idle => 0,
+            Status::Emulating => 1,
+            Status::Starting | Status::Stopping => 2,
+            Status::Error(_) => 3,
+        };
+        match self.owned[index] {
+            0 => self.fallback,
+            icon => icon,
+        }
+    }
+}
+
+impl Drop for IconSet {
+    fn drop(&mut self) {
+        for icon in self.owned.into_iter().filter(|icon| *icon != 0) {
+            // SAFETY: each non-null handle was privately created by LoadImageW.
+            unsafe { (self.api.destroy_icon)(icon) };
         }
     }
 }
@@ -114,16 +163,17 @@ pub enum Action {
 pub struct Tray {
     pub api: UiApi,
     pub hwnd: HWND,
-    pub icon: HANDLE,
+    pub icons: IconSet,
     pub taskbar_created: u32,
     pub controller: Controller,
     pub server: Server,
     pub driver: DriverManager,
     pub shown: Option<Status>,
+    pub added: bool,
 }
 
 impl Tray {
-    fn data(&self) -> NOTIFYICONDATAW {
+    fn data(&self, status: &Status) -> NOTIFYICONDATAW {
         // SAFETY: NOTIFYICONDATAW is plain data; all-zero is a valid initial value.
         let mut data: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
         data.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
@@ -131,14 +181,16 @@ impl Tray {
         data.uID = 1;
         data.uFlags = NIF_MESSAGE_ICON_TIP;
         data.uCallbackMessage = WM_TRAY;
-        data.hIcon = self.icon;
-        ffi::fill(&mut data.szTip, &tooltip(&self.controller.shared.status()));
+        data.hIcon = self.icons.for_status(status);
+        ffi::fill(&mut data.szTip, &tooltip(status));
         data
     }
 
     pub fn add(&mut self) {
+        let status = self.controller.shared.status();
         // SAFETY: data is fully initialised.
-        unsafe { (self.api.notify_icon)(NIM_ADD, &self.data()) };
+        unsafe { (self.api.notify_icon)(NIM_ADD, &self.data(&status)) };
+        self.added = true;
         self.shown = None;
         self.refresh();
     }
@@ -146,7 +198,7 @@ impl Tray {
     /// Update tooltip; show a balloon once per new error.
     pub fn refresh(&mut self) {
         let status = self.controller.shared.status();
-        let mut data = self.data();
+        let mut data = self.data(&status);
         if let Some(notice) = self.driver.take_notice() {
             data.uFlags |= NIF_INFO;
             data.dwInfoFlags = if notice.error { 3 } else { 1 }; // NIIF_ERROR / NIIF_INFO
@@ -175,8 +227,11 @@ impl Tray {
     pub fn quit(&mut self) {
         self.controller.shutdown();
         self.driver.wait();
-        // SAFETY: as above.
-        unsafe { (self.api.notify_icon)(NIM_DELETE, &self.data()) };
+        if self.added {
+            // SAFETY: as above. Remove from the shell before IconSet releases its handles.
+            unsafe { (self.api.notify_icon)(NIM_DELETE, &self.data(&self.controller.shared.status())) };
+            self.added = false;
+        }
     }
 
     /// Returns true when the window must now be destroyed (Quit).
@@ -216,6 +271,13 @@ impl Tray {
             _ => return Action::Default,
         }
         Action::Done(0)
+    }
+}
+
+impl Drop for Tray {
+    fn drop(&mut self) {
+        // Also handles a failed/exhausted message loop and unwinding.
+        self.quit();
     }
 }
 

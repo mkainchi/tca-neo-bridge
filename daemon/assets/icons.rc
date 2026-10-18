@@ -1,0 +1,6 @@
+// Keep the unbadged application icon first for Explorer. IDs match tray::IconSet.
+1 ICON "bridge.ico"
+2 ICON "idle.ico"
+3 ICON "emulating.ico"
+4 ICON "busy.ico"
+5 ICON "error.ico"

@@ -32,7 +32,8 @@ The TCA sidestick (right- and left-hand setups) and quadrant diagrams and the NE
 
 ## Build and test only (not shipped)
 
-- Build-time Rust crates: serde_derive, proc-macro2, quote, syn (MIT/Apache-2.0) and unicode-ident ((MIT OR Apache-2.0) AND Unicode-3.0).
+- Build-time Rust crates: serde_derive, proc-macro2, quote, syn (MIT/Apache-2.0) and unicode-ident ((MIT OR Apache-2.0) AND Unicode-3.0). Windows resource compilation uses embed-resource (MIT) and its build dependencies, recorded in `daemon/Cargo.lock`.
+- Optional icon regeneration: sharp (Apache-2.0) and its image libraries; not needed for normal builds. The bridge SVG and ICO artwork in `daemon/assets/` is original project artwork (MIT).
 - Page tests: vitest, @vitest/coverage-v8 and jsdom (MIT), installed from npm by `npm ci`.
 - Microsoft Windows Driver Kit and Visual Studio Build Tools, which each developer installs under Microsoft's terms.
 

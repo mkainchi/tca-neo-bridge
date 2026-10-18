@@ -16,7 +16,12 @@ struct Ui {
     window: HWND,
     messages: VecDeque<(u32, usize, isize)>,
     chosen: VecDeque<i32>,
-    icons: Vec<(u32, u32, String, String)>,
+    icons: Vec<(u32, u32, String, String, HANDLE)>,
+    loaded_icons: Vec<(usize, i32, i32)>,
+    failed_icons: Vec<usize>,
+    released_icons: Vec<HANDLE>,
+    shell_present: bool,
+    icon_size: i32,
     menu: Vec<(u32, String)>,
     opened: Vec<String>,
     posted: Vec<u32>,
@@ -38,7 +43,7 @@ fn ui() -> MutexGuard<'static, Ui> {
 
 fn reset() -> MutexGuard<'static, ()> {
     let g = guard();
-    *ui() = Ui { window: 42, mutex: 9, ..Default::default() };
+    *ui() = Ui { window: 42, mutex: 9, icon_size: 16, ..Default::default() };
     tray::TRAY.with(|t| t.borrow_mut().take());
     g
 }
@@ -116,8 +121,27 @@ unsafe extern "system" fn cursor_pos(point: *mut POINT) -> ffi::BOOL {
     *point = POINT { x: 10, y: 20 };
     1
 }
-unsafe extern "system" fn load_icon(_: HANDLE, _: PCWSTR) -> HANDLE {
+unsafe extern "system" fn load_icon(instance: HANDLE, name: PCWSTR) -> HANDLE {
+    assert_eq!((instance, name as usize), (0, 32512));
     3
+}
+unsafe extern "system" fn load_image(instance: HANDLE, name: PCWSTR, kind: u32, width: i32, height: i32, flags: u32) -> HANDLE {
+    assert_eq!((instance, kind, flags), (1, 1, 0));
+    let id = name as usize;
+    let mut u = ui();
+    u.loaded_icons.push((id, width, height));
+    if u.failed_icons.contains(&id) { 0 } else { 100 + id as HANDLE }
+}
+unsafe extern "system" fn system_metrics(index: i32) -> i32 {
+    assert!([49, 50].contains(&index));
+    ui().icon_size
+}
+unsafe extern "system" fn destroy_icon(icon: HANDLE) -> ffi::BOOL {
+    let mut u = ui();
+    assert!(!u.shell_present, "remove the notification icon before releasing its handles");
+    assert!(!u.released_icons.contains(&icon), "icon released twice");
+    u.released_icons.push(icon);
+    1
 }
 unsafe extern "system" fn register_message(name: PCWSTR) -> u32 {
     assert_eq!(wide_string(name), "TaskbarCreated");
@@ -125,7 +149,10 @@ unsafe extern "system" fn register_message(name: PCWSTR) -> u32 {
 }
 unsafe extern "system" fn notify_icon(message: u32, data: *const NOTIFYICONDATAW) -> ffi::BOOL {
     let d = &*data;
-    ui().icons.push((message, d.uFlags, wide_string(d.szTip.as_ptr()), wide_string(d.szInfo.as_ptr())));
+    let mut u = ui();
+    if message == 0 { u.shell_present = true; }
+    if message == 2 { u.shell_present = false; }
+    u.icons.push((message, d.uFlags, wide_string(d.szTip.as_ptr()), wide_string(d.szInfo.as_ptr()), d.hIcon));
     1
 }
 unsafe extern "system" fn shell_execute(_: HWND, verb: PCWSTR, file: PCWSTR, _: PCWSTR, _: PCWSTR, _: i32) -> HANDLE {
@@ -170,6 +197,9 @@ fn ui_api() -> UiApi {
         set_foreground,
         cursor_pos,
         load_icon,
+        load_image,
+        system_metrics,
+        destroy_icon,
         register_message,
         notify_icon,
         shell_execute,
@@ -297,6 +327,8 @@ fn exit_codes_for_usage_instance_and_startup_failures() {
     // Window creation fails.
     ui().window = 0;
     assert_eq!(app::run(&args(&["--data", temp("nowindow").to_str().unwrap()]), apis()), 4);
+    assert_eq!(ui().released_icons, [102, 103, 104, 105]);
+    assert!(ui().icons.is_empty());
     assert!(ui().closed >= 6);
 }
 
@@ -328,6 +360,8 @@ fn tray_session_start_configure_menu_stop_and_quit() {
     assert_eq!(u.icons.iter().filter(|i| i.0 == 0).count(), 2);
     assert!(u.defaults >= 1);
     assert!(u.posted.contains(&WM_STATUS));
+    assert_eq!(u.icons.last().unwrap().0, 2);
+    assert_eq!(u.released_icons, [102, 103, 104, 105]);
 }
 
 #[test]
@@ -344,6 +378,8 @@ fn autostart_emulates_and_window_close_quits_cleanly() {
     let u = ui();
     assert_eq!((u.destroyed, u.quits), (1, 1));
     assert_eq!(u.icons.last().unwrap().0, 2); // icon removed
+    assert_eq!(u.icons.iter().filter(|i| i.0 == 2).count(), 1);
+    assert_eq!(u.released_icons, [102, 103, 104, 105]);
     drop(u);
     assert_eq!(state().sw_closed, 1); // virtual device removed on quit
     let log = std::fs::read_to_string(data.join("neo-daemon.log")).unwrap();
@@ -416,7 +452,7 @@ fn installed_tray(source: Source) -> std::sync::Arc<neo_daemon::shared::Shared> 
         post_message(42, WM_STATUS, 0, 0);
     });
     let driver = neo_daemon::driver::DriverManager::new(driver_api(), fake_pnputil(), script_dir.join("install-driver.ps1"), script_dir.join("log.txt"), driver_notify);
-    let mut t = tray::Tray { api: ui_api(), hwnd: 42, icon: 3, taskbar_created: 0xc123, controller, server, driver, shown: None };
+    let mut t = tray::Tray { api: ui_api(), hwnd: 42, icons: tray::IconSet::load(ui_api(), 1), taskbar_created: 0xc123, controller, server, driver, shown: None, added: false };
     t.add();
     tray::TRAY.with(|slot| *slot.borrow_mut() = Some(t));
     shared
@@ -506,4 +542,62 @@ fn driver_menu_installs_only_when_idle_and_shows_the_outcome() {
     send(WM_STATUS, 0, 0);
     assert_eq!(ui().icons.last().unwrap().3, "The driver installation was cancelled.");
     tray::TRAY.with(|t| t.borrow_mut().take());
+}
+
+#[test]
+fn status_icons_and_tooltips_change_together_and_survive_explorer_restart() {
+    let _g = reset();
+    let shared = installed_tray(Source::Validation);
+    assert_eq!(ui().loaded_icons, [(2, 16, 16), (3, 16, 16), (4, 16, 16), (5, 16, 16)]);
+    for (status, icon) in [
+        (Status::Idle, 102),
+        (Status::Starting, 104),
+        (Status::Emulating, 103),
+        (Status::Stopping, 104),
+        (Status::Error("Disconnected".into()), 105),
+        (Status::Idle, 102),
+    ] {
+        shared.set_status(status.clone());
+        send(WM_STATUS, 0, 0);
+        let shown = ui().icons.last().unwrap().clone();
+        assert_eq!((shown.2, shown.4), (tray::tooltip(&status), icon));
+        send(0xc123, 0, 0);
+        let u = ui();
+        let added = &u.icons[u.icons.len() - 2];
+        assert_eq!((added.0, added.2.as_str(), added.4), (0, tray::tooltip(&status).as_str(), icon));
+    }
+    assert_eq!(ui().loaded_icons.len(), 4); // cached across refreshes and Explorer restarts
+    tray::TRAY.with(|t| t.borrow_mut().take());
+    assert_eq!(ui().released_icons, [102, 103, 104, 105]);
+}
+
+#[test]
+fn missing_icon_resources_fall_back_without_destroying_shared_handles() {
+    let _g = reset();
+    ui().failed_icons = vec![2, 5];
+    let shared = installed_tray(Source::Validation);
+    assert_eq!(ui().icons.last().unwrap().4, 3);
+    shared.set_status(Status::Error("Disconnected".into()));
+    send(WM_STATUS, 0, 0);
+    let shown = ui().icons.last().unwrap().clone();
+    assert_eq!(shown.4, 3);
+    assert!(shown.1 & 0x10 != 0);
+    shared.set_status(Status::Emulating);
+    send(WM_STATUS, 0, 0);
+    assert_eq!(ui().icons.last().unwrap().4, 103);
+    tray::TRAY.with(|t| t.borrow_mut().take());
+    assert_eq!(ui().released_icons, [103, 104]);
+}
+
+#[test]
+fn icon_loading_uses_windows_small_icon_dimensions_at_common_scales() {
+    let _g = reset();
+    for size in [16, 24, 32] { // 100%, 150%, 200%
+        ui().icon_size = size;
+        let icons = tray::IconSet::load(ui_api(), 1);
+        assert!(ui().loaded_icons.iter().rev().take(4).all(|entry| (entry.1, entry.2) == (size, size)));
+        drop(icons);
+        assert_eq!(ui().released_icons, [102, 103, 104, 105]);
+        ui().released_icons.clear();
+    }
 }

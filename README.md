@@ -31,7 +31,7 @@ TCA Sidestick + Quadrant ─► TCA-NEO bridge (tray app) ─► virtual NEO dri
 
 1. Download `tca-neo-bridge-<version>-x64.zip` from [Releases](../../releases). Optionally check it against the `.sha256` file published next to it.
 2. Extract it to a permanent folder, for example `C:\Tools\tca-neo-bridge`. Keep `neo-daemon.exe` and the `driver` folder together.
-3. Right-click `neo-daemon.exe` → **Run as administrator**. Its icon (the standard Windows application icon, tooltip "TCA-NEO bridge") appears in the notification area.
+3. Right-click `neo-daemon.exe` → **Run as administrator**. Its cyan bridge icon appears in the notification area; the tooltip shows "TCA-NEO bridge" and the current status.
 4. Right-click the icon → **Install driver…** and approve the Windows prompt. A window shows the steps, and a notification confirms "Driver installed". The log is in `%LOCALAPPDATA%\tca-neo-bridge\driver-install.log`.
 
 ## Usage
@@ -42,6 +42,8 @@ TCA Sidestick + Quadrant ─► TCA-NEO bridge (tray app) ─► virtual NEO dri
 4. When you're done, choose **Stop emulation**, or **Quit**. Both release every control, remove the virtual NEO and restore HidHide's previous settings.
 
 ### Tray menu
+
+The icon's badge shows the emulation status: a gray hollow circle when idle, a green check when emulating, amber dots while starting or stopping, and a red exclamation mark on error. Hover over the icon for the full status or error message. Driver installation uses its menu label and notifications.
 
 | Item | What it does |
 | --- | --- |

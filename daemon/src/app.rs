@@ -188,6 +188,7 @@ fn owned(options: Options, apis: &Apis, exe_path: &Path) -> i32 {
     // SAFETY: class/title buffers outlive window creation; wndproc is a valid WNDPROC.
     unsafe {
         let instance = (ui.module_handle)(std::ptr::null());
+        let icons = tray::IconSet::load(ui, instance);
         let window_class = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             style: 0,
@@ -213,7 +214,7 @@ fn owned(options: Options, apis: &Apis, exe_path: &Path) -> i32 {
         let mut tray = Tray {
             api: ui,
             hwnd: window,
-            icon: (ui.load_icon)(0, 32512 as ffi::PCWSTR), // IDI_APPLICATION: generic system icon
+            icons,
             taskbar_created: (ui.register_message)(taskbar.as_ptr()),
             controller,
             server,
@@ -225,6 +226,7 @@ fn owned(options: Options, apis: &Apis, exe_path: &Path) -> i32 {
                 driver_notify,
             ),
             shown: None,
+            added: false,
         };
         tray.add();
         tray.driver.detect_async();
@@ -238,11 +240,8 @@ fn owned(options: Options, apis: &Apis, exe_path: &Path) -> i32 {
             (ui.dispatch)(&message);
         }
     }
-    // Normal quit already stopped emulation; this also covers a message-loop failure.
+    // Drop outside the RefCell borrow: shell calls during cleanup can be re-entrant.
     let tray = tray::TRAY.with(|slot| slot.borrow_mut().take());
-    tray.into_iter().for_each(|tray| {
-        tray.controller.shutdown();
-        tray.driver.wait();
-    });
+    drop(tray);
     0
 }

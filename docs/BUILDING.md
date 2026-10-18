@@ -7,6 +7,7 @@ Everything builds on Windows 11 x64.
 | Tool | Used for | Install |
 | --- | --- | --- |
 | Rust (stable, MSVC) + `llvm-tools-preview` | daemon, coverage | `rustup component add llvm-tools-preview` |
+| Windows SDK resource compiler (`rc.exe`) | embedded daemon icons | Included with the Visual Studio C++ workload / Windows SDK; discovered automatically by the Cargo build script. |
 | Rust nightly + `llvm-tools-preview` | branch coverage | `rustup toolchain install nightly --component llvm-tools-preview` |
 | cargo-llvm-cov | coverage gates | `cargo install cargo-llvm-cov --locked` |
 | Node.js 20+ | configuration page tests | `npm ci` |
@@ -26,6 +27,12 @@ cargo run -- --source validation      # tray app with a synthetic input pattern 
 The daemon needs administrator rights to create the virtual device, and `driver\install-driver.ps1` beside the executable for the **Install driver…** menu, so a development build does not offer installation. Use a release package (below) or run `scripts\install-driver.ps1` from `driver\out\package` after copying the script and a `SHA256SUMS` there.
 
 Command-line options: `--data <dir>` (default `%LOCALAPPDATA%\tca-neo-bridge`), `--source tca|validation`, `--autostart`, `--self-test`.
+
+### Icon artwork
+
+`daemon/assets/` contains the editable SVG masters and checked-in ICO files. Each ICO contains transparent 32-bit images at 16, 20, 24, 32, 48, 64 and 256 pixels. The resource file keeps the unbadged bridge first (Explorer's executable icon), followed by idle, emulating, busy and error variants. Cargo embeds them into `neo-daemon.exe`; no icon files are needed at runtime. Windows builds fail if resource compilation fails.
+
+After editing the SVGs, regenerate the ICOs from the repository root with `node scripts/build-icons.cjs`. This optional artwork tool requires the Apache-2.0-licensed `sharp` package (`npm install --no-save --package-lock=false sharp`); normal builds use the checked-in ICOs and require neither sharp nor Node. Check the small images on light and dark backgrounds before committing regenerated artwork.
 
 ## Driver
 
