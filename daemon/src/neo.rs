@@ -76,9 +76,10 @@ pub fn hat(stick: &[u8]) -> Option<&'static str> {
     HAT_NAMES.get(usize::from(stick[7] & 15)).copied()
 }
 
-/// Quadrant left and right lever positions as fractions of their 0..65535 travel.
+/// Quadrant left and right lever travel, 0.0 at idle to 1.0 fully forward. The TCA reports forward as the low raw
+/// value (idle 65535, full forward 0), which is also the NEO Z convention, so the throttle axis itself uses raw values.
 pub fn levers(quadrant: &[u8]) -> [f64; 2] {
-    [3, 5].map(|offset| f64::from(u16::from_le_bytes([quadrant[offset], quadrant[offset + 1]])) / 65535.0)
+    [3, 5].map(|offset| 1.0 - f64::from(u16::from_le_bytes([quadrant[offset], quadrant[offset + 1]])) / 65535.0)
 }
 
 /// One lever at or above the forward threshold and the other at or below the back threshold, in either order.
@@ -176,10 +177,10 @@ impl Mapper {
         let active = self.throttle.read(2.0 * f64::from(stick[6]) / 255.0 - 1.0, 2.0 * f64::from(lever) / 65535.0 - 1.0);
         let signed = |value: f64| if invert.throttle { -value } else { value };
         let positions = levers(quadrant);
-        // Split High-G: the throttle follows the forward lever (the higher reading; full stop reads 0%) with the
-        // same inversion as normal throttle, and NEO 5 is held below.
+        // Split High-G: the throttle follows the forward lever (the greater travel), converted back to the raw axis
+        // convention (2 * raw - 1 = 1 - 2 * travel) with the same inversion as normal throttle; NEO 5 is held below.
         let split = split(&self.config.split_high_g, positions);
-        let throttle = if split { unit16(signed(2.0 * positions[0].max(positions[1]) - 1.0)) } else { unit16(signed(active)) };
+        let throttle = if split { unit16(signed(1.0 - 2.0 * positions[0].max(positions[1]))) } else { unit16(signed(active)) };
         let hat = HATS.get(usize::from(stick[7] & 15)).copied().unwrap_or((0, 0));
         // Camera mode: the hat moves the mini-stick. Mapped mode: the camera rests and hat directions act as sources.
         let mapped = self.config.hat == HatMode::Mapped;

@@ -99,48 +99,51 @@ fn default_profile_maps_sidestick_numbers_and_recorded_quadrant_controls() {
 
 #[test]
 fn split_levers_hold_high_g_and_the_throttle_follows_the_forward_lever() {
+    // The TCA reports a lever fully forward as raw 0 and at idle as raw 65535.
     let neutral = neutral_stick();
-    let full = 65535u16;
+    let (forward_raw, idle_raw) = (0u16, 65535u16);
     let mut mapper = mapper();
-    // Left forward, right back: High-G (NEO 5) held, throttle at the forward lever.
-    let (axes, buttons, _) = fields(&mapper.convert(Some(&neutral), Some(&quadrant(full, 0, &[]))));
-    assert_eq!((axes[2], buttons), (65535, 1 << 4));
-    // Either order; thresholds are inclusive (95% / 5%).
-    let forward = (0.95f64 * 65535.0).ceil() as u16;
-    let back = (0.05f64 * 65535.0).floor() as u16;
+    let normal = |mapper: &mut Mapper, raw: u16| fields(&mapper.convert(Some(&neutral), Some(&quadrant(raw, raw, &[])))).0[2];
+    // Left forward, right back: High-G (NEO 5) held, throttle as if the forward lever alone were the throttle.
+    let (axes, buttons, _) = fields(&mapper.convert(Some(&neutral), Some(&quadrant(forward_raw, idle_raw, &[]))));
+    assert_eq!((axes[2], buttons), (0, 1 << 4));
+    // Either order; thresholds are inclusive (95% / 5% of travel).
+    let forward = (0.05f64 * 65535.0).floor() as u16;
+    let back = (0.95f64 * 65535.0).ceil() as u16;
     let (axes, buttons, _) = fields(&mapper.convert(Some(&neutral), Some(&quadrant(back, forward, &[]))));
-    assert_eq!((axes[2], buttons), (forward, 1 << 4));
+    assert_eq!((axes[2], buttons), (normal(&mut mapper, forward), 1 << 4));
     // Just outside either threshold: no High-G.
-    assert_eq!(fields(&mapper.convert(Some(&neutral), Some(&quadrant(forward - 2, 0, &[])))).1, 0);
-    assert_eq!(fields(&mapper.convert(Some(&neutral), Some(&quadrant(full, back + 2, &[])))).1, 0);
-    // Throttle inverted, thresholds 75% / 25%: the split throttle still follows the forward
-    // (higher-reading) lever and is inverted exactly like the normal throttle, never the back lever's idle.
+    assert_eq!(fields(&mapper.convert(Some(&neutral), Some(&quadrant(forward + 2, idle_raw, &[])))).1, 0);
+    assert_eq!(fields(&mapper.convert(Some(&neutral), Some(&quadrant(forward_raw, back - 2, &[])))).1, 0);
+    // Throttle inverted, thresholds 75% / 25%: the split throttle still follows the forward lever and is inverted
+    // exactly like the normal throttle, never the back lever's idle.
     let mut cfg = research();
     cfg.invert.throttle = true;
     cfg.split_high_g.forward = 0.75;
     cfg.split_high_g.back = 0.25;
     let mut inverted = Mapper::new(&cfg);
-    let idle = fields(&inverted.convert(Some(&neutral), Some(&quadrant(0, 0, &[])))).0[2];
-    let full_normal = fields(&inverted.convert(Some(&neutral), Some(&quadrant(full, full, &[])))).0[2];
-    assert_eq!((idle, full_normal), (65535, 0));
-    for levers in [(full, 0), (0, full)] {
+    let idle = normal(&mut inverted, idle_raw);
+    let full_normal = normal(&mut inverted, forward_raw);
+    assert_eq!((idle, full_normal), (0, 65535));
+    for levers in [(forward_raw, idle_raw), (idle_raw, forward_raw)] {
         let (axes, buttons, _) = fields(&inverted.convert(Some(&neutral), Some(&quadrant(levers.0, levers.1, &[]))));
         assert_eq!((axes[2], buttons), (full_normal, 1 << 4), "{levers:?}");
     }
-    let (axes, buttons, _) = fields(&inverted.convert(Some(&neutral), Some(&quadrant(49152, 16383, &[]))));
-    assert_eq!((axes[2], buttons), (unit16(-(2.0 * 49152.0 / 65535.0 - 1.0)), 1 << 4)); // 75% / 25%: inclusive
+    let (axes, buttons, _) = fields(&inverted.convert(Some(&neutral), Some(&quadrant(16383, 49152, &[]))));
+    assert_eq!((axes[2], buttons), (normal(&mut inverted, 16383), 1 << 4)); // 75% / 25%: inclusive
     // Disabled: levers act normally.
     let mut cfg = research();
     cfg.split_high_g.enabled = false;
-    assert_eq!(fields(&Mapper::new(&cfg).convert(Some(&neutral), Some(&quadrant(full, 0, &[])))).1, 0);
+    assert_eq!(fields(&Mapper::new(&cfg).convert(Some(&neutral), Some(&quadrant(forward_raw, idle_raw, &[])))).1, 0);
     // Combined with a mapped High-G button the bit is simply set once.
-    let (_, buttons, _) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 8, &[5])), Some(&quadrant(0, full, &[]))));
+    let (_, buttons, _) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, 8, &[5])), Some(&quadrant(idle_raw, forward_raw, &[]))));
     assert_eq!(buttons, 1 << 4);
 }
 
 #[test]
 fn lever_positions_and_split_rule() {
-    assert_eq!(neo::levers(&quadrant(65535, 0, &[])), [1.0, 0.0]);
+    // Travel: raw 65535 is idle (0.0), raw 0 is fully forward (1.0).
+    assert_eq!(neo::levers(&quadrant(65535, 0, &[])), [0.0, 1.0]);
     let rule = config::SplitHighG::default();
     assert!(neo::split(&rule, [0.0, 1.0]));
     assert!(!neo::split(&rule, [0.5, 1.0]));

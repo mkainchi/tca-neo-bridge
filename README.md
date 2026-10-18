@@ -67,7 +67,7 @@ The header shows the daemon status and, while emulating, whether the TCA is open
 | Stick deadzone, camera strength | Applied to roll/pitch/twist and to the camera respectively. Each has a number field and a slider. |
 | Quadrant throttle lever | Left or right lever. It shares the throttle with the sidestick slider; the last one moved takes over. |
 | Invert | Per axis. |
-| High-G from split levers | While one quadrant lever is at or above the *forward* threshold and the other at or below the *back* threshold, NEO 5 (High-G) is held. The throttle follows the forward lever. While emulating, live bars show both lever positions against the saved thresholds. |
+| High-G from split levers | Thresholds are lever travel: 0 % at idle, 100 % fully forward. While one quadrant lever is at or above the *forward* threshold and the other at or below the *back* threshold, NEO 5 (High-G) is held. The throttle follows the forward lever. While emulating, live bars show both lever positions against the saved thresholds. |
 
 ### Default mapping
 
