@@ -52,6 +52,8 @@ TCA Sidestick + Quadrant ─► TCA-NEO bridge (tray app) ─► virtual NEO dri
 
 ### Mapping tab
 
+![Mapping tab: quadrant button 5 selected, adding NEO 3 to its mapping](docs/images/mapping.png)
+
 The header shows the daemon status and, while emulating, whether the TCA is open, whether HidHide hides it and whether the virtual NEO exists. The left panel shows the TCA sidestick (switch **L / R** for a left- or right-hand setup) and quadrant, the middle one a T.Flight Hotas NEO with its numbered buttons and POV hat. Below them, a table lists NEO buttons 1–15 with their ACE COMBAT 8 actions and the TCA controls that feed each one.
 
 - **Click a TCA control,** or press it while emulating. Its current NEO targets light up.
@@ -61,6 +63,8 @@ The header shows the daemon status and, while emulating, whether the TCA is open
 - **Recorded corrections** keeps a log of every change you record.
 
 ### Axes and settings tab
+
+![Axes and settings tab: flight axes and split-lever High-G with live lever positions](docs/images/settings.png)
 
 | Setting | Meaning |
 | --- | --- |
