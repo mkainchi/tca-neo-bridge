@@ -141,7 +141,7 @@ pub struct Combos {
 }
 
 /// How a source drives its NEO targets: held while pressed, a short press on switch-on, a short press on every
-/// change, or flipped on each press.
+/// change, flipped on each press, or short presses repeated while held.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
@@ -150,18 +150,75 @@ pub enum Mode {
     Pulse,
     PulseChange,
     Toggle,
+    Repeat,
 }
 
+/// Gesture timing in milliseconds. Fields added after version 2 first shipped default when absent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Timing {
     pub pulse_ms: u32,
+    #[serde(default = "long_ms")]
+    pub long_ms: u32,
+    #[serde(default = "double_ms")]
+    pub double_ms: u32,
+    #[serde(default = "repeat_ms")]
+    pub repeat_ms: u32,
+}
+
+fn long_ms() -> u32 {
+    500
+}
+
+fn double_ms() -> u32 {
+    250
+}
+
+fn repeat_ms() -> u32 {
+    120
 }
 
 impl Default for Timing {
     fn default() -> Self {
-        Self { pulse_ms: 80 }
+        Self { pulse_ms: 80, long_ms: long_ms(), double_ms: double_ms(), repeat_ms: repeat_ms() }
     }
+}
+
+/// NEO buttons and an optional POV direction: what a long press or double tap sends.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Target {
+    pub buttons: Vec<u8>,
+    #[serde(default)]
+    pub pov: Option<Direction>,
+}
+
+/// Mappings used instead of the normal ones while the shift control is held.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Layer {
+    pub buttons: BTreeMap<String, Vec<u8>>,
+    pub pov: BTreeMap<String, Direction>,
+}
+
+/// Camera ramp (0 is instant), full deflection once the hat is held for a long press, and the spare quadrant lever
+/// (the one that is not the throttle) panning the camera.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Camera {
+    pub ramp_ms: u32,
+    pub full_after_hold: bool,
+    pub lever: bool,
+}
+
+/// What drives NEO yaw: the sidestick twist, nothing, or the difference between the two quadrant levers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum YawSource {
+    #[default]
+    Twist,
+    Off,
+    LeverDifferential,
 }
 
 fn enabled() -> bool {
@@ -205,6 +262,22 @@ pub struct Config {
     pub behaviours: BTreeMap<String, Mode>,
     #[serde(default)]
     pub timing: Timing,
+    /// Sent instead of the normal mapping when the source is held for `timing.long_ms`.
+    #[serde(default)]
+    pub long_press: BTreeMap<String, Target>,
+    /// Sent when the source is pressed twice within `timing.double_ms`.
+    #[serde(default)]
+    pub double_tap: BTreeMap<String, Target>,
+    /// While this source is held, other sources use their `shifted` mapping where they have one. Its own mappings are
+    /// kept but not sent while it is the shift control.
+    #[serde(default)]
+    pub shift: Option<String>,
+    #[serde(default)]
+    pub shifted: Layer,
+    #[serde(default)]
+    pub camera: Camera,
+    #[serde(default)]
+    pub yaw_source: YawSource,
     pub buttons: BTreeMap<String, Vec<u8>>,
     pub pov: BTreeMap<String, Direction>,
 }
@@ -236,6 +309,12 @@ pub fn defaults() -> Config {
         combos: Combos::default(),
         behaviours: [("q3", Mode::PulseChange), ("q4", Mode::PulseChange), ("q7", Mode::Pulse), ("q8", Mode::Pulse)].iter().map(|(k, m)| (k.to_string(), *m)).collect(),
         timing: Timing::default(),
+        long_press: BTreeMap::new(),
+        double_tap: BTreeMap::new(),
+        shift: None,
+        shifted: Layer::default(),
+        camera: Camera::default(),
+        yaw_source: YawSource::Twist,
         buttons: buttons.iter().map(|(k, v)| (k.to_string(), vec![*v])).collect(),
         pov: BTreeMap::new(),
     }
@@ -313,16 +392,34 @@ pub fn validate(config: &Config) -> Result<(), String> {
     }
     config.combos.pause.iter().try_for_each(|key| known(key))?;
     config.behaviours.keys().try_for_each(|key| known(key))?;
-    if !(20..=1000).contains(&config.timing.pulse_ms) {
+    let timing = &config.timing;
+    if !(20..=1000).contains(&timing.pulse_ms) {
         return Err("Pulse length must be between 20 and 1000 ms.".into());
     }
-    for (key, targets) in &config.buttons {
+    if !(200..=2000).contains(&timing.long_ms) || !(100..=1000).contains(&timing.double_ms) {
+        return Err("A long press needs 200 to 2000 ms and a double tap window 100 to 1000 ms.".into());
+    }
+    if !(30..=1000).contains(&timing.repeat_ms) || timing.repeat_ms <= timing.pulse_ms {
+        return Err("Repeat interval must be 30 to 1000 ms and longer than the pulse.".into());
+    }
+    let buttons = config.buttons.iter().chain(&config.shifted.buttons);
+    let gestures = config.long_press.iter().chain(&config.double_tap).map(|(key, target)| (key, &target.buttons));
+    for (key, targets) in buttons.chain(gestures) {
         known(key)?;
         if targets.iter().any(|t| !(1..=15).contains(t)) {
             return Err(format!("{key}: NEO buttons are numbered 1 to 15."));
         }
     }
-    config.pov.keys().try_for_each(|key| known(key))
+    config.pov.keys().chain(config.shifted.pov.keys()).try_for_each(|key| known(key))?;
+    config.shift.iter().try_for_each(|key| known(key))?;
+    if config.camera.ramp_ms > 2000 {
+        return Err("Camera ramp must be at most 2000 ms.".into());
+    }
+    let levers = [config.split_high_g.enabled, config.camera.lever, config.yaw_source == YawSource::LeverDifferential];
+    if levers.iter().filter(|&&used| used).count() > 1 {
+        return Err("Split-lever High-G, the camera lever and lever yaw each need the quadrant levers: turn on only one.".into());
+    }
+    Ok(())
 }
 
 /// Version 1 kept one deadzone for roll, pitch and yaw; version 2 tunes each axis. Other v1 settings carry over,

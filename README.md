@@ -78,7 +78,9 @@ The header shows the daemon status and, while emulating, whether the TCA is open
 - **Click a TCA control,** or press it while emulating. Its current NEO targets light up.
 - **Click NEO buttons or POV arrows** to build its new mapping. Blue ring means kept, yellow ring means added, red dashed ring means removed. Then choose **Record mapping**. Changes apply immediately, even while emulating.
 - **With nothing selected,** clicking a NEO control or a row of the NEO button table highlights every TCA control that feeds it.
-- **Behaviour** sets how the selected control drives its NEO targets: **Hold** (pressed while held), **Pulse** (a short press when it switches on), **Pulse on change** (a short press each time it moves, on and off) or **Toggle** (each press flips it). A small timeline shows what the game receives. It is recorded with the mapping.
+- **Behaviour** sets how the selected control drives its NEO targets: **Hold** (pressed while held), **Pulse** (a short press when it switches on), **Pulse on change** (a short press each time it moves, on and off), **Toggle** (each press flips it) or **Repeat** (short presses again and again while held). A small timeline shows what the game receives. It is recorded with the mapping.
+- **Action to edit** picks what the NEO clicks change: the **Press**, a **Long press** (held for the long-press time: its targets are held instead of the press) or a **Double tap** (two taps within the double-tap window). Each tile shows its current mapping. With a long press or double tap set, a tap is sent as a short press once the control is released and the double-tap window has passed.
+- **Normal / Shift** switches the layer being mapped once a shift control is set (see *Axes and settings*). While the shift control is held, controls with a shift-layer mapping send it instead; the others keep their normal mapping.
 - **Under *Other TCA inputs*,** set the **sidestick hat** to drive either the **Camera** (the NEO mini-stick, the default) or **Mapped controls**. In Mapped mode, its four directions can be mapped like buttons, and the camera gets no input.
 - **Recorded corrections** keeps a log of every change you record.
 
@@ -90,13 +92,18 @@ The header shows the daemon status and, while emulating, whether the TCA is open
 | --- | --- |
 | Flight axes | Pick **Roll**, **Pitch** or **Yaw** and set its **deadzone** (travel ignored around centre), **full deflection at** (travel that already gives 100 %), **anti-deadzone** (the smallest output past the deadzone, to beat the game's own) and **curve** (positive softens the centre for fine aim, negative sharpens it). **Copy** applies them to the other axes. |
 | Live preview | The curve graph redraws as you drag. A dot shows where the input lands and the readouts give stick in and NEO out. Use **Test input** to try settings without hardware, or **Live stick** while emulating. A strip shows all three axes at once. |
-| Camera strength | How far the sidestick hat moves the NEO mini-stick. |
+| Smoothing | Per axis, filters jitter; the delay it adds is shown in milliseconds. |
+| Camera | **Strength** of the hat on the NEO mini-stick, and a **Ramp** time to reach it (0 is instant), with a graph of the camera output while the hat is held. **Full strength after a long press** lets a held hat look all the way round. **Hat + spare lever** lets the quadrant lever that is not the throttle pan the camera; the hat wins while pressed. |
+| Yaw source | **Twist** (the default), **Off**, or **Lever difference**: pushing one quadrant lever ahead of the other yaws towards the back lever, and the throttle follows the average of both levers. |
+| Timing | Long-press time, double-tap window, repeat interval and pulse length, in milliseconds. |
 | Throttle | **Linear** maps lever travel straight to the NEO throttle. **Detents** follows ACE COMBAT: below **Idle** brakes fully, within **Cruise band** of **CL** cruises, from **Boost** boosts fully, with smooth ramps in between. While emulating, put the lever in each detent and choose **Capture lever**. The sidestick slider stays linear. |
 | Quadrant throttle lever | Left or right lever. It shares the throttle with the sidestick slider; the last one moved takes over. |
 | Invert | Per axis. |
 | Precision aiming | While the chosen control is held, roll, pitch and yaw are scaled down (50 % by default) for fine aim. Choose **Press a control…**, then press it on the TCA. |
 | Safe start | On by default. When emulation starts or input returns after a dropout, the throttle stays at centre until the active lever or slider reaches centre or moves across it. A lever left fully forward or at idle never launches you at full power or full brake. |
+| Shift layer | While the chosen control is held, other controls use their Shift-layer mappings. Its own mapping is not sent while it is the shift control. |
 | Pause input | Up to four controls pressed together pause and resume input, like the tray item. Choose **Record combo…**, press them, then **Done**. |
+| Shared levers | Split-lever High-G, the camera lever and lever-difference yaw each use the quadrant levers, so only one can be on: turning one on turns the others off and says so. |
 | High-G from split levers | Thresholds are lever travel: 0 % at idle, 100 % fully forward. While one quadrant lever is at or above the *forward* threshold and the other at or below the *back* threshold, NEO 5 (High-G) is held. The throttle follows the forward lever, with the same response. While emulating, live bars show both lever positions against the saved thresholds. |
 | Try in game | Runs your unsaved settings in the running emulation without saving them; an amber *Previewing unsaved settings* pill shows while it's on. **Save settings** keeps them; **Discard changes**, leaving the tab or stopping emulation goes back to the saved profile. |
 

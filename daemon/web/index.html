@@ -84,10 +84,24 @@
       <aside class="panel link" aria-labelledby="link-heading">
         <div class="panel-head">
           <h2 id="link-heading">Selected control</h2>
+          <fieldset class="seg amber" aria-label="Mapping layer">
+            <label><input type="radio" name="layer" value="normal" checked><span>Normal</span></label>
+            <label><input type="radio" name="layer" value="shift"><span id="layer-shift">Shift</span></label>
+          </fieldset>
         </div>
+        <p id="layer-note" class="layer-note" hidden></p>
         <div class="readout">
           <span id="selected-kind" class="cap">Selection</span>
           <span id="selected-name" class="selected-name">Nothing selected</span>
+        </div>
+        <div id="slots" class="block" hidden>
+          <h3 class="cap" id="slots-label">Action to edit</h3>
+          <fieldset class="slots" aria-labelledby="slots-label">
+            <label><input type="radio" name="slot" value="press" checked><b>Press</b><span data-slot="press">Nothing</span></label>
+            <label><input type="radio" name="slot" value="long"><b>Long press</b><span data-slot="long">Nothing</span></label>
+            <label><input type="radio" name="slot" value="double"><b>Double tap</b><span data-slot="double">Nothing</span></label>
+          </fieldset>
+          <p id="slot-help" class="help"></p>
         </div>
         <dl id="compare" class="compare" hidden>
           <dt id="mapped-now-label" class="cap">Mapped now</dt><dd id="mapped-now" class="mono">—</dd>
@@ -101,12 +115,22 @@
             <label><input type="radio" name="behaviour" value="pulse"><b>Pulse</b><span>Short press on switch-on</span></label>
             <label><input type="radio" name="behaviour" value="pulse_change"><b>Pulse on change</b><span>Short press on and off</span></label>
             <label><input type="radio" name="behaviour" value="toggle"><b>Toggle</b><span>Each press flips it</span></label>
+            <label><input type="radio" name="behaviour" value="repeat"><b>Repeat</b><span>Short presses while held</span></label>
           </fieldset>
           <div class="timeline" role="img" id="timeline" aria-label="What the game receives">
             <div class="track"><span class="mono">Control</span><div class="lane"><span class="in"></span></div></div>
             <div class="track"><span class="mono">NEO</span><div id="timeline-out" class="lane"></div></div>
           </div>
           <p id="behaviour-help" class="help"></p>
+        </div>
+        <div id="gestures" class="block" hidden>
+          <h3 class="cap">What the game receives</h3>
+          <div class="timeline" role="img" aria-label="A tap sends the press after the double-tap window; a hold sends the long press; two quick taps send the double tap">
+            <div class="track wide"><span class="mono">Tap</span><div class="lane"><span class="g tap-in"></span><span class="g tap-out"></span></div></div>
+            <div class="track wide"><span class="mono">Hold</span><div class="lane"><span class="g hold-in"></span><span class="g hold-out alt"></span></div></div>
+            <div class="track wide"><span class="mono">Double tap</span><div class="lane"><span class="g dbl-in1"></span><span class="g dbl-in2"></span><span class="g dbl-out alt"></span></div></div>
+          </div>
+          <p id="gesture-help" class="help"></p>
         </div>
         <p id="link-help" class="help">Select a TCA control, then click NEO buttons or a POV arrow to build its mapping. With nothing selected, clicking a NEO button shows what feeds it.</p>
         <div class="actions">
@@ -244,20 +268,20 @@
                 <input id="tune-curve-range" class="rng" type="range" min="-100" max="100" step="1" aria-label="Curve, percent">
                 <p id="tune-curve-error" class="error" role="alert"></p>
               </div>
+              <div class="field">
+                <div class="field-head">
+                  <label for="tune-smoothing"><span class="label">Smoothing</span><span class="help">Filters jitter. More smoothing adds delay.</span></label>
+                  <span class="unit"><input id="tune-smoothing" class="num short" type="number" min="0" max="90" step="5" inputmode="numeric" aria-describedby="tune-smoothing-error tune-lag"><span class="mono">%</span></span>
+                </div>
+                <input id="tune-smoothing-range" class="rng" type="range" min="0" max="90" step="5" aria-label="Smoothing, percent">
+                <p id="tune-lag" class="lag">No added delay</p>
+                <p id="tune-smoothing-error" class="error" role="alert"></p>
+              </div>
               <div class="actions">
                 <button id="copy-axis" class="btn quiet" type="button">Copy roll to pitch</button>
                 <button id="reset-axis" class="btn quiet" type="button">Reset roll</button>
               </div>
             </div>
-          </div>
-
-          <div class="field divided">
-            <div class="field-head">
-              <label for="camera"><span class="label">Camera strength</span><span class="help">How far the sidestick hat moves the NEO mini-stick.</span></label>
-              <span class="unit"><input id="camera" class="num short" type="number" min="0" max="100" step="5" inputmode="numeric" aria-describedby="camera-error"><span class="mono">%</span></span>
-            </div>
-            <input id="camera-range" class="rng" type="range" min="0" max="100" step="5" aria-label="Camera strength, percent">
-            <p id="camera-error" class="error" role="alert"></p>
           </div>
 
           <fieldset class="field invert">
@@ -335,10 +359,96 @@
           </div>
         </section>
 
+        <section class="panel" aria-labelledby="camera-heading">
+          <div class="panel-head">
+            <h2 id="camera-heading">Camera</h2>
+            <span class="cap">Sidestick hat → NEO mini-stick</span>
+          </div>
+          <div class="field">
+            <div class="field-head">
+              <label for="camera"><span class="label">Strength</span><span class="help">How far the hat moves the mini-stick.</span></label>
+              <span class="unit"><input id="camera" class="num short" type="number" min="0" max="100" step="5" inputmode="numeric" aria-describedby="camera-error"><span class="mono">%</span></span>
+            </div>
+            <input id="camera-range" class="rng" type="range" min="0" max="100" step="5" aria-label="Camera strength, percent">
+            <p id="camera-error" class="error" role="alert"></p>
+          </div>
+          <div class="field">
+            <div class="field-head">
+              <label for="camera-ramp"><span class="label">Ramp</span><span class="help">Time to reach full strength after the hat is pressed. 0 is instant.</span></label>
+              <span class="unit"><input id="camera-ramp" class="num short" type="number" min="0" max="2000" step="50" inputmode="numeric" aria-describedby="camera-ramp-error"><span class="mono">ms</span></span>
+            </div>
+            <input id="camera-ramp-range" class="rng" type="range" min="0" max="2000" step="50" aria-label="Camera ramp, milliseconds">
+            <p id="camera-ramp-error" class="error" role="alert"></p>
+          </div>
+          <div class="card ramp">
+            <span class="cap">Hat held for 1.5 s · camera output</span>
+            <svg id="ramp" viewBox="0 0 300 100" role="img" aria-label="Camera output while the hat is held">
+              <line x1="10" y1="88" x2="290" y2="88" class="baseline"></line>
+              <line id="ramp-long" x1="103" y1="8" x2="103" y2="88" class="marker"></line>
+              <text id="ramp-long-text" x="107" y="82">LONG PRESS</text>
+              <path id="ramp-path" d="" class="curve"></path>
+            </svg>
+          </div>
+          <label class="tog wide"><input type="checkbox" id="camera-full"><span>Full strength after a long press: hold the hat to look all the way round</span></label>
+          <div class="field">
+            <p class="label" id="camera-source-label">Camera source</p>
+            <fieldset class="seg" aria-labelledby="camera-source-label">
+              <label><input type="radio" name="camera-source" value="hat"><span>Hat</span></label>
+              <label><input type="radio" name="camera-source" value="lever"><span>Hat + spare lever</span></label>
+            </fieldset>
+            <p id="camera-source-help" class="help"></p>
+          </div>
+        </section>
+
+        <div class="stack">
+          <section class="panel" aria-labelledby="yaw-heading">
+            <div class="panel-head">
+              <h2 id="yaw-heading">Yaw source</h2>
+              <span class="cap">NEO Rz</span>
+            </div>
+            <fieldset class="seg" aria-labelledby="yaw-heading">
+              <label><input type="radio" name="yaw-source" value="twist"><span>Twist</span></label>
+              <label><input type="radio" name="yaw-source" value="off"><span>Off</span></label>
+              <label><input type="radio" name="yaw-source" value="lever_differential"><span>Lever difference</span></label>
+            </fieldset>
+            <p id="yaw-help" class="help"></p>
+          </section>
+
+          <section class="panel" aria-labelledby="timing-heading">
+            <div class="panel-head">
+              <h2 id="timing-heading">Timing</h2>
+              <span class="cap">Gestures and pulses</span>
+            </div>
+            <div class="timings">
+              <div class="card">
+                <label for="timing-long" class="label">Long press</label>
+                <span class="unit"><input id="timing-long" class="num short" type="number" min="200" max="2000" step="50" inputmode="numeric" aria-describedby="timing-error"><span class="mono">ms</span></span>
+                <span class="help">Hold this long for the long-press action.</span>
+              </div>
+              <div class="card">
+                <label for="timing-double" class="label">Double tap window</label>
+                <span class="unit"><input id="timing-double" class="num short" type="number" min="100" max="1000" step="10" inputmode="numeric" aria-describedby="timing-error"><span class="mono">ms</span></span>
+                <span class="help">The second tap must come within this time.</span>
+              </div>
+              <div class="card">
+                <label for="timing-repeat" class="label">Repeat every</label>
+                <span class="unit"><input id="timing-repeat" class="num short" type="number" min="30" max="1000" step="10" inputmode="numeric" aria-describedby="timing-error"><span class="mono">ms</span></span>
+                <span class="help">Interval of the Repeat behaviour.</span>
+              </div>
+              <div class="card">
+                <label for="timing-pulse" class="label">Pulse length</label>
+                <span class="unit"><input id="timing-pulse" class="num short" type="number" min="20" max="1000" step="10" inputmode="numeric" aria-describedby="timing-error"><span class="mono">ms</span></span>
+                <span class="help">How long a short press lasts.</span>
+              </div>
+            </div>
+            <p id="timing-error" class="error" role="alert"></p>
+          </section>
+        </div>
+
         <section class="panel" aria-labelledby="helpers-heading">
           <div class="panel-head">
             <h2 id="helpers-heading">Control helpers</h2>
-            <span class="cap">Precision · safe start · pause</span>
+            <span class="cap">Precision · shift · safe start · pause</span>
           </div>
 
           <div class="card">
@@ -356,6 +466,17 @@
             </div>
             <input id="precision-scale-range" class="rng" type="range" min="10" max="100" step="5" aria-label="Stick scale while held, percent">
             <p id="precision-scale-error" class="error" role="alert"></p>
+          </div>
+
+          <div class="card">
+            <div><p class="label">Shift layer</p><p class="help">While this control is held, the other controls use their Shift-layer mappings, set on the Mapping tab. The shift control sends nothing itself.</p></div>
+            <div class="chip-row">
+              <span class="cap">Hold</span>
+              <span id="shift-source" class="chip static">Off</span>
+              <button id="shift-pick" class="btn quiet" type="button">Press a control…</button>
+              <button id="shift-clear" class="btn quiet" type="button">Clear</button>
+            </div>
+            <p class="well capture" data-for="shift" role="status" hidden><span class="dot"></span><span></span></p>
           </div>
 
           <label class="tog wide"><input type="checkbox" id="safe-start"><span>Safe start: hold the throttle at centre until the active lever or slider reaches it</span></label>

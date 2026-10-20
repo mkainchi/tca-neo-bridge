@@ -1,5 +1,5 @@
 //! NEO report 01 encoding and the TCA-to-NEO mapping (port of tca_to_neo.py / contract_probe.py).
-use crate::config::{AxisTuning, Config, Device, Direction, HatMode, Lever, Mode, SplitHighG, Throttle, ThrottleMode};
+use crate::config::{AxisTuning, Config, Device, Direction, HatMode, Lever, Mode, SplitHighG, Target, Throttle, ThrottleMode, YawSource};
 use serde::Serialize;
 use std::time::Duration;
 
@@ -178,15 +178,42 @@ pub struct Monitor {
 #[derive(Debug, Clone, Copy, Default)]
 struct SourceState {
     down: bool,
+    /// The press (or tap) output is on until this time.
     until: Duration,
     latched: bool,
+    next_repeat: Duration,
+    pressed_at: Duration,
+    /// The long-press targets are held.
+    long: bool,
+    /// This press was the second tap of a double tap: its release sends nothing.
+    consumed: bool,
+    /// A tap was released at this time and may still become a double tap.
+    waiting: Option<Duration>,
+    double_until: Duration,
 }
+
+/// NEO buttons mask and POV direction a source sends.
+type Mapping = (u16, Option<Direction>);
+
+fn mapping(target: &Target) -> Mapping {
+    (mask(&target.buttons), target.pov)
+}
+
+fn mask(targets: &[u8]) -> u16 {
+    targets.iter().fold(0u16, |mask, target| mask | 1 << (target - 1))
+}
+
+/// The spare quadrant lever pans the camera around its mid travel, ignoring small offsets.
+const CAMERA_LEVER: AxisTuning = AxisTuning { deadzone: 0.05, saturation: 1.0, anti_deadzone: 0.0, curve: 0.0, smoothing: 0.0 };
 
 #[derive(Debug, Clone)]
 pub struct Mapper {
     config: Config,
-    targets: [u16; SOURCES],
-    pov: [Option<Direction>; SOURCES],
+    mappings: [Mapping; SOURCES],
+    shifted: [Option<Mapping>; SOURCES],
+    long: [Option<Mapping>; SOURCES],
+    double: [Option<Mapping>; SOURCES],
+    shift: Option<usize>,
     modes: [Mode; SOURCES],
     states: [SourceState; SOURCES],
     /// False until the first complete frame: sources already down then (a latched switch) are not edges.
@@ -198,6 +225,8 @@ pub struct Mapper {
     armed: bool,
     start_side: Option<bool>,
     smoothed: [Option<f64>; 3],
+    /// When the hat started moving the camera, for the ramp and full strength after a long press.
+    hat_since: Option<Duration>,
     now: Duration,
     events: Vec<Event>,
     monitor: Option<Monitor>,
@@ -208,8 +237,11 @@ impl Mapper {
     pub fn new(config: &Config) -> Self {
         let mut mapper = Self {
             config: config.clone(),
-            targets: [0; SOURCES],
-            pov: [None; SOURCES],
+            mappings: [(0, None); SOURCES],
+            shifted: [None; SOURCES],
+            long: [None; SOURCES],
+            double: [None; SOURCES],
+            shift: config.shift.as_deref().map(slot),
             modes: [Mode::Hold; SOURCES],
             states: [SourceState::default(); SOURCES],
             primed: false,
@@ -220,15 +252,29 @@ impl Mapper {
             armed: !config.safe_start,
             start_side: None,
             smoothed: [None; 3],
+            hat_since: None,
             now: Duration::ZERO,
             events: Vec::new(),
             monitor: None,
         };
         for (key, targets) in &config.buttons {
-            mapper.targets[slot(key)] |= targets.iter().fold(0u16, |mask, target| mask | 1 << (target - 1));
+            mapper.mappings[slot(key)].0 = mask(targets);
         }
         for (key, direction) in &config.pov {
-            mapper.pov[slot(key)] = Some(*direction);
+            mapper.mappings[slot(key)].1 = Some(*direction);
+        }
+        // A shifted source without a shifted POV (or buttons) sends nothing of that kind in the shift layer.
+        for (key, targets) in &config.shifted.buttons {
+            mapper.shifted[slot(key)].get_or_insert((0, None)).0 = mask(targets);
+        }
+        for (key, direction) in &config.shifted.pov {
+            mapper.shifted[slot(key)].get_or_insert((0, None)).1 = Some(*direction);
+        }
+        for (key, target) in &config.long_press {
+            mapper.long[slot(key)] = Some(mapping(target));
+        }
+        for (key, target) in &config.double_tap {
+            mapper.double[slot(key)] = Some(mapping(target));
         }
         for (key, mode) in &config.behaviours {
             mapper.modes[slot(key)] = *mode;
@@ -247,6 +293,7 @@ impl Mapper {
         next.armed |= self.armed;
         next.start_side = self.start_side;
         next.smoothed = self.smoothed;
+        next.hat_since = self.hat_since;
         next.now = self.now;
         *self = next;
     }
@@ -265,30 +312,73 @@ impl Mapper {
         self.monitor
     }
 
+    fn tuning(&self, axis: usize) -> AxisTuning {
+        [self.config.axes.roll, self.config.axes.pitch, self.config.axes.yaw][axis]
+    }
+
     fn flight_axis(&mut self, axis: usize, raw: u32, maximum: u32, invert: bool, scale: f64) -> u16 {
         let raw = raw.min(maximum);
-        let tuning = [self.config.axes.roll, self.config.axes.pitch, self.config.axes.yaw][axis];
-        if tuning == (AxisTuning { deadzone: 0.0, saturation: 1.0, anti_deadzone: 0.0, curve: 0.0, smoothing: 0.0 }) && scale == 1.0 {
+        if self.tuning(axis) == (AxisTuning { deadzone: 0.0, saturation: 1.0, anti_deadzone: 0.0, curve: 0.0, smoothing: 0.0 }) && scale == 1.0 {
             let result = (raw * 65535 / maximum) as u16;
             return if invert { 65535 - result } else { result };
         }
-        let value = shape(2.0 * f64::from(raw) / f64::from(maximum) - 1.0, &tuning) * scale;
+        self.shaped_axis(axis, 2.0 * f64::from(raw) / f64::from(maximum) - 1.0, invert, scale)
+    }
+
+    /// One axis value in -1..1 through its tuning, precision scale, smoothing and inversion.
+    fn shaped_axis(&mut self, axis: usize, value: f64, invert: bool, scale: f64) -> u16 {
+        let tuning = self.tuning(axis);
+        let value = shape(value, &tuning) * scale;
         let value = self.smoothed[axis].map_or(value, |previous| previous * tuning.smoothing + value * (1.0 - tuning.smoothing));
         self.smoothed[axis] = Some(value);
         unit16(if invert { -value } else { value })
     }
 
-    /// Whether a source drives its targets this frame, by its behaviour.
-    fn active(&mut self, slot: usize, down: bool) -> bool {
-        let (now, pulse) = (self.now, Duration::from_millis(u64::from(self.config.timing.pulse_ms)));
+    /// Whether a source drives its press, long-press and double-tap targets this frame. With a long press or double
+    /// tap set, the press is resolved on release (and after the double-tap window) and sent as a pulse.
+    fn drive(&mut self, slot: usize, down: bool) -> [bool; 3] {
+        let timing = self.config.timing;
+        let ms = |millis: u32| Duration::from_millis(u64::from(millis));
+        let (now, pulse) = (self.now, ms(timing.pulse_ms));
+        let (long, double) = (self.long[slot].is_some(), self.double[slot].is_some());
+        let mode = self.modes[slot];
         let state = &mut self.states[slot];
         let (rising, changed) = (down && !state.down, down != state.down);
         state.down = down;
-        match self.modes[slot] {
+        if long || double {
+            if rising && state.waiting.take().is_some() {
+                state.double_until = now + pulse;
+                state.consumed = true;
+            } else if rising {
+                state.pressed_at = now;
+            }
+            state.long |= down && long && !state.consumed && now >= state.pressed_at + ms(timing.long_ms);
+            if changed && !down {
+                if state.long || state.consumed {
+                    (state.long, state.consumed) = (false, false);
+                } else if double {
+                    state.waiting = Some(now);
+                } else {
+                    state.until = now + pulse;
+                }
+            }
+            if state.waiting.is_some_and(|since| now >= since + ms(timing.double_ms)) {
+                state.waiting = None;
+                state.until = now + pulse;
+            }
+            return [now < state.until, state.long, now < state.double_until];
+        }
+        let press = match mode {
             Mode::Hold => down,
             Mode::Toggle => {
                 state.latched ^= rising;
                 state.latched
+            }
+            Mode::Repeat => {
+                if rising || (down && now >= state.next_repeat) {
+                    (state.until, state.next_repeat) = (now + pulse, now + ms(timing.repeat_ms));
+                }
+                now < state.until
             }
             mode => {
                 if rising || (mode == Mode::PulseChange && changed) {
@@ -296,7 +386,23 @@ impl Mapper {
                 }
                 now < state.until
             }
+        };
+        [press, false, false]
+    }
+
+    /// Camera deflection from the hat: ramped in over `camera.ramp_ms`, full after a long press if set.
+    fn camera(&mut self, hat: (i8, i8)) -> f64 {
+        if hat == (0, 0) {
+            self.hat_since = None;
+            return 0.0;
         }
+        let camera = self.config.camera;
+        let held = self.now.saturating_sub(*self.hat_since.get_or_insert(self.now));
+        if camera.full_after_hold && held >= Duration::from_millis(u64::from(self.config.timing.long_ms)) {
+            return 1.0;
+        }
+        let ramp = if camera.ramp_ms == 0 { 1.0 } else { (held.as_secs_f64() * 1000.0 / f64::from(camera.ramp_ms)).min(1.0) };
+        self.config.camera_strength * ramp
     }
 
     /// Raw-convention throttle (-1 forward … +1 idle) for a quadrant lever's travel.
@@ -346,16 +452,20 @@ impl Mapper {
             Lever::Left => 0,
             Lever::Right => 1,
         };
-        let lever = u16::from_le_bytes([quadrant[3 + 2 * lever_index], quadrant[4 + 2 * lever_index]]);
-        let active = self.throttle.read(2.0 * f64::from(stick[6]) / 255.0 - 1.0, 2.0 * f64::from(lever) / 65535.0 - 1.0);
         let positions = levers(quadrant);
+        // Lever yaw uses both levers, so the throttle follows their average.
+        let differential = self.config.yaw_source == YawSource::LeverDifferential;
+        let raw_lever = |index: usize| u32::from(u16::from_le_bytes([quadrant[3 + 2 * index], quadrant[4 + 2 * index]]));
+        let lever = if differential { (raw_lever(0) + raw_lever(1)) / 2 } else { raw_lever(lever_index) };
+        let travel = if differential { (positions[0] + positions[1]) / 2.0 } else { positions[lever_index] };
+        let active = self.throttle.read(2.0 * f64::from(stick[6]) / 255.0 - 1.0, 2.0 * f64::from(lever) / 65535.0 - 1.0);
         // Split High-G: the throttle follows the forward lever (the greater travel), with the same response and
         // inversion as the normal throttle; NEO 5 is held below.
         let split = split(&self.config.split_high_g, positions);
         let value = if split {
             self.lever_throttle(positions[0].max(positions[1]))
         } else if self.throttle.active() == 1 && self.config.throttle.mode == ThrottleMode::Detents {
-            self.lever_throttle(positions[lever_index])
+            self.lever_throttle(travel)
         } else {
             active
         };
@@ -372,22 +482,39 @@ impl Mapper {
         } else {
             unit16(value)
         };
-        let strength = self.config.camera_strength;
+        // The hat wins over the spare-lever camera while it is pressed.
+        let deflection = self.camera(camera);
+        let (camera_x, camera_y) = if camera == (0, 0) && self.config.camera.lever {
+            (shape(2.0 * positions[1 - lever_index] - 1.0, &CAMERA_LEVER) * self.config.camera_strength, 0.0)
+        } else {
+            (f64::from(camera.0) * deflection, f64::from(camera.1) * deflection)
+        };
+        let yaw = match self.config.yaw_source {
+            YawSource::Twist => self.flight_axis(2, u32::from(stick[5]), 255, invert.yaw, scale),
+            YawSource::Off => 32768,
+            YawSource::LeverDifferential => self.shaped_axis(2, positions[0] - positions[1], invert.yaw, scale),
+        };
         let axes = [
             self.flight_axis(0, roll, 16383, invert.roll, scale),
             self.flight_axis(1, pitch, 16383, invert.pitch, scale),
             throttle,
-            unit16(f64::from(camera.0) * strength),
-            unit16(f64::from(camera.1) * strength),
-            self.flight_axis(2, u32::from(stick[5]), 255, invert.yaw, scale),
+            unit16(camera_x),
+            unit16(camera_y),
+            yaw,
             32768,
         ];
         let mut buttons = u16::from(split) << 4;
         let mut order = (0i8, 0i8);
+        let shifted = self.shift.is_some_and(|slot| pressed >> slot & 1 == 1);
         for slot in 0..SOURCES {
-            if self.active(slot, pressed >> slot & 1 == 1) {
-                buttons |= self.targets[slot];
-                let (x, y) = self.pov[slot].map_or((0, 0), Direction::vector);
+            let [press, long, double] = self.drive(slot, pressed >> slot & 1 == 1);
+            if self.shift == Some(slot) {
+                continue; // the shift control sends nothing; its state is still tracked for when it stops being one
+            }
+            let base = if shifted { self.shifted[slot].unwrap_or(self.mappings[slot]) } else { self.mappings[slot] };
+            for (targets, direction) in [(press, Some(base)), (long, self.long[slot]), (double, self.double[slot])].into_iter().filter_map(|(on, m)| m.filter(|_| on)) {
+                buttons |= targets;
+                let (x, y) = direction.map_or((0, 0), Direction::vector);
                 order = (order.0 + x, order.1 + y);
             }
         }

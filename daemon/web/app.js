@@ -56,10 +56,27 @@ export const MODES = {
   pulse: { label: 'Pulse', help: 'One short press when the control turns on. Good for the mode selector: one flare burst, not a stream.', pulses: [[15, 6]] },
   pulse_change: { label: 'Pulse on change', help: 'One short press each time the control moves, on and off. Turning ENG 1 on and off toggles Autopilot on and off.', pulses: [[15, 6], [70, 6]] },
   toggle: { label: 'Toggle', help: 'Each press turns the NEO button on or off, like a latch for a momentary button.', pulses: [[15, 85]] },
+  repeat: { label: 'Repeat', help: 'Short presses again and again while held, at the Timing interval: rapid flares or gun bursts.', pulses: [[15, 6], [30, 6], [45, 6], [60, 6]] },
 };
 
-export function current(config, key) {
-  return { buttons: [...(config.buttons[key] ?? [])].sort((a, b) => a - b), pov: config.pov[key] ?? null, mode: config.behaviours?.[key] ?? 'hold' };
+/** Actions a source can have: its press (by behaviour), a long press and a double tap. */
+export const SLOTS = {
+  press: { label: 'Press', help: 'Tap or hold, by its behaviour.' },
+  long: { label: 'Long press', help: 'Held for the long-press time: these targets are held until release, instead of the press.' },
+  double: { label: 'Double tap', help: 'Two taps within the double-tap window: one short press of these targets.' },
+};
+
+/**
+ * A source's mapping for one action and layer: {buttons, pov, mode}. Behaviours belong to the press; long press
+ * and double tap are the same in both layers.
+ */
+export function current(config, key, slot = 'press', layer = 'normal') {
+  if (slot !== 'press') {
+    const target = (slot === 'long' ? config.long_press : config.double_tap)?.[key];
+    return { buttons: [...(target?.buttons ?? [])].sort((a, b) => a - b), pov: target?.pov ?? null, mode: 'hold' };
+  }
+  const source = layer === 'shift' ? config.shifted ?? { buttons: {}, pov: {} } : config;
+  return { buttons: [...(source.buttons[key] ?? [])].sort((a, b) => a - b), pov: source.pov[key] ?? null, mode: config.behaviours?.[key] ?? 'hold' };
 }
 
 export function same(a, b) {
@@ -115,6 +132,26 @@ export function curvePath(t) {
     const x = i / 60 - 1;
     return `${i ? 'L' : 'M'}${plot(x).toFixed(1)} ${(240 - plot(shape(x, t))).toFixed(1)}`;
   }).join(' ');
+}
+
+/** Delay that smoothing adds at the 10 ms report period, in whole milliseconds. */
+export function lag(smoothing) {
+  return Math.round((10 * smoothing) / (1 - smoothing));
+}
+
+/** The ramp graph spans this long a hat hold, in milliseconds, across x 10..290 of its 300-unit plot. */
+const RAMP_SPAN = 1500;
+const rampX = (ms) => 10 + (Math.min(ms, RAMP_SPAN) / RAMP_SPAN) * 280;
+
+/** SVG path of the camera output while the hat is held (same rule as the daemon's camera ramp). */
+export function rampPath(camera, strength, longMs) {
+  const points = [];
+  for (let t = 0; t <= RAMP_SPAN; t += 25) {
+    const ramp = camera.ramp_ms ? Math.min(1, t / camera.ramp_ms) : 1;
+    const value = camera.full_after_hold && t >= longMs ? 1 : strength * ramp;
+    points.push(`${points.length ? 'L' : 'M'}${rampX(t).toFixed(1)} ${(88 - value * 76).toFixed(1)}`);
+  }
+  return points.join(' ');
 }
 
 /** "+0.40", "−0.40", " 0.00". */
@@ -198,6 +235,8 @@ export class Page {
     this.labels = [];
     this.busy = false;
     this.dirty = false;
+    this.slot = 'press';        // action being mapped: press, long or double
+    this.layer = 'normal';      // mapping layer being edited: normal or shift
     this.axis = 'roll';         // flight axis shown on the settings tab
     this.source = 'test';       // preview input: the test scrubber or the live stick
     this.testInput = 0.4;
@@ -312,7 +351,16 @@ export class Page {
     }
     for (const radio of this.doc.querySelectorAll('input[name=hat]')) radio.addEventListener('change', () => this.setHat(radio.value));
     this.$('record').addEventListener('click', () => this.record());
-    this.$('revert').addEventListener('click', () => { this.proposal = current(this.saved, this.selected); this.render(); });
+    this.$('revert').addEventListener('click', () => { this.proposal = this.mapping(this.selected); this.render(); });
+    for (const radio of this.doc.querySelectorAll('input[name=layer], input[name=slot]')) {
+      radio.addEventListener('change', () => {
+        this[radio.name] = radio.value;
+        // Long press and double tap are the same in both layers: the shift layer edits the press only.
+        if (this.layer === 'shift') this.slot = 'press';
+        if (this.selected) this.proposal = this.mapping(this.selected);
+        this.render();
+      });
+    }
     this.$('deselect').addEventListener('click', () => { this.selected = null; this.proposal = null; this.reverse = null; this.render(); });
     for (const tab of this.doc.querySelectorAll('[role=tab]')) {
       tab.addEventListener('click', () => this.tab(tab.id));
@@ -348,11 +396,13 @@ export class Page {
         this.changed(`Unsaved: ${point === 'cruise' ? 'CL (cruise)' : point === 'idle' ? 'Idle' : 'Boost'} captured at ${Math.round(this.lever() * 100)}%.`);
       });
     }
-    this.$('precision-pick').addEventListener('click', () => this.startCapture('precision'));
-    this.$('precision-clear').addEventListener('click', () => {
-      this.config.precision.source = null;
-      this.changed('Unsaved: precision aiming off.');
-    });
+    for (const [kind, text] of [['precision', 'precision aiming'], ['shift', 'shift layer']]) {
+      this.$(`${kind}-pick`).addEventListener('click', () => this.startCapture(kind));
+      this.$(`${kind}-clear`).addEventListener('click', () => {
+        this.setSingle(kind, null);
+        this.changed(`Unsaved: ${text} off.`);
+      });
+    }
     this.$('pause-record').addEventListener('click', () => {
       if (this.capture?.kind !== 'pause') return this.startCapture('pause');
       this.config.combos.pause = this.capture.keys;
@@ -381,9 +431,25 @@ export class Page {
 
   select(key) {
     this.selected = key;
-    this.proposal = current(this.saved, key);
+    this.proposal = this.mapping(key);
     this.reverse = null;
     this.render();
+  }
+
+  /** "Sidestick button 2 · long press", "Sidestick button 1 (shift layer)". */
+  subject(key) {
+    return `${label(key)}${this.layer === 'shift' ? ' (shift layer)' : ''}${this.slot === 'press' ? '' : ` · ${SLOTS[this.slot].label.toLowerCase()}`}`;
+  }
+
+  /** A mapping as text; an empty shift-layer press says that the normal mapping applies instead. */
+  shown(mapping, slot = this.slot) {
+    if (this.layer !== 'shift' || slot !== 'press' || mapping.buttons.length || mapping.pov) return describe(mapping);
+    return `Normal: ${describe(current(this.saved, this.selected))}`;
+  }
+
+  /** The saved mapping of a source for the action and layer being edited. */
+  mapping(key) {
+    return current(this.saved, key, this.slot, this.layer);
   }
 
   /** Hat mode is part of the profile: save it at once, like a recorded mapping. */
@@ -425,7 +491,7 @@ export class Page {
   }
 
   render() {
-    const now = this.selected ? current(this.saved, this.selected) : null;
+    const now = this.selected ? this.mapping(this.selected) : null;
     const feeds = this.reverse ? sourcesFor(this.saved, this.reverse) : [];
     const mode = now ? 'sel' : this.reverse ? 'rev' : 'none';
     for (const control of this.doc.querySelectorAll('[data-source]')) {
@@ -474,9 +540,9 @@ export class Page {
     this.$('mapped-now-label').textContent = mode === 'rev' ? 'Fed by' : 'Mapped now';
     if (now) {
       this.$('selected-name').textContent = label(this.selected);
-      this.$('mapped-now').textContent = describe(now);
+      this.$('mapped-now').textContent = this.shown(now);
       this.$('mapped-new').textContent = changed ? describe(this.proposal) : 'Unchanged';
-      this.$('neo-context-text').textContent = `Mapping of ${label(this.selected)} → ${describe(this.proposal)}`;
+      this.$('neo-context-text').textContent = `Mapping of ${this.subject(this.selected)} → ${describe(this.proposal)}`;
     } else if (this.reverse) {
       this.$('selected-name').textContent = neoName(this.reverse);
       this.$('mapped-now').textContent = feeds.length ? feeds.map(label).join(', ') : 'No TCA control';
@@ -493,8 +559,19 @@ export class Page {
       item.textContent = text;
       return item;
     }));
-    this.$('behaviour').hidden = !now;
+    this.renderLayer();
+    const press = this.slot === 'press';
+    this.$('slots').hidden = !now;
+    this.$('behaviour').hidden = !now || !press;
+    this.$('gestures').hidden = !now || press;
     if (now) {
+      for (const radio of this.doc.querySelectorAll('input[name=slot]')) {
+        radio.checked = radio.value === this.slot;
+        radio.disabled = this.layer === 'shift' && radio.value !== 'press';
+        this.doc.querySelector(`[data-slot=${radio.value}]`).textContent = this.shown(current(this.saved, this.selected, radio.value, this.layer), radio.value);
+      }
+      this.$('slot-help').textContent = this.layer === 'shift' ? 'The shift layer changes the press only; long press and double tap are the same in both layers.' : SLOTS[this.slot].help;
+      this.$('gesture-help').textContent = `With a long press or double tap set, a tap is sent once the control is released and the double-tap window (${this.saved.timing.double_ms} ms) has passed, as a short press.`;
       const mode = MODES[this.proposal.mode];
       for (const radio of this.doc.querySelectorAll('input[name=behaviour]')) radio.checked = radio.value === this.proposal.mode;
       this.$('behaviour-help').textContent = mode.help;
@@ -513,13 +590,27 @@ export class Page {
     this.renderAxes();
   }
 
+  /** The Normal / Shift switch: Shift needs a shift control, chosen on the settings tab. */
+  renderLayer() {
+    const shift = this.saved.shift;
+    if (!shift) this.layer = 'normal';
+    for (const input of this.doc.querySelectorAll('input[name=layer]')) input.checked = input.value === this.layer;
+    const option = this.doc.querySelector('input[name=layer][value=shift]');
+    option.disabled = !shift;
+    option.parentElement.title = shift ? '' : 'Choose a shift control under Control helpers on the Axes and settings tab';
+    this.$('layer-shift').textContent = shift ? `Shift · ${short(shift)}` : 'Shift';
+    const note = this.$('layer-note');
+    note.hidden = this.layer !== 'shift';
+    note.textContent = shift ? `Shift layer: these mappings apply while ${label(shift)} is held. Controls without one keep their normal mapping.` : '';
+  }
+
   renderAxes() {
     const lever = this.saved.throttle_lever === 'right' ? 'Right' : 'Left';
     const rows = [
       ['X / Y', 'Sidestick stick', 'Roll / pitch'],
-      ['Rz', 'Sidestick twist', 'Yaw'],
-      ['Z', `${lever} quadrant lever or sidestick slider`, 'Throttle'],
-      ['Rx / Ry', this.saved.hat === 'mapped' ? 'No source (hat is mapped)' : 'Sidestick hat', 'Camera'],
+      ['Rz', { twist: 'Sidestick twist', off: 'No source (yaw off)', lever_differential: 'Quadrant lever difference' }[this.saved.yaw_source], 'Yaw'],
+      ['Z', this.saved.yaw_source === 'lever_differential' ? 'Average of both quadrant levers or sidestick slider' : `${lever} quadrant lever or sidestick slider`, 'Throttle'],
+      ['Rx / Ry', `${this.saved.hat === 'mapped' ? 'No source (hat is mapped)' : 'Sidestick hat'}${this.saved.camera.lever ? ' + spare lever' : ''}`, 'Camera'],
     ];
     this.$('axes').replaceChildren(...rows.map(([axis, source, action]) => {
       const row = this.doc.createElement('div');
@@ -531,13 +622,22 @@ export class Page {
 
   async record() {
     const key = this.selected;
-    const before = current(this.saved, key);
+    const before = this.mapping(key);
     const after = structuredClone(this.proposal);
     const next = structuredClone(this.saved);
-    if (after.buttons.length) next.buttons[key] = after.buttons; else delete next.buttons[key];
-    if (after.pov) next.pov[key] = after.pov; else delete next.pov[key];
-    next.behaviours = { ...next.behaviours };
-    if (after.mode !== 'hold') next.behaviours[key] = after.mode; else delete next.behaviours[key];
+    if (this.slot === 'press') {
+      // The press of the edited layer, and the behaviour (shared by both layers).
+      const layer = this.layer === 'shift' ? (next.shifted = { buttons: { ...next.shifted?.buttons }, pov: { ...next.shifted?.pov } }) : next;
+      if (after.buttons.length) layer.buttons[key] = after.buttons; else delete layer.buttons[key];
+      if (after.pov) layer.pov[key] = after.pov; else delete layer.pov[key];
+      next.behaviours = { ...next.behaviours };
+      if (after.mode !== 'hold') next.behaviours[key] = after.mode; else delete next.behaviours[key];
+    } else {
+      const field = this.slot === 'long' ? 'long_press' : 'double_tap';
+      next[field] = { ...next[field] };
+      if (after.buttons.length || after.pov) next[field][key] = { buttons: after.buttons, pov: after.pov }; else delete next[field][key];
+    }
+    const what = this.subject(key);
     this.busy = true;
     this.render();
     let result;
@@ -552,14 +652,14 @@ export class Page {
     this.saved = next;
     this.config.buttons = structuredClone(next.buttons);
     this.config.pov = structuredClone(next.pov);
-    this.config.behaviours = structuredClone(next.behaviours);
-    const entry = { label: label(key), sources: [key], mapping: `${describe(before)} → ${describe(after)}`.slice(0, 200) };
+    for (const field of ['behaviours', 'shifted', 'long_press', 'double_tap']) this.config[field] = structuredClone(next[field]);
+    const entry = { label: what, sources: [key], mapping: `${describe(before)} → ${describe(after)}`.slice(0, 200) };
     const applied = result.running ? ' Applied to the running emulation.' : '';
     try {
       await this.api.put('/api/labels', [...this.labels, entry]);
       this.labels = [...this.labels, entry];
       this.renderLabels();
-      this.note(`Recorded ${label(key)}: ${describe(after)}.${applied}`);
+      this.note(`Recorded ${what}: ${describe(after)}.${applied}`);
     } catch (error) {
       this.note(`Mapping saved, but the correction log was not updated: ${error.message}.${applied}`);
     }
@@ -618,13 +718,22 @@ export class Page {
     }
   }
 
-  /** Settings fields: [where in the profile, key, minimum %, maximum %, error element]. Values are stored as fractions. */
+  /**
+   * Settings fields: [where in the profile, key, minimum, maximum, error element, factor]. Percent fields are stored
+   * as fractions (factor 100); millisecond fields as they are (factor 1).
+   */
   static FIELDS = {
     'tune-deadzone': ['axis', 'deadzone', 0, 50],
     'tune-saturation': ['axis', 'saturation', 50, 100],
     'tune-anti': ['axis', 'anti_deadzone', 0, 50],
     'tune-curve': ['axis', 'curve', -100, 100],
+    'tune-smoothing': ['axis', 'smoothing', 0, 90],
     camera: [null, 'camera_strength', 0, 100],
+    'camera-ramp': ['camera', 'ramp_ms', 0, 2000, undefined, 1],
+    'timing-long': ['timing', 'long_ms', 200, 2000, 'timing-error', 1],
+    'timing-double': ['timing', 'double_ms', 100, 1000, 'timing-error', 1],
+    'timing-repeat': ['timing', 'repeat_ms', 30, 1000, 'timing-error', 1],
+    'timing-pulse': ['timing', 'pulse_ms', 20, 1000, 'timing-error', 1],
     'detent-idle': ['throttle', 'idle', 0, 100, 'detent-error'],
     'detent-cruise': ['throttle', 'cruise', 0, 100, 'detent-error'],
     'detent-boost': ['throttle', 'boost', 0, 100, 'detent-error'],
@@ -644,15 +753,39 @@ export class Page {
     for (const radio of this.doc.querySelectorAll('input[name=lever]')) radio.checked = radio.value === config.throttle_lever;
     for (const radio of this.doc.querySelectorAll('input[name=throttle-mode]')) radio.checked = radio.value === config.throttle.mode;
     for (const axis of ['roll', 'pitch', 'yaw', 'throttle']) this.$(`invert-${axis}`).checked = config.invert[axis];
-    this.$('split-enabled').checked = config.split_high_g.enabled;
     this.$('safe-start').checked = config.safe_start;
+    this.$('camera-full').checked = config.camera.full_after_hold;
+    this.leverUsers();
     this.fill();
+  }
+
+  /** Controls that share the quadrant levers, from the draft. */
+  leverUsers() {
+    this.$('split-enabled').checked = this.config.split_high_g.enabled;
+    for (const input of this.doc.querySelectorAll('input[name=camera-source]')) input.checked = input.value === (this.config.camera.lever ? 'lever' : 'hat');
+    for (const input of this.doc.querySelectorAll('input[name=yaw-source]')) input.checked = input.value === this.config.yaw_source;
+  }
+
+  /**
+   * Split-lever High-G, the camera lever and lever yaw each need the quadrant levers: turning one on turns the
+   * others off, and says so.
+   */
+  exclusive(chosen) {
+    const config = this.config;
+    const off = [
+      ['split', 'split-lever High-G', () => { config.split_high_g.enabled = false; }, config.split_high_g.enabled],
+      ['camera', 'the camera lever', () => { config.camera.lever = false; }, config.camera.lever],
+      ['yaw', 'lever yaw', () => { config.yaw_source = 'twist'; }, config.yaw_source === 'lever_differential'],
+    ].filter(([name, , , on]) => name !== chosen && on);
+    for (const [, , turnOff] of off) turnOff();
+    this.leverUsers();
+    return off.length ? `Unsaved changes: ${off.map(([, text]) => text).join(' and ')} turned off, since it uses the quadrant levers too.` : 'Unsaved changes.';
   }
 
   /** Number fields and sliders from the draft (the axis fields show the selected axis). */
   fill() {
-    for (const [id, [group, key]] of Object.entries(Page.FIELDS)) {
-      const value = String(Math.round(this.group(group)[key] * 100));
+    for (const [id, [group, key, , , , factor = 100]] of Object.entries(Page.FIELDS)) {
+      const value = String(Math.round(this.group(group)[key] * factor));
       this.$(id).value = value;
       this.$(id).setAttribute('aria-invalid', 'false');
       this.$(error(id)).textContent = '';
@@ -681,22 +814,32 @@ export class Page {
       return this.renderSettings();
     }
     if (name === 'try-live') return this.setPreview(target.checked);
+    let text = 'Unsaved changes.';
     if (name === 'lever') this.config.throttle_lever = target.value;
     else if (name === 'throttle-mode') this.config.throttle.mode = target.value;
     else if (name.startsWith('invert-')) this.config.invert[name.slice(7)] = target.checked;
-    else if (name === 'split-enabled') this.config.split_high_g.enabled = target.checked;
     else if (name === 'safe-start') this.config.safe_start = target.checked;
-    else {
+    else if (name === 'camera-full') this.config.camera.full_after_hold = target.checked;
+    else if (name === 'split-enabled') {
+      this.config.split_high_g.enabled = target.checked;
+      if (target.checked) text = this.exclusive('split');
+    } else if (name === 'camera-source') {
+      this.config.camera.lever = target.value === 'lever';
+      if (this.config.camera.lever) text = this.exclusive('camera');
+    } else if (name === 'yaw-source') {
+      this.config.yaw_source = target.value;
+      if (target.value === 'lever_differential') text = this.exclusive('yaw');
+    } else {
       // A number field or its slider: keep the pair together and take the value into the draft when it is a number.
       const id = name.endsWith('-range') ? name.slice(0, -6) : name;
       const partner = this.$(name.endsWith('-range') ? id : `${id}-range`);
       if (partner) partner.value = target.value;
       if (target.value !== '' && Number.isFinite(Number(target.value))) {
-        const [group, key] = Page.FIELDS[id];
-        this.group(group)[key] = Number(target.value) / 100;
+        const [group, key, , , , factor = 100] = Page.FIELDS[id];
+        this.group(group)[key] = Number(target.value) / factor;
       }
     }
-    return this.changed('Unsaved changes.');
+    return this.changed(text);
   }
 
   /** The draft changed: mark it, redraw the previews, and send it to the game while trying it there. */
@@ -720,15 +863,19 @@ export class Page {
       this.$(error(id)).textContent = text;
       valid = false;
     };
+    // Clear everything first: some fields share one error message.
+    for (const id of Object.keys(Page.FIELDS)) {
+      this.$(id).setAttribute('aria-invalid', 'false');
+      this.$(error(id)).textContent = '';
+    }
     for (const [id, [, , minimum, maximum]] of Object.entries(Page.FIELDS)) {
       const field = this.$(id);
       const value = Number(field.value);
-      field.setAttribute('aria-invalid', 'false');
-      this.$(error(id)).textContent = '';
       if (field.value === '' || !(value >= minimum && value <= maximum)) fail(id, `Enter a number from ${minimum} to ${maximum}.`);
     }
     const value = (id) => Number(this.$(id).value);
     if (valid && value('tune-saturation') <= value('tune-deadzone')) fail('tune-saturation', 'Must be beyond the deadzone.');
+    if (valid && value('timing-repeat') <= value('timing-pulse')) fail('timing-repeat', 'Repeat every must be longer than the pulse length.');
     if (valid && (value('detent-idle') >= value('detent-cruise') - value('detent-band') || value('detent-cruise') + value('detent-band') >= value('detent-boost'))) {
       fail('detent-cruise', 'Needs idle < cruise − band and cruise + band < boost.');
     }
@@ -739,7 +886,7 @@ export class Page {
       return false;
     }
     // What is saved or previewed is exactly what the fields show.
-    for (const [id, [group, key]] of Object.entries(Page.FIELDS)) this.group(group)[key] = value(id) / 100;
+    for (const [id, [group, key, , , , factor = 100]] of Object.entries(Page.FIELDS)) this.group(group)[key] = value(id) / factor;
     return true;
   }
 
@@ -853,10 +1000,34 @@ export class Page {
       bar.style.setProperty('--from', `${50 + Math.min(out, 0) * 50}%`);
       bar.style.setProperty('--size', `${Math.abs(out) * 50}%`);
     }
+    const delay = lag(tuning.smoothing);
+    this.$('tune-lag').textContent = delay ? `≈ ${delay} ms added delay` : 'No added delay';
     this.renderThrottle();
+    this.renderCamera();
     this.renderHelpers();
     this.$('try-live').checked = this.previewing;
     this.$('pill-preview').hidden = !this.previewing;
+  }
+
+  /** Camera ramp graph and help, and the yaw source help, from the draft. */
+  renderCamera() {
+    const { camera, timing } = this.config;
+    const strength = this.config.camera_strength;
+    const long = rampX(timing.long_ms);
+    this.$('ramp-path').setAttribute('d', rampPath(camera, strength, timing.long_ms));
+    for (const [attribute, value] of [['x1', long], ['x2', long]]) this.$('ramp-long').setAttribute(attribute, value.toFixed(1));
+    this.$('ramp-long-text').setAttribute('x', (long + 4).toFixed(1));
+    for (const id of ['ramp-long', 'ramp-long-text']) this.$(id).style.setProperty('display', camera.full_after_hold ? '' : 'none');
+    this.$('ramp').setAttribute('aria-label', `Camera output while the hat is held: ${camera.ramp_ms ? `ramps to ${Math.round(strength * 100)}% over ${camera.ramp_ms} ms` : `${Math.round(strength * 100)}% at once`}${camera.full_after_hold ? `, full after ${timing.long_ms} ms` : ''}.`);
+    const side = this.config.throttle_lever === 'right' ? 'left' : 'right';
+    this.$('camera-source-help').textContent = camera.lever
+      ? `The ${side} quadrant lever (the one that is not the throttle) pans the camera left and right; centre it to look ahead. The hat still works and wins while pressed.`
+      : 'Only the hat moves the camera.';
+    this.$('yaw-help').textContent = {
+      twist: 'The sidestick twist steers the rudder, through the yaw curve.',
+      off: 'No yaw input: useful if the twist is too easy to knock in combat.',
+      lever_differential: 'Pushing one quadrant lever ahead of the other yaws towards the back lever, through the yaw curve. The throttle follows the average of both levers.',
+    }[this.config.yaw_source];
   }
 
   renderThrottle() {
@@ -896,14 +1067,26 @@ export class Page {
       : 'Start emulation to capture the lever in its detents.';
   }
 
+  /** The precision or shift control of the draft. */
+  single(kind) {
+    return kind === 'precision' ? this.config.precision.source : this.config.shift;
+  }
+
+  setSingle(kind, key) {
+    if (kind === 'precision') this.config.precision.source = key;
+    else this.config.shift = key;
+  }
+
   renderHelpers() {
-    const precision = this.config.precision.source;
-    const chip = this.$('precision-source');
-    chip.textContent = precision ? `${short(precision)} · ${label(precision)}` : 'Off';
-    chip.classList.toggle('off', !precision);
-    this.$('precision-clear').disabled = !precision;
     const capturing = this.capture?.kind;
-    this.$('precision-pick').textContent = capturing === 'precision' ? 'Cancel' : 'Press a control…';
+    for (const kind of ['precision', 'shift']) {
+      const key = this.single(kind);
+      const chip = this.$(`${kind}-source`);
+      chip.textContent = key ? `${short(key)} · ${label(key)}` : 'Off';
+      chip.classList.toggle('off', !key);
+      this.$(`${kind}-clear`).disabled = !key;
+      this.$(`${kind}-pick`).textContent = capturing === kind ? 'Cancel' : 'Press a control…';
+    }
     this.$('pause-record').textContent = capturing === 'pause' ? 'Done' : 'Record combo…';
     const keys = capturing === 'pause' ? this.capture.keys : this.config.combos.pause;
     const combo = this.$('pause-combo');
@@ -929,9 +1112,11 @@ export class Page {
     // The prompt sits in the card being captured for.
     for (const well of this.doc.querySelectorAll('.capture')) {
       well.hidden = well.dataset.for !== capturing;
-      well.lastElementChild.textContent = !this.emulating ? 'Start emulation, then press the controls on the TCA.'
-        : well.dataset.for === 'precision' ? 'Press the TCA control to hold for precision aiming.'
-          : 'Press and release the controls for the combo (up to 4), then choose Done.';
+      well.lastElementChild.textContent = !this.emulating ? 'Start emulation, then press the controls on the TCA.' : {
+        precision: 'Press the TCA control to hold for precision aiming.',
+        shift: 'Press the TCA control to hold for the shift layer. Its own mapping is not sent while it is the shift control.',
+        pause: 'Press and release the controls for the combo (up to 4), then choose Done.',
+      }[well.dataset.for];
     }
   }
 
@@ -980,11 +1165,12 @@ export class Page {
     const pressed = data.pressed.filter((key) => !this.held.has(key));
     const fresh = pressed.filter((key) => SELECTABLE.has(key));
     this.held = new Set(data.pressed);
-    if (this.capture?.kind === 'precision' && fresh.length) {
-      this.config.precision.source = fresh[0];
+    const kind = this.capture?.kind;
+    if ((kind === 'precision' || kind === 'shift') && fresh.length) {
+      this.setSingle(kind, fresh[0]);
       this.capture = null;
-      this.changed(`Unsaved: hold ${label(fresh[0])} for precision aiming.`);
-    } else if (this.capture?.kind === 'pause') {
+      this.changed(`Unsaved: hold ${label(fresh[0])} for ${kind === 'precision' ? 'precision aiming' : 'the shift layer'}.`);
+    } else if (kind === 'pause') {
       this.capture.keys = [...new Set([...this.capture.keys, ...fresh])].slice(0, 4);
     }
     const picked = pressed.filter((key) => this.selectable(key));

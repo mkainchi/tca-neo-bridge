@@ -524,3 +524,150 @@ fn throttle_selector_reports_its_owner() {
     selector.read(0.5, 0.0);
     assert_eq!(selector.active(), 0);
 }
+
+fn gesture(buttons: &[u8], pov: Option<Direction>) -> config::Target {
+    config::Target { buttons: buttons.to_vec(), pov }
+}
+
+/// Buttons and POV at `time` with the given sidestick buttons down.
+fn frame(mapper: &mut Mapper, time: u64, pressed: &[u32]) -> (u32, u8) {
+    let report = mapper.at(ms(time)).convert(Some(&stick(8192, 8192, 128, 128, 8, pressed)), Some(&quadrant(32768, 32768, &[])));
+    let (_, buttons, hat) = fields(&report);
+    (buttons, hat)
+}
+
+#[test]
+fn repeat_sends_short_presses_while_held() {
+    let mut cfg = research();
+    cfg.behaviours.insert("s1".into(), Mode::Repeat); // pulse 80 ms every 120 ms
+    let mut mapper = Mapper::new(&cfg);
+    let timeline: Vec<_> = [(0, &[][..]), (10, &[1]), (89, &[1]), (90, &[1]), (130, &[1]), (209, &[1]), (210, &[1]), (250, &[1]), (400, &[])]
+        .iter()
+        .map(|&(time, pressed)| frame(&mut mapper, time, pressed).0)
+        .collect();
+    assert_eq!(timeline, [0, 1, 1, 0, 1, 1, 0, 1, 0]);
+}
+
+#[test]
+fn long_press_holds_its_targets_and_a_tap_becomes_a_pulse_on_release() {
+    let mut cfg = research();
+    cfg.long_press.insert("s2".into(), gesture(&[3], Some(Direction::Left))); // s2 normally sends NEO 2
+    let mut mapper = Mapper::new(&cfg);
+    assert_eq!(frame(&mut mapper, 0, &[]), (0, 8));
+    // Tap: nothing while down, a pulse of the normal mapping on release.
+    assert_eq!(frame(&mut mapper, 10, &[2]), (0, 8));
+    assert_eq!(frame(&mut mapper, 100, &[]), (0b10, 8));
+    assert_eq!(frame(&mut mapper, 180, &[]), (0, 8));
+    // Hold past 500 ms: the long-press targets are held until release, and the normal mapping never fires.
+    assert_eq!(frame(&mut mapper, 200, &[2]), (0, 8));
+    assert_eq!(frame(&mut mapper, 699, &[2]), (0, 8));
+    assert_eq!(frame(&mut mapper, 700, &[2]), (0b100, 6));
+    assert_eq!(frame(&mut mapper, 900, &[2]), (0b100, 6));
+    assert_eq!(frame(&mut mapper, 910, &[]), (0, 8));
+    assert_eq!(frame(&mut mapper, 1000, &[]), (0, 8));
+}
+
+#[test]
+fn double_tap_sends_its_targets_and_a_single_tap_waits_out_the_window() {
+    let mut cfg = research();
+    cfg.double_tap.insert("s2".into(), gesture(&[4], None));
+    cfg.long_press.insert("s3".into(), gesture(&[5], None));
+    cfg.double_tap.insert("s3".into(), gesture(&[6], None));
+    let mut mapper = Mapper::new(&cfg);
+    frame(&mut mapper, 0, &[]);
+    // Double tap within 250 ms: one pulse of the double-tap targets, nothing else.
+    assert_eq!(frame(&mut mapper, 10, &[2]).0, 0);
+    assert_eq!(frame(&mut mapper, 60, &[]).0, 0);
+    assert_eq!(frame(&mut mapper, 200, &[2]).0, 0b1000);
+    assert_eq!(frame(&mut mapper, 250, &[]).0, 0b1000);
+    assert_eq!(frame(&mut mapper, 280, &[]).0, 0);
+    assert_eq!(frame(&mut mapper, 600, &[]).0, 0);
+    // Single tap: the normal mapping pulses once the window has passed.
+    assert_eq!(frame(&mut mapper, 1000, &[2]).0, 0);
+    assert_eq!(frame(&mut mapper, 1050, &[]).0, 0);
+    assert_eq!(frame(&mut mapper, 1299, &[]).0, 0);
+    assert_eq!(frame(&mut mapper, 1300, &[]).0, 0b10);
+    assert_eq!(frame(&mut mapper, 1380, &[]).0, 0);
+    // With both set, a held second tap stays a double tap: it never becomes a long press.
+    assert_eq!(frame(&mut mapper, 2000, &[3]).0, 0);
+    assert_eq!(frame(&mut mapper, 2050, &[]).0, 0);
+    assert_eq!(frame(&mut mapper, 2100, &[3]).0, 0b10_0000);
+    assert_eq!(frame(&mut mapper, 2800, &[3]).0, 0);
+    assert_eq!(frame(&mut mapper, 2810, &[]).0, 0);
+    // And a single long hold is a long press.
+    assert_eq!(frame(&mut mapper, 4000, &[3]).0, 0);
+    assert_eq!(frame(&mut mapper, 4500, &[3]).0, 0b1_0000);
+    assert_eq!(frame(&mut mapper, 4600, &[]).0, 0);
+    assert_eq!(frame(&mut mapper, 5000, &[]).0, 0);
+}
+
+#[test]
+fn shift_layer_replaces_mappings_while_its_control_is_held() {
+    let mut cfg = research();
+    // s16 keeps its own mapping (NEO 4) in the profile, but sends nothing while it is the shift control.
+    cfg.shift = Some("s16".into());
+    cfg.shifted.buttons.insert("s1".into(), vec![9]);
+    cfg.shifted.pov.insert("s2".into(), Direction::Down); // pov only: sends no buttons in the shift layer
+    let mut mapper = Mapper::new(&cfg);
+    assert_eq!(frame(&mut mapper, 0, &[1, 2, 3]), (0b111, 8));
+    assert_eq!(frame(&mut mapper, 10, &[16]), (0, 8)); // the shift control sends nothing itself
+    assert_eq!(frame(&mut mapper, 20, &[16, 1]), (1 << 8, 8));
+    assert_eq!(frame(&mut mapper, 30, &[16, 2]), (0, 4));
+    assert_eq!(frame(&mut mapper, 40, &[16, 3]), (0b100, 8)); // no shifted mapping: the normal one
+}
+
+#[test]
+fn camera_ramps_in_and_goes_full_after_a_long_press() {
+    let mut cfg = research();
+    cfg.camera_strength = 0.5;
+    cfg.camera.ramp_ms = 200;
+    let rx = |mapper: &mut Mapper, time: u64, hat: u8| fields(&mapper.at(ms(time)).convert(Some(&stick(8192, 8192, 128, 128, hat, &[])), Some(&quadrant(32768, 32768, &[])))).0[3];
+    let mut mapper = Mapper::new(&cfg);
+    assert_eq!([rx(&mut mapper, 0, 2), rx(&mut mapper, 100, 2), rx(&mut mapper, 300, 2), rx(&mut mapper, 700, 2)], [32768, unit16(0.25), unit16(0.5), unit16(0.5)]);
+    assert_eq!(rx(&mut mapper, 710, 8), 32768); // centred: the ramp starts again
+    assert_eq!(rx(&mut mapper, 720, 2), 32768);
+    cfg.camera.full_after_hold = true;
+    mapper.reconfigure(&cfg);
+    assert_eq!([rx(&mut mapper, 1000, 2), rx(&mut mapper, 1220, 2)], [unit16(0.5), 65535]);
+    assert_eq!(rx(&mut mapper, 500, 2), 32768); // a clock that goes backwards restarts the ramp, never panics
+}
+
+#[test]
+fn spare_lever_pans_the_camera_unless_the_hat_is_pressed() {
+    let mut cfg = research();
+    cfg.split_high_g.enabled = false;
+    cfg.camera.lever = true;
+    let camera = |mapper: &mut Mapper, hat: u8, right: u16| {
+        let (axes, _, _) = fields(&mapper.convert(Some(&stick(8192, 8192, 128, 128, hat, &[])), Some(&quadrant(32768, right, &[]))));
+        (axes[3], axes[4])
+    };
+    let mut mapper = Mapper::new(&cfg); // throttle on the left lever: the right lever is spare
+    assert_eq!(camera(&mut mapper, 8, raw(1.0)), (65535, 32768));
+    assert_eq!(camera(&mut mapper, 8, raw(0.0)), (0, 32768));
+    assert_eq!(camera(&mut mapper, 8, raw(0.52)), (32768, 32768)); // inside the centre band
+    assert_eq!(camera(&mut mapper, 0, raw(1.0)), (32768, 0)); // hat up wins
+    cfg.throttle_lever = Lever::Right;
+    let mut mapper = Mapper::new(&cfg);
+    let (axes, _, _) = fields(&mapper.convert(Some(&neutral_stick()), Some(&quadrant(raw(1.0), raw(0.5), &[]))));
+    assert_eq!(axes[3], 65535);
+}
+
+#[test]
+fn yaw_can_be_off_or_come_from_the_lever_difference() {
+    let mut cfg = research();
+    cfg.yaw_source = config::YawSource::Off;
+    let (axes, _, _) = fields(&Mapper::new(&cfg).convert(Some(&stick(8192, 8192, 255, 128, 8, &[])), Some(&quadrant(32768, 32768, &[]))));
+    assert_eq!(axes[5], 32768);
+    cfg.split_high_g.enabled = false;
+    cfg.yaw_source = config::YawSource::LeverDifferential;
+    cfg.invert.yaw = true;
+    let mut mapper = Mapper::new(&cfg);
+    // Left lever forward, right back: full yaw (inverted here), and the throttle follows the average (centre).
+    let (axes, _, _) = fields(&mapper.convert(Some(&neutral_stick()), Some(&quadrant(raw(1.0), raw(0.0), &[]))));
+    assert_eq!((axes[5], axes[2]), (0, unit16(2.0 * 32767.0 / 65535.0 - 1.0)));
+    cfg.throttle.mode = ThrottleMode::Detents;
+    cfg.invert.yaw = false;
+    let mut mapper = Mapper::new(&cfg);
+    let (axes, _, _) = fields(&mapper.convert(Some(&neutral_stick()), Some(&quadrant(raw(0.4), raw(0.6), &[]))));
+    assert_eq!((axes[2], axes[5]), (32768, unit16(neo::shape(-0.2, &cfg.axes.yaw))));
+}

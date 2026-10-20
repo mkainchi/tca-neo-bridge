@@ -14,7 +14,9 @@ function defaults() {
     split_high_g: { enabled: true, forward: 0.95, back: 0.05 },
     throttle: { mode: 'linear', idle: 0.1, cruise: 0.5, boost: 0.9, band: 0.03 },
     precision: { source: null, scale: 0.5 }, safe_start: true, combos: { pause: [] },
-    behaviours: { q3: 'pulse_change' }, timing: { pulse_ms: 80 },
+    behaviours: { q3: 'pulse_change' }, timing: { pulse_ms: 80, long_ms: 500, double_ms: 250, repeat_ms: 120 },
+    long_press: {}, double_tap: {}, shift: null, shifted: { buttons: {}, pov: {} },
+    camera: { ramp_ms: 0, full_after_hold: false, lever: false }, yaw_source: 'twist',
     buttons: { s1: [1], s5: [5], s6: [7], q2: [7], q3: [6] }, pov: { s11: 'up' },
   };
 }
@@ -839,6 +841,198 @@ group('behaviour', () => {
     await p.record();
     expect(p.saved.behaviours.s1).toBe('toggle');
     expect($('link-status').textContent).toBe('Recorded Sidestick button 1: NEO 1 (Gun) · toggle.');
+  });
+});
+
+group('gestures and layers', () => {
+  it('reads each action and layer of a source', () => {
+    const config = defaults();
+    config.long_press = { s2: { buttons: [4, 3], pov: 'left' } };
+    config.shifted = { buttons: { s1: [9] }, pov: { s2: 'down' } };
+    expect(app.current(config, 's2', 'long')).toEqual({ buttons: [3, 4], pov: 'left', mode: 'hold' });
+    expect(app.current(config, 's2', 'double')).toEqual({ buttons: [], pov: null, mode: 'hold' });
+    expect(app.current(config, 's1', 'press', 'shift')).toEqual({ buttons: [9], pov: null, mode: 'hold' });
+    expect(app.current(config, 's2', 'press', 'shift')).toEqual({ buttons: [], pov: 'down', mode: 'hold' });
+    delete config.shifted;
+    delete config.long_press;
+    expect(app.current(config, 's1', 'press', 'shift').buttons).toEqual([]);
+    expect(app.current(config, 's2', 'long').buttons).toEqual([]);
+    expect(app.MODES.repeat.pulses).toHaveLength(4);
+  });
+
+  it('maps long press and double tap, and clears them', async () => {
+    const api = fakeApi();
+    const p = await page(api);
+    choose('slot', 'press'); // nothing selected yet: no proposal to rebuild
+    expect(p.proposal).toBeNull();
+    tca('s2').click();
+    expect($('slots').hidden).toBe(false);
+    expect(document.querySelector('[data-slot=press]').textContent).toBe('Nothing');
+    choose('slot', 'long');
+    expect([$('behaviour').hidden, $('gestures').hidden]).toEqual([true, false]);
+    expect($('slot-help').textContent).toBe(app.SLOTS.long.help);
+    expect($('gesture-help').textContent).toContain('(250 ms)');
+    neo('b3').click();
+    neo('pov-left').click();
+    expect($('neo-context-text').textContent).toBe('Mapping of Sidestick button 2 · long press → NEO 3 (Weapon select), NEO POV left');
+    await p.record();
+    expect(p.saved.long_press.s2).toEqual({ buttons: [3], pov: 'left' });
+    expect($('link-status').textContent).toBe('Recorded Sidestick button 2 · long press: NEO 3 (Weapon select), NEO POV left.');
+    expect(document.querySelector('[data-slot=long]').textContent).toBe('NEO 3 (Weapon select), NEO POV left');
+    choose('slot', 'double');
+    neo('b4').click();
+    await p.record();
+    expect(p.saved.double_tap.s2).toEqual({ buttons: [4], pov: null });
+    // Removing every target removes the action.
+    choose('slot', 'long');
+    neo('b3').click();
+    neo('pov-left').click();
+    $('record').click();
+    await vi.waitFor(() => expect('s2' in p.saved.long_press).toBe(false));
+    expect(p.config.double_tap.s2).toEqual({ buttons: [4], pov: null });
+    choose('slot', 'press');
+    expect($('behaviour').hidden).toBe(false);
+    choose('behaviour', 'repeat');
+    expect($('timeline-out').children).toHaveLength(4);
+  });
+
+  it('edits the shift layer once a shift control is set', async () => {
+    const api = fakeApi();
+    const p = await page(api);
+    tca('s1').click();
+    expect(radio('layer', 'shift').disabled).toBe(true);
+    expect(radio('layer', 'shift').parentElement.title).toBe('Choose a shift control under Control helpers on the Axes and settings tab');
+    expect($('layer-note').hidden).toBe(true);
+    p.saved.shift = 's16';
+    choose('layer', 'shift');
+    expect($('layer-shift').textContent).toBe('Shift · S16');
+    expect([$('layer-note').hidden, $('layer-note').textContent]).toEqual([false, 'Shift layer: these mappings apply while Sidestick button 16 is held. Controls without one keep their normal mapping.']);
+    expect($('mapped-now').textContent).toBe('Normal: NEO 1 (Gun)');
+    expect(document.querySelector('[data-slot=long]').textContent).toBe('Nothing');
+    expect(radio('slot', 'long').disabled).toBe(true);
+    expect($('slot-help').textContent).toBe('The shift layer changes the press only; long press and double tap are the same in both layers.');
+    neo('b9').click();
+    expect($('mapped-new').textContent).toBe('NEO 9 (Radar)');
+    neo('pov-up').click();
+    await p.record();
+    expect(p.saved.shifted).toEqual({ buttons: { s1: [9] }, pov: { s1: 'up' } });
+    expect(p.saved.buttons.s1).toEqual([1]); // the normal layer is untouched
+    expect($('link-status').textContent).toBe('Recorded Sidestick button 1 (shift layer): NEO 9 (Radar), NEO POV up.');
+    neo('b9').click();
+    neo('pov-up').click();
+    await p.record();
+    expect(p.saved.shifted).toEqual({ buttons: {}, pov: {} });
+    // Choosing the shift layer while on a long press goes back to the press.
+    choose('layer', 'normal');
+    choose('slot', 'long');
+    choose('layer', 'shift');
+    expect(p.slot).toBe('press');
+    // Without a shift control any more, the normal layer comes back.
+    p.saved.shift = null;
+    $('deselect').click();
+    expect([p.layer, radio('layer', 'normal').checked]).toEqual(['normal', true]);
+    // Profiles without a shifted layer yet.
+    delete p.saved.shifted;
+    p.saved.shift = 's16';
+    tca('s3').click();
+    choose('layer', 'shift');
+    neo('b2').click();
+    await p.record();
+    expect(p.saved.shifted).toEqual({ buttons: { s3: [2] }, pov: {} });
+  });
+});
+
+group('camera, yaw and timing', () => {
+  it('previews the camera ramp and explains the camera and yaw sources', async () => {
+    const p = await page();
+    $('tab-settings').click();
+    expect($('camera-source-help').textContent).toBe('Only the hat moves the camera.');
+    expect($('ramp').getAttribute('aria-label')).toBe('Camera output while the hat is held: 100% at once.');
+    expect($('ramp-long').style.getPropertyValue('display')).toBe('none');
+    $('camera-ramp-range').value = '300';
+    fire($('camera-ramp-range'));
+    expect([$('camera-ramp').value, p.config.camera.ramp_ms]).toEqual(['300', 300]);
+    $('camera-full').checked = true;
+    fire($('camera-full'));
+    expect(p.config.camera.full_after_hold).toBe(true);
+    expect($('ramp').getAttribute('aria-label')).toBe('Camera output while the hat is held: ramps to 100% over 300 ms, full after 500 ms.');
+    expect($('ramp-long').getAttribute('x1')).toBe(String((10 + (500 / 1500) * 280).toFixed(1)));
+    expect($('ramp-path').getAttribute('d')).toBe(app.rampPath(p.config.camera, 1, 500));
+    expect(app.rampPath({ ramp_ms: 0, full_after_hold: false }, 0.5, 500).startsWith('M10.0 50.0')).toBe(true);
+    expect(app.rampPath({ ramp_ms: 600, full_after_hold: true }, 0.5, 300).endsWith('L290.0 12.0')).toBe(true);
+    for (const [source, help] of [['off', 'No yaw input'], ['twist', 'The sidestick twist']]) {
+      choose('yaw-source', source, 'input');
+      expect($('yaw-help').textContent.startsWith(help)).toBe(true);
+    }
+    expect($('dirty').textContent).toBe('Unsaved changes.');
+  });
+
+  it('turns the other lever features off when one needs the levers', async () => {
+    const p = await page(); // split-lever High-G is on
+    choose('camera-source', 'lever', 'input');
+    expect([p.config.camera.lever, p.config.split_high_g.enabled, $('split-enabled').checked]).toEqual([true, false, false]);
+    expect($('dirty').textContent).toBe('Unsaved changes: split-lever High-G turned off, since it uses the quadrant levers too.');
+    expect($('camera-source-help').textContent).toContain('The right quadrant lever');
+    choose('lever', 'right', 'input');
+    expect($('camera-source-help').textContent).toContain('The left quadrant lever');
+    choose('yaw-source', 'lever_differential', 'input');
+    expect([p.config.yaw_source, p.config.camera.lever, radio('camera-source', 'hat').checked]).toEqual(['lever_differential', false, true]);
+    expect($('dirty').textContent).toBe('Unsaved changes: the camera lever turned off, since it uses the quadrant levers too.');
+    expect($('yaw-help').textContent).toContain('average of both levers');
+    $('split-enabled').checked = true;
+    fire($('split-enabled'));
+    expect([p.config.split_high_g.enabled, p.config.yaw_source, radio('yaw-source', 'twist').checked]).toEqual([true, 'twist', true]);
+    expect($('dirty').textContent).toBe('Unsaved changes: lever yaw turned off, since it uses the quadrant levers too.');
+    choose('camera-source', 'hat', 'input');
+    expect($('dirty').textContent).toBe('Unsaved changes.');
+    // With nothing else on, turning one on says nothing extra.
+    $('split-enabled').checked = false;
+    fire($('split-enabled'));
+    choose('yaw-source', 'lever_differential', 'input');
+    expect($('dirty').textContent).toBe('Unsaved changes.');
+    // The mapping tab's axes table follows the saved sources.
+    p.saved.yaw_source = 'lever_differential';
+    p.saved.camera.lever = true;
+    p.render();
+    expect($('axes').textContent).toContain('RzQuadrant lever differenceYaw');
+    expect($('axes').textContent).toContain('Average of both quadrant levers or sidestick sliderThrottle');
+    expect($('axes').textContent).toContain('Sidestick hat + spare leverCamera');
+    p.saved.yaw_source = 'off';
+    p.render();
+    expect($('axes').textContent).toContain('No source (yaw off)Yaw');
+  });
+
+  it('shows the smoothing delay and validates the timings', async () => {
+    const api = fakeApi();
+    const p = await page(api);
+    expect($('tune-lag').textContent).toBe('No added delay');
+    $('tune-smoothing').value = '50';
+    fire($('tune-smoothing'));
+    expect([$('tune-lag').textContent, app.lag(0.5), app.lag(0.9)]).toEqual(['≈ 10 ms added delay', 10, 90]);
+    $('timing-repeat').value = '80';
+    await p.save();
+    expect($('timing-error').textContent).toBe('Repeat every must be longer than the pulse length.');
+    $('timing-repeat').value = '150';
+    $('timing-long').value = '100';
+    $('timing-double').value = '300';
+    await p.save();
+    expect($('timing-error').textContent).toBe('Enter a number from 200 to 2000.'); // not cleared by the valid double-tap field
+    $('timing-long').value = '600';
+    await p.save();
+    expect(api.calls.at(-1)[2].timing).toEqual({ pulse_ms: 80, long_ms: 600, double_ms: 300, repeat_ms: 150 });
+    expect(api.calls.at(-1)[2].axes.roll.smoothing).toBe(0.5);
+  });
+
+  it('picks and clears the shift control by pressing it', async () => {
+    const p = await page();
+    $('shift-pick').click();
+    const well = document.querySelector('[data-for=shift]');
+    p.live({ pressed: [], status: 'Emulating', links: LINKS });
+    expect([well.hidden, well.textContent]).toEqual([false, 'Press the TCA control to hold for the shift layer. Its own mapping is not sent while it is the shift control.']);
+    p.live({ pressed: ['s16'], status: 'Emulating', links: LINKS });
+    expect([p.config.shift, $('shift-source').textContent, $('dirty').textContent]).toEqual(['s16', 'S16 · Sidestick button 16', 'Unsaved: hold Sidestick button 16 for the shift layer.']);
+    $('shift-clear').click();
+    expect([p.config.shift, $('dirty').textContent]).toEqual([null, 'Unsaved: shift layer off.']);
   });
 });
 

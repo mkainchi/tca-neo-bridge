@@ -32,6 +32,40 @@ fn directions_map_to_hat_vectors() {
     );
 }
 
+fn target(buttons: &[u8]) -> config::Target {
+    config::Target { buttons: buttons.to_vec(), pov: None }
+}
+
+#[test]
+fn gestures_layers_camera_and_yaw_round_trip_and_default_when_absent() {
+    let mut cfg = config::defaults();
+    cfg.long_press.insert("s2".into(), target(&[3]));
+    cfg.double_tap.insert("s2".into(), config::Target { buttons: vec![], pov: Some(Direction::Left) });
+    cfg.shift = Some("s16".into());
+    cfg.shifted.buttons.insert("s1".into(), vec![9]);
+    cfg.shifted.pov.insert("s3".into(), Direction::Down);
+    cfg.behaviours.insert("s7".into(), config::Mode::Repeat);
+    cfg.camera = config::Camera { ramp_ms: 300, full_after_hold: true, lever: false };
+    cfg.yaw_source = config::YawSource::Off;
+    assert_eq!(config::parse(&config::to_json(&cfg)).unwrap(), cfg);
+    cfg.split_high_g.enabled = false;
+    cfg.camera.lever = true;
+    assert!(config::validate(&cfg).is_ok());
+    cfg.camera.lever = false;
+    cfg.yaw_source = config::YawSource::LeverDifferential;
+    assert!(config::validate(&cfg).is_ok());
+    // A version 2 profile saved before these settings existed: timing keeps its pulse and gains the defaults.
+    let mut value: serde_json::Value = serde_json::from_str(&config::to_json(&config::defaults())).unwrap();
+    let object = value.as_object_mut().unwrap();
+    for key in ["long_press", "double_tap", "shift", "shifted", "camera", "yaw_source"] {
+        object.remove(key);
+    }
+    object.insert("timing".into(), serde_json::json!({"pulse_ms": 60}));
+    let early = config::parse(&value.to_string()).unwrap();
+    assert_eq!(early.timing, config::Timing { pulse_ms: 60, long_ms: 500, double_ms: 250, repeat_ms: 120 });
+    assert_eq!((early.shift, early.camera, early.yaw_source), (None, config::Camera::default(), config::YawSource::Twist));
+}
+
 #[test]
 fn validation_rules() {
     assert!(config::validate(&config::defaults()).is_ok());
@@ -59,6 +93,23 @@ fn validation_rules() {
         (Box::new(|c| { c.behaviours.insert("x".into(), config::Mode::Toggle); }), "Unknown TCA control x"),
         (Box::new(|c| c.timing.pulse_ms = 10), "Pulse length"),
         (Box::new(|c| c.timing.pulse_ms = 2000), "Pulse length"),
+        (Box::new(|c| c.timing.long_ms = 100), "long press needs"),
+        (Box::new(|c| c.timing.long_ms = 3000), "long press needs"),
+        (Box::new(|c| c.timing.double_ms = 50), "long press needs"),
+        (Box::new(|c| c.timing.double_ms = 1500), "long press needs"),
+        (Box::new(|c| c.timing.repeat_ms = 20), "Repeat interval"),
+        (Box::new(|c| c.timing.repeat_ms = 2000), "Repeat interval"),
+        (Box::new(|c| c.timing.repeat_ms = 80), "Repeat interval"),
+        (Box::new(|c| { c.long_press.insert("s99".into(), target(&[1])); }), "Unknown TCA control s99"),
+        (Box::new(|c| { c.long_press.insert("s2".into(), target(&[16])); }), "s2: NEO buttons"),
+        (Box::new(|c| { c.double_tap.insert("s2".into(), target(&[0])); }), "s2: NEO buttons"),
+        (Box::new(|c| { c.shifted.buttons.insert("q1".into(), vec![20]); }), "q1: NEO buttons"),
+        (Box::new(|c| { c.shifted.pov.insert("nope".into(), Direction::Up); }), "Unknown TCA control nope"),
+        (Box::new(|c| c.shift = Some("s0".into())), "Unknown TCA control s0"),
+        (Box::new(|c| c.camera.ramp_ms = 2500), "Camera ramp"),
+        (Box::new(|c| c.camera.lever = true), "turn on only one"),
+        (Box::new(|c| c.yaw_source = config::YawSource::LeverDifferential), "turn on only one"),
+        (Box::new(|c| { c.split_high_g.enabled = false; c.camera.lever = true; c.yaw_source = config::YawSource::LeverDifferential; }), "turn on only one"),
         (Box::new(|c| c.split_high_g.back = 0.95), "Split High-G"),
         (Box::new(|c| c.split_high_g.back = -0.1), "Split High-G"),
         (Box::new(|c| c.split_high_g.forward = 1.2), "Split High-G"),
