@@ -20,6 +20,8 @@
       </div>
     </div>
     <ul class="pills" aria-label="Bridge status">
+      <li id="pill-preview" class="pill preview" hidden><span class="dot"></span><span>Previewing unsaved settings</span></li>
+      <li id="pill-paused" class="pill preview" hidden><span class="dot"></span><span>Input paused</span></li>
       <li id="pill-status" class="pill" data-state="off"><span class="dot"></span><span id="daemon-status" role="status" aria-live="polite">Loading…</span></li>
       <li id="pill-tca" class="pill" data-state="off"><span class="dot"></span><span>TCA: not open</span></li>
       <li id="pill-hidhide" class="pill" data-state="off"><span class="dot"></span><span>HidHide: off</span></li>
@@ -92,6 +94,20 @@
           <dt id="mapped-new-label" class="cap">New mapping</dt><dd id="mapped-new" class="mono strong">—</dd>
         </dl>
         <ul id="diff" class="diff mono" aria-label="Changes"></ul>
+        <div id="behaviour" class="block" hidden>
+          <h3 class="cap" id="behaviour-label">Behaviour</h3>
+          <fieldset class="seg modes" aria-labelledby="behaviour-label">
+            <label><input type="radio" name="behaviour" value="hold"><b>Hold</b><span>Pressed while held</span></label>
+            <label><input type="radio" name="behaviour" value="pulse"><b>Pulse</b><span>Short press on switch-on</span></label>
+            <label><input type="radio" name="behaviour" value="pulse_change"><b>Pulse on change</b><span>Short press on and off</span></label>
+            <label><input type="radio" name="behaviour" value="toggle"><b>Toggle</b><span>Each press flips it</span></label>
+          </fieldset>
+          <div class="timeline" role="img" id="timeline" aria-label="What the game receives">
+            <div class="track"><span class="mono">Control</span><div class="lane"><span class="in"></span></div></div>
+            <div class="track"><span class="mono">NEO</span><div id="timeline-out" class="lane"></div></div>
+          </div>
+          <p id="behaviour-help" class="help"></p>
+        </div>
         <p id="link-help" class="help">Select a TCA control, then click NEO buttons or a POV arrow to build its mapping. With nothing selected, clicking a NEO button shows what feeds it.</p>
         <div class="actions">
           <button id="record" class="btn primary" type="button" disabled>Record mapping</button>
@@ -157,35 +173,91 @@
         <section class="panel" aria-labelledby="flight-heading">
           <div class="panel-head">
             <h2 id="flight-heading">Flight axes</h2>
-            <span class="cap">Roll · pitch · yaw · throttle · camera</span>
+            <fieldset class="seg" aria-label="Axis to tune">
+              <label><input type="radio" name="axis" value="roll" checked><span>Roll</span></label>
+              <label><input type="radio" name="axis" value="pitch"><span>Pitch</span></label>
+              <label><input type="radio" name="axis" value="yaw"><span>Yaw</span></label>
+            </fieldset>
           </div>
 
-          <div class="field">
-            <div class="field-head">
-              <label for="deadzone"><span class="label">Stick deadzone</span><span class="help">Applied to roll, pitch and twist. 0 to 0.99.</span></label>
-              <input id="deadzone" class="num" name="deadzone" type="number" min="0" max="0.99" step="0.01" inputmode="decimal" aria-describedby="deadzone-error">
+          <div class="strip" aria-label="Every flight axis through its current settings">
+            <div class="mini" data-axis="roll"><span class="cap">Roll · <span class="mono" data-out>0.00</span></span><div class="minibar" aria-hidden="true"><i></i><span></span></div></div>
+            <div class="mini" data-axis="pitch"><span class="cap">Pitch · <span class="mono" data-out>0.00</span></span><div class="minibar" aria-hidden="true"><i></i><span></span></div></div>
+            <div class="mini" data-axis="yaw"><span class="cap">Yaw · <span class="mono" data-out>0.00</span></span><div class="minibar" aria-hidden="true"><i></i><span></span></div></div>
+          </div>
+
+          <div class="axis-grid">
+            <div class="graph">
+              <svg id="curve" viewBox="0 0 240 240" role="img" aria-label="Roll response curve: stick input against NEO output">
+                <rect id="curve-band" x="120" y="10" width="0" height="220" class="band"></rect>
+                <path d="M10 120H230M120 10V230" class="axis-line"></path>
+                <path d="M65 10V230M175 10V230M10 65H230M10 175H230" class="grid-line"></path>
+                <path d="M10 230L230 10" class="identity"></path>
+                <path id="curve-path" d="" class="curve"></path>
+                <line id="curve-drop" x1="120" y1="230" x2="120" y2="120" class="drop"></line>
+                <circle id="curve-dot" cx="120" cy="120" r="6" class="dot-mark"></circle>
+                <text x="18" y="28" class="graph-text">NEO OUT</text>
+                <text x="222" y="220" class="graph-text" text-anchor="end">STICK IN</text>
+              </svg>
+              <div class="readouts">
+                <div class="read"><span id="read-input-label" class="cap">Roll · test</span><b id="read-input" class="mono">+0.00</b></div>
+                <div class="read out"><span class="cap">NEO output</span><b id="read-output" class="mono">+0.00</b></div>
+              </div>
+              <fieldset class="seg" aria-label="Preview input">
+                <label><input type="radio" name="preview-source" value="live"><span>Live stick</span></label>
+                <label><input type="radio" name="preview-source" value="test" checked><span>Test input</span></label>
+              </fieldset>
+              <label class="slider" for="test-input"><span class="cap">Test input · drag to try</span></label>
+              <input id="test-input" class="rng" type="range" min="-100" max="100" step="1" value="40" aria-label="Test stick input, percent">
             </div>
-            <input id="deadzone-range" class="rng" type="range" min="0" max="30" step="1" aria-label="Stick deadzone, percent">
-            <div class="rail" aria-hidden="true"><span class="tick q1"></span><span class="tick q2"></span><span class="tick q3"></span><span id="deadzone-band" class="hatch"></span></div>
-            <p class="scale mono" aria-hidden="true"><span>−100%</span><span id="deadzone-text">Ignored band ±0%</span><span>+100%</span></p>
-            <p id="deadzone-error" class="error" role="alert"></p>
+
+            <div class="sliders">
+              <div class="field">
+                <div class="field-head">
+                  <label for="tune-deadzone"><span class="label">Deadzone</span><span class="help">Stick travel ignored around centre.</span></label>
+                  <span class="unit"><input id="tune-deadzone" class="num short" type="number" min="0" max="50" step="1" inputmode="numeric" aria-describedby="tune-deadzone-error"><span class="mono">%</span></span>
+                </div>
+                <input id="tune-deadzone-range" class="rng warn" type="range" min="0" max="50" step="1" aria-label="Deadzone, percent">
+                <p id="tune-deadzone-error" class="error" role="alert"></p>
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <label for="tune-saturation"><span class="label">Full deflection at</span><span class="help">Stick travel that already gives 100% output.</span></label>
+                  <span class="unit"><input id="tune-saturation" class="num short" type="number" min="50" max="100" step="1" inputmode="numeric" aria-describedby="tune-saturation-error"><span class="mono">%</span></span>
+                </div>
+                <input id="tune-saturation-range" class="rng" type="range" min="50" max="100" step="1" aria-label="Full deflection at, percent">
+                <p id="tune-saturation-error" class="error" role="alert"></p>
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <label for="tune-anti"><span class="label">Anti-deadzone</span><span class="help">Smallest output once past the deadzone, to beat the game’s own deadzone.</span></label>
+                  <span class="unit"><input id="tune-anti" class="num short" type="number" min="0" max="50" step="1" inputmode="numeric" aria-describedby="tune-anti-error"><span class="mono">%</span></span>
+                </div>
+                <input id="tune-anti-range" class="rng" type="range" min="0" max="50" step="1" aria-label="Anti-deadzone, percent">
+                <p id="tune-anti-error" class="error" role="alert"></p>
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <label for="tune-curve"><span class="label">Curve</span><span class="help">Positive softens the centre for fine aim; negative sharpens it.</span></label>
+                  <span class="unit"><input id="tune-curve" class="num short" type="number" min="-100" max="100" step="1" inputmode="numeric" aria-describedby="tune-curve-error"><span class="mono">%</span></span>
+                </div>
+                <input id="tune-curve-range" class="rng" type="range" min="-100" max="100" step="1" aria-label="Curve, percent">
+                <p id="tune-curve-error" class="error" role="alert"></p>
+              </div>
+              <div class="actions">
+                <button id="copy-axis" class="btn quiet" type="button">Copy roll to pitch</button>
+                <button id="reset-axis" class="btn quiet" type="button">Reset roll</button>
+              </div>
+            </div>
           </div>
 
-          <div class="field">
+          <div class="field divided">
             <div class="field-head">
-              <label for="camera"><span class="label">Camera strength</span><span class="help">How far the sidestick hat moves the NEO mini-stick. 0 to 1.</span></label>
-              <input id="camera" class="num" name="camera" type="number" min="0" max="1" step="0.05" inputmode="decimal" aria-describedby="camera-error">
+              <label for="camera"><span class="label">Camera strength</span><span class="help">How far the sidestick hat moves the NEO mini-stick.</span></label>
+              <span class="unit"><input id="camera" class="num short" type="number" min="0" max="100" step="5" inputmode="numeric" aria-describedby="camera-error"><span class="mono">%</span></span>
             </div>
             <input id="camera-range" class="rng" type="range" min="0" max="100" step="5" aria-label="Camera strength, percent">
             <p id="camera-error" class="error" role="alert"></p>
-          </div>
-
-          <div class="field split-row">
-            <div><p class="label" id="lever-label">Quadrant throttle lever</p><p class="help">Shares the throttle with the sidestick slider. The last one moved takes over.</p></div>
-            <fieldset class="seg" aria-labelledby="lever-label">
-              <label><input type="radio" name="lever" value="left"><span>Left lever</span></label>
-              <label><input type="radio" name="lever" value="right"><span>Right lever</span></label>
-            </fieldset>
           </div>
 
           <fieldset class="field invert">
@@ -197,6 +269,107 @@
               <label class="tog"><input type="checkbox" id="invert-throttle"><span>Throttle</span></label>
             </div>
           </fieldset>
+        </section>
+
+        <section class="panel" aria-labelledby="throttle-heading">
+          <div class="panel-head">
+            <h2 id="throttle-heading">Throttle</h2>
+            <fieldset class="seg" aria-label="Throttle response">
+              <label><input type="radio" name="throttle-mode" value="linear"><span>Linear</span></label>
+              <label><input type="radio" name="throttle-mode" value="detents"><span>Detents</span></label>
+            </fieldset>
+          </div>
+          <p id="throttle-help" class="help"></p>
+
+          <div class="card">
+            <div class="field-head">
+              <span id="throttle-source" class="cap">Left lever · test</span>
+              <span id="throttle-zone" class="state">Cruise</span>
+            </div>
+            <div id="throttle-rail" class="rail detent-rail" aria-hidden="true">
+              <span class="zone brake"></span><span class="zone ramp low"></span><span class="zone cruise"></span><span class="zone ramp high"></span><span class="zone boost"></span>
+              <span id="throttle-needle" class="needle"></span>
+            </div>
+            <div class="marks" aria-hidden="true"><span data-mark="idle">Idle</span><span data-mark="cruise">CL · cruise</span><span data-mark="boost">Boost</span></div>
+            <label class="slider" for="test-lever"><span class="cap">Test lever · drag to try</span></label>
+            <input id="test-lever" class="rng" type="range" min="0" max="100" step="1" value="50" aria-label="Test lever travel, percent">
+            <div class="field-head"><span class="cap">NEO throttle (Z)</span><span id="throttle-out" class="mono value">+0.00 · cruise</span></div>
+            <div class="outbar" aria-hidden="true"><i></i><span id="throttle-bar"></span></div>
+          </div>
+
+          <div id="detents" class="detents">
+            <div class="card">
+              <label for="detent-idle" class="label">Idle (brake below)</label>
+              <span class="unit"><input id="detent-idle" class="num short" type="number" min="0" max="100" step="1" inputmode="numeric" aria-describedby="detent-error"><span class="mono">%</span></span>
+              <button class="btn quiet" type="button" data-capture="idle">Capture lever</button>
+            </div>
+            <div class="card">
+              <label for="detent-cruise" class="label">CL (cruise centre)</label>
+              <span class="unit"><input id="detent-cruise" class="num short" type="number" min="0" max="100" step="1" inputmode="numeric" aria-describedby="detent-error"><span class="mono">%</span></span>
+              <button class="btn quiet" type="button" data-capture="cruise">Capture lever</button>
+            </div>
+            <div class="card">
+              <label for="detent-boost" class="label">Boost from</label>
+              <span class="unit"><input id="detent-boost" class="num short" type="number" min="0" max="100" step="1" inputmode="numeric" aria-describedby="detent-error"><span class="mono">%</span></span>
+              <button class="btn quiet" type="button" data-capture="boost">Capture lever</button>
+            </div>
+            <div class="card">
+              <label for="detent-band" class="label">Cruise band ±</label>
+              <span class="unit"><input id="detent-band" class="num short" type="number" min="0" max="20" step="1" inputmode="numeric" aria-describedby="detent-error"><span class="mono">%</span></span>
+            </div>
+          </div>
+          <p id="detent-error" class="error" role="alert"></p>
+          <ul id="detent-legend" class="zones">
+            <li aria-hidden="true"><span class="hatch key"></span>Brake</li>
+            <li aria-hidden="true"><span class="cruise-key"></span>Cruise band</li>
+            <li aria-hidden="true"><span class="zone-key"></span>Boost</li>
+            <li id="capture-hint">Put the lever in a detent, then Capture.</li>
+          </ul>
+
+          <div class="field split-row">
+            <div><p class="label" id="lever-label">Quadrant throttle lever</p><p class="help">Shares the throttle with the sidestick slider. The last one moved takes over.</p></div>
+            <fieldset class="seg" aria-labelledby="lever-label">
+              <label><input type="radio" name="lever" value="left"><span>Left lever</span></label>
+              <label><input type="radio" name="lever" value="right"><span>Right lever</span></label>
+            </fieldset>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="helpers-heading">
+          <div class="panel-head">
+            <h2 id="helpers-heading">Control helpers</h2>
+            <span class="cap">Precision · safe start · pause</span>
+          </div>
+
+          <div class="card">
+            <div><p class="label">Precision aiming</p><p class="help">While held, roll, pitch and yaw are scaled down for fine gun and missile aim.</p></div>
+            <div class="chip-row">
+              <span class="cap">Hold</span>
+              <span id="precision-source" class="chip static">Off</span>
+              <button id="precision-pick" class="btn quiet" type="button">Press a control…</button>
+              <button id="precision-clear" class="btn quiet" type="button">Clear</button>
+            </div>
+            <p class="well capture" data-for="precision" role="status" hidden><span class="dot"></span><span></span></p>
+            <div class="field-head">
+              <label for="precision-scale" class="label">Stick scale while held</label>
+              <span class="unit"><input id="precision-scale" class="num short" type="number" min="10" max="100" step="5" inputmode="numeric" aria-describedby="precision-scale-error"><span class="mono">%</span></span>
+            </div>
+            <input id="precision-scale-range" class="rng" type="range" min="10" max="100" step="5" aria-label="Stick scale while held, percent">
+            <p id="precision-scale-error" class="error" role="alert"></p>
+          </div>
+
+          <label class="tog wide"><input type="checkbox" id="safe-start"><span>Safe start: hold the throttle at centre until the active lever or slider reaches it</span></label>
+
+          <div class="card">
+            <div><p class="label">Pause input</p><p class="help">Press these together to release every control and send a neutral NEO. Press again to resume. Also in the tray menu.</p></div>
+            <div class="chip-row">
+              <span class="cap">Combo</span>
+              <span id="pause-combo" class="chips"></span>
+              <button id="pause-record" class="btn quiet" type="button">Record combo…</button>
+              <button id="pause-clear" class="btn quiet" type="button">Clear</button>
+            </div>
+            <p class="well capture" data-for="pause" role="status" hidden><span class="dot"></span><span></span></p>
+          </div>
         </section>
 
         <section class="panel" aria-labelledby="split-heading">
@@ -240,13 +413,15 @@
               <li>Full stop reads 0%</li>
             </ul>
           </div>
-          <p class="help">Either lever can be the forward one. While split, the throttle follows it, with the same inversion as normal.</p>
+          <p class="help">Either lever can be the forward one. While split, the throttle follows it, with the same response and inversion as normal.</p>
         </section>
       </div>
 
       <div class="panel save-area">
         <p id="dirty" class="mono" role="status" aria-live="polite" data-state="saved"></p>
         <div class="actions">
+          <label class="tog amber"><input type="checkbox" id="try-live"><span>Try in game</span></label>
+          <button id="discard" class="btn" type="button">Discard changes</button>
           <button id="reset" class="btn hazard" type="button">Reset everything to defaults</button>
           <button id="save" class="btn primary" type="submit">Save settings</button>
         </div>

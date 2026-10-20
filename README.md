@@ -65,31 +65,42 @@ The icon's badge shows the emulation status: a gray hollow circle when idle, a g
 | --- | --- |
 | Start emulation / Stop emulation | Hide the TCA devices and create the virtual NEO, or undo both. |
 | Configure… | Opens the configuration page in your browser (local only). Double-clicking the icon does the same. |
+| Pause input / Resume input | While emulating, releases every control and sends a neutral NEO until resumed. The tooltip shows *input paused*. A TCA button combo can do the same (see *Axes and settings*). |
 | Install driver… / Reinstall driver… | Installs the driver, or replaces it with a freshly signed copy. Available while not emulating. |
 | Quit | Stops emulation and exits. |
 
 ### Mapping tab
 
-![Mapping tab: quadrant button 5 selected, adding NEO 3 to its mapping](docs/images/mapping.png)
+![Mapping tab: quadrant button 3 (ENG 1) selected, its Autopilot mapping set to pulse on change](docs/images/mapping.png)
 
 The header shows the daemon status and, while emulating, whether the TCA is open, whether HidHide hides it and whether the virtual NEO exists. The left panel shows the TCA sidestick (switch **L / R** for a left- or right-hand setup) and quadrant, the middle one a T.Flight Hotas NEO with its numbered buttons and POV hat. Below them, a table lists NEO buttons 1–15 with their ACE COMBAT 8 actions and the TCA controls that feed each one.
 
 - **Click a TCA control,** or press it while emulating. Its current NEO targets light up.
 - **Click NEO buttons or POV arrows** to build its new mapping. Blue ring means kept, yellow ring means added, red dashed ring means removed. Then choose **Record mapping**. Changes apply immediately, even while emulating.
 - **With nothing selected,** clicking a NEO control or a row of the NEO button table highlights every TCA control that feeds it.
+- **Behaviour** sets how the selected control drives its NEO targets: **Hold** (pressed while held), **Pulse** (a short press when it switches on), **Pulse on change** (a short press each time it moves, on and off) or **Toggle** (each press flips it). A small timeline shows what the game receives. It is recorded with the mapping.
 - **Under *Other TCA inputs*,** set the **sidestick hat** to drive either the **Camera** (the NEO mini-stick, the default) or **Mapped controls**. In Mapped mode, its four directions can be mapped like buttons, and the camera gets no input.
 - **Recorded corrections** keeps a log of every change you record.
 
 ### Axes and settings tab
 
-![Axes and settings tab: flight axes and split-lever High-G with live lever positions](docs/images/settings.png)
+![Axes and settings tab: the roll response curve with live stick input, and the throttle in Detents mode](docs/images/settings.png)
 
 | Setting | Meaning |
 | --- | --- |
-| Stick deadzone, camera strength | Applied to roll/pitch/twist and to the camera respectively. Each has a number field and a slider. |
+| Flight axes | Pick **Roll**, **Pitch** or **Yaw** and set its **deadzone** (travel ignored around centre), **full deflection at** (travel that already gives 100 %), **anti-deadzone** (the smallest output past the deadzone, to beat the game's own) and **curve** (positive softens the centre for fine aim, negative sharpens it). **Copy** applies them to the other axes. |
+| Live preview | The curve graph redraws as you drag. A dot shows where the input lands and the readouts give stick in and NEO out. Use **Test input** to try settings without hardware, or **Live stick** while emulating. A strip shows all three axes at once. |
+| Camera strength | How far the sidestick hat moves the NEO mini-stick. |
+| Throttle | **Linear** maps lever travel straight to the NEO throttle. **Detents** follows ACE COMBAT: below **Idle** brakes fully, within **Cruise band** of **CL** cruises, from **Boost** boosts fully, with smooth ramps in between. While emulating, put the lever in each detent and choose **Capture lever**. The sidestick slider stays linear. |
 | Quadrant throttle lever | Left or right lever. It shares the throttle with the sidestick slider; the last one moved takes over. |
 | Invert | Per axis. |
-| High-G from split levers | Thresholds are lever travel: 0 % at idle, 100 % fully forward. While one quadrant lever is at or above the *forward* threshold and the other at or below the *back* threshold, NEO 5 (High-G) is held. The throttle follows the forward lever. While emulating, live bars show both lever positions against the saved thresholds. |
+| Precision aiming | While the chosen control is held, roll, pitch and yaw are scaled down (50 % by default) for fine aim. Choose **Press a control…**, then press it on the TCA. |
+| Safe start | On by default. When emulation starts or input returns after a dropout, the throttle stays at centre until the active lever or slider reaches centre or moves across it. A lever left fully forward or at idle never launches you at full power or full brake. |
+| Pause input | Up to four controls pressed together pause and resume input, like the tray item. Choose **Record combo…**, press them, then **Done**. |
+| High-G from split levers | Thresholds are lever travel: 0 % at idle, 100 % fully forward. While one quadrant lever is at or above the *forward* threshold and the other at or below the *back* threshold, NEO 5 (High-G) is held. The throttle follows the forward lever, with the same response. While emulating, live bars show both lever positions against the saved thresholds. |
+| Try in game | Runs your unsaved settings in the running emulation without saving them; an amber *Previewing unsaved settings* pill shows while it's on. **Save settings** keeps them; **Discard changes**, leaving the tab or stopping emulation goes back to the saved profile. |
+
+Profiles saved by version 0.2.x are upgraded when loaded: their single deadzone becomes each axis's deadzone, and every control keeps holding its NEO button as before.
 
 ### Default mapping
 
@@ -105,7 +116,7 @@ The header shows the daemon status and, while emulating, whether the TCA is open
 | Sidestick hat | Rx/Ry mini-stick | Camera |
 | Levers split (one ≥ 75 %, other ≤ 25 %) | 5 | High-G |
 
-The ENG switches and the mode selector **latch**: while one rests in an active position, its NEO button stays held. Remap them on the Mapping tab if that doesn't suit you. **Reset everything to defaults** on the settings tab restores this table.
+The ENG switches and the mode selector stay in position, so they don't hold their NEO buttons. The ENG switches **pulse on change**: turning one on, and off again, each sends one short Autopilot press. The mode selector **pulses** once when it moves into position 7 or 8, giving one burst of flares rather than a stream. Change this with **Behaviour** on the Mapping tab. **Reset everything to defaults** on the settings tab restores this table, with safe start on and a linear throttle.
 
 ## Files and data
 
@@ -127,7 +138,9 @@ Run `neo-daemon.exe --data <folder>` to use another folder.
 | "Creating the virtual NEO requires administrator rights" | Restart `neo-daemon.exe` with **Run as administrator**. |
 | HidHide errors | Install HidHide, close its configuration client, remove Steam from its application list, turn *inverse application cloak* off, reconnect both TCA devices. |
 | "Connect exactly one supported TCA sidestick and one Quadrant" | Plug in both devices, and only one of each. Using another Thrustmaster HOTAS? See [Another Thrustmaster HOTAS?](#another-thrustmaster-hotas) |
-| A control is "stuck" | A latching quadrant switch is in an active position; see *Default mapping*. |
+| A control is "stuck" | A quadrant switch set to **Hold** is resting in an active position. Set its **Behaviour** to **Pulse on change** on the Mapping tab; see *Default mapping*. |
+| The throttle does nothing after starting | Safe start is waiting: move the throttle lever (or the sidestick slider) to centre once. |
+| The aircraft is too twitchy or too sluggish | Tune that axis's curve and deadzone on *Axes and settings*. Try them with **Try in game**, then save. |
 | The game sees the TCA devices as well | Start emulation **before** starting Steam and the game. |
 | Something else | Check `neo-daemon.log` and `driver-install.log` (see *Files and data*), then [open an issue](https://github.com/mkainchi/tca-neo-bridge/issues/new) and attach both. |
 

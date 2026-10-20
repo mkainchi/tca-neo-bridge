@@ -42,19 +42,28 @@ export function neoName(id) {
   return NEO_ACTIONS[n] ? `NEO ${n} (${NEO_ACTIONS[n]})` : `NEO ${n}`;
 }
 
-/** {buttons, pov} → readable text. */
+/** {buttons, pov, mode} → readable text. */
 export function describe(mapping) {
   const parts = mapping.buttons.map((n) => neoName(`b${n}`));
   if (mapping.pov) parts.push(neoName(`pov-${mapping.pov}`));
-  return parts.length ? parts.join(', ') : 'Nothing';
+  const text = parts.length ? parts.join(', ') : 'Nothing';
+  return mapping.mode && mapping.mode !== 'hold' ? `${text} · ${MODES[mapping.mode].label.toLowerCase()}` : text;
 }
 
+/** Source behaviours: name, what the game receives, and the NEO pulses drawn on the timeline ([start%, width%]). */
+export const MODES = {
+  hold: { label: 'Hold', help: 'The NEO button stays pressed while the control is on. A latched switch keeps it held.', pulses: [[15, 55]] },
+  pulse: { label: 'Pulse', help: 'One short press when the control turns on. Good for the mode selector: one flare burst, not a stream.', pulses: [[15, 6]] },
+  pulse_change: { label: 'Pulse on change', help: 'One short press each time the control moves, on and off. Turning ENG 1 on and off toggles Autopilot on and off.', pulses: [[15, 6], [70, 6]] },
+  toggle: { label: 'Toggle', help: 'Each press turns the NEO button on or off, like a latch for a momentary button.', pulses: [[15, 85]] },
+};
+
 export function current(config, key) {
-  return { buttons: [...(config.buttons[key] ?? [])].sort((a, b) => a - b), pov: config.pov[key] ?? null };
+  return { buttons: [...(config.buttons[key] ?? [])].sort((a, b) => a - b), pov: config.pov[key] ?? null, mode: config.behaviours?.[key] ?? 'hold' };
 }
 
 export function same(a, b) {
-  return a.pov === b.pov && a.buttons.join() === b.buttons.join();
+  return a.pov === b.pov && a.buttons.join() === b.buttons.join() && a.mode === b.mode;
 }
 
 /** What a proposal adds and removes compared with the saved mapping. */
@@ -66,7 +75,61 @@ export function diff(before, after) {
     if (after.pov) changes.push(['add', `Adds ${neoName(`pov-${after.pov}`)}`]);
     if (before.pov) changes.push(['remove', `Removes ${neoName(`pov-${before.pov}`)}`]);
   }
+  if (after.mode !== before.mode) changes.push(['add', `Behaviour: ${MODES[after.mode].label}`]);
   return changes;
+}
+
+export const AXES = ['roll', 'pitch', 'yaw'];
+const AXIS_NAMES = { roll: 'Roll', pitch: 'Pitch', yaw: 'Yaw' };
+
+/** One axis value in -1..1 through deadzone, saturation, curve and anti-deadzone (same as neo::shape). */
+export function shape(value, t) {
+  const v = Math.min(1, Math.max(-1, value));
+  if (Math.abs(v) <= t.deadzone) return 0;
+  const travel = Math.min((Math.abs(v) - t.deadzone) / (t.saturation - t.deadzone), 1);
+  const k = t.curve;
+  const curved = k >= 0 ? (1 - k) * travel + k * travel ** 3 : (1 + k) * travel - k * Math.cbrt(travel);
+  return Math.sign(v) * (t.anti_deadzone + (1 - t.anti_deadzone) * curved);
+}
+
+/** Detent throttle: lever travel (0 idle, 1 forward) to -1 full brake, 0 cruise, +1 full boost (same as neo::detent). */
+export function detent(travel, t) {
+  const [low, high] = [t.cruise - t.band, t.cruise + t.band];
+  if (travel <= t.idle) return -1;
+  if (travel < low) return (travel - t.idle) / (low - t.idle) - 1;
+  if (travel <= high) return 0;
+  return travel < t.boost ? (travel - high) / (t.boost - high) : 1;
+}
+
+/** What the game reads for a lever travel: -1 brake … +1 boost. */
+export function throttleOut(travel, throttle) {
+  return throttle.mode === 'detents' ? detent(travel, throttle) : 2 * travel - 1;
+}
+
+/** Graph coordinates: -1..1 mapped onto the 240-unit plot, 10 units of margin. */
+const plot = (v) => 120 + v * 110;
+
+/** SVG path of an axis response from full left to full right. */
+export function curvePath(t) {
+  return Array.from({ length: 121 }, (_, i) => {
+    const x = i / 60 - 1;
+    return `${i ? 'L' : 'M'}${plot(x).toFixed(1)} ${(240 - plot(shape(x, t))).toFixed(1)}`;
+  }).join(' ');
+}
+
+/** "+0.40", "−0.40", " 0.00". */
+export function signed(value) {
+  const text = Math.abs(value).toFixed(2);
+  return `${value > 0 && text !== '0.00' ? '+' : value < 0 && text !== '0.00' ? '−' : ' '}${text}`;
+}
+
+/** Throttle zone name for the readout. */
+export function zone(out, throttle) {
+  if (throttle.mode !== 'detents') return [null, `${Math.round((out + 1) * 50)}%`];
+  if (out === -1) return ['brake', 'Full brake'];
+  if (out < 0) return ['brake', 'Braking'];
+  if (out === 0) return ['cruise', 'Cruise'];
+  return ['boost', out === 1 ? 'Full boost' : 'Boosting'];
 }
 
 /** TCA sources currently mapped to a NEO hotspot. */
@@ -107,7 +170,7 @@ export function client(fetchImpl, token) {
     if (!response.ok) throw new Error(data.error);
     return data;
   };
-  return { get: (path) => call('GET', path), put: (path, value) => call('PUT', path, JSON.stringify(value)) };
+  return { get: (path) => call('GET', path), put: (path, value) => call('PUT', path, JSON.stringify(value)), del: (path) => call('DELETE', path) };
 }
 
 const SELECTABLE = new Set(sources());
@@ -117,6 +180,7 @@ const HELP = {
   rev: 'These TCA controls feed it. Select one of them to change its mapping.',
   none: 'Select a TCA control, then click NEO buttons or a POV arrow to build its mapping. With nothing selected, clicking a NEO button shows what feeds it.',
 };
+const error = (id) => Page.FIELDS[id]?.[4] ?? `${id}-error`;
 const percent = (value) => `${Math.round(value * 1000) / 1000}%`;
 
 export class Page {
@@ -134,6 +198,15 @@ export class Page {
     this.labels = [];
     this.busy = false;
     this.dirty = false;
+    this.axis = 'roll';         // flight axis shown on the settings tab
+    this.source = 'test';       // preview input: the test scrubber or the live stick
+    this.testInput = 0.4;
+    this.testLever = 0.5;
+    this.monitor = null;        // raw inputs from the running emulation
+    this.capture = null;        // {kind: 'precision' | 'pause', keys} while picking controls by pressing them
+    this.previewing = false;    // "Try in game": the draft runs in the emulation without being saved
+    this.sending = false;
+    this.queued = false;
     this.$ = (id) => doc.getElementById(id);
   }
 
@@ -143,9 +216,14 @@ export class Page {
     this.saved = structuredClone(data.config);
     if (data.profile) this.$('profile-path').textContent = data.profile;
     this.build();
-    this.showSettings(data.config);
+    this.showSettings(structuredClone(data.preview ?? data.config));
+    if (data.preview) {
+      this.previewing = true;
+      this.mark(true, 'Unsaved changes · running in game now.');
+    }
     this.status(data.status, data.links);
     this.render();
+    this.renderSettings();
     try {
       this.labels = (await this.api.get('/api/labels')).labels;
       this.renderLabels();
@@ -242,11 +320,48 @@ export class Page {
         if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') this.tab(tab.id === 'tab-mapping' ? 'tab-settings' : 'tab-mapping', true);
       });
     }
+    for (const radio of this.doc.querySelectorAll('input[name=behaviour]')) {
+      radio.addEventListener('change', () => { this.proposal.mode = radio.value; this.render(); });
+    }
     this.$('profile').addEventListener('input', (event) => this.edit(event.target));
     this.$('profile').addEventListener('submit', (event) => { event.preventDefault(); return this.save(); });
     this.$('reset').addEventListener('click', () => {
       this.showSettings(structuredClone(this.defaults));
-      this.mark(true, 'Unsaved: defaults, including every mapping. Save settings to apply.');
+      this.changed('Unsaved: defaults, including every mapping. Save settings to apply.');
+    });
+    this.$('discard').addEventListener('click', () => this.discard());
+    this.$('copy-axis').addEventListener('click', () => {
+      const targets = this.axis === 'yaw' ? ['roll', 'pitch'] : [this.axis === 'roll' ? 'pitch' : 'roll'];
+      for (const axis of targets) this.config.axes[axis] = { ...this.config.axes[this.axis] };
+      this.changed(`Unsaved: ${AXIS_NAMES[this.axis]} settings copied to ${targets.join(' and ')}.`);
+    });
+    this.$('reset-axis').addEventListener('click', () => {
+      this.config.axes[this.axis] = { ...this.defaults.axes[this.axis] };
+      this.fill();
+      this.changed(`Unsaved: ${AXIS_NAMES[this.axis]} back to its defaults.`);
+    });
+    for (const button of this.doc.querySelectorAll('[data-capture]')) {
+      button.addEventListener('click', () => {
+        const point = button.dataset.capture;
+        this.config.throttle[point] = Math.round(this.lever() * 100) / 100;
+        this.$(`detent-${point}`).value = Math.round(this.config.throttle[point] * 100);
+        this.changed(`Unsaved: ${point === 'cruise' ? 'CL (cruise)' : point === 'idle' ? 'Idle' : 'Boost'} captured at ${Math.round(this.lever() * 100)}%.`);
+      });
+    }
+    this.$('precision-pick').addEventListener('click', () => this.startCapture('precision'));
+    this.$('precision-clear').addEventListener('click', () => {
+      this.config.precision.source = null;
+      this.changed('Unsaved: precision aiming off.');
+    });
+    this.$('pause-record').addEventListener('click', () => {
+      if (this.capture?.kind !== 'pause') return this.startCapture('pause');
+      this.config.combos.pause = this.capture.keys;
+      this.capture = null;
+      return this.changed(this.config.combos.pause.length ? 'Unsaved: new pause combo.' : 'Unsaved: pause combo off.');
+    });
+    this.$('pause-clear').addEventListener('click', () => {
+      this.config.combos.pause = [];
+      this.changed('Unsaved: pause combo off.');
     });
   }
 
@@ -257,6 +372,10 @@ export class Page {
       tab.tabIndex = active ? 0 : -1;
       this.$(tab.getAttribute('aria-controls')).hidden = !active;
       if (active && focus) tab.focus();
+    }
+    // A preview belongs to the settings tab: leaving it ends the preview, keeping the draft.
+    if (id === 'tab-mapping' && this.previewing) {
+      this.setPreview(false).then(() => this.mark(true, 'Unsaved changes · preview ended when you left this tab.'));
     }
   }
 
@@ -374,6 +493,20 @@ export class Page {
       item.textContent = text;
       return item;
     }));
+    this.$('behaviour').hidden = !now;
+    if (now) {
+      const mode = MODES[this.proposal.mode];
+      for (const radio of this.doc.querySelectorAll('input[name=behaviour]')) radio.checked = radio.value === this.proposal.mode;
+      this.$('behaviour-help').textContent = mode.help;
+      this.$('timeline').setAttribute('aria-label', `What the game receives with ${mode.label}`);
+      this.$('timeline-out').replaceChildren(...mode.pulses.map(([start, width]) => {
+        const pulse = this.doc.createElement('span');
+        pulse.className = 'out';
+        pulse.style.setProperty('left', `${start}%`);
+        pulse.style.setProperty('width', `${width}%`);
+        return pulse;
+      }));
+    }
     this.$('record').disabled = !changed || this.busy;
     this.$('revert').disabled = !changed || this.busy;
     this.$('deselect').disabled = mode === 'none';
@@ -403,6 +536,8 @@ export class Page {
     const next = structuredClone(this.saved);
     if (after.buttons.length) next.buttons[key] = after.buttons; else delete next.buttons[key];
     if (after.pov) next.pov[key] = after.pov; else delete next.pov[key];
+    next.behaviours = { ...next.behaviours };
+    if (after.mode !== 'hold') next.behaviours[key] = after.mode; else delete next.behaviours[key];
     this.busy = true;
     this.render();
     let result;
@@ -417,6 +552,7 @@ export class Page {
     this.saved = next;
     this.config.buttons = structuredClone(next.buttons);
     this.config.pov = structuredClone(next.pov);
+    this.config.behaviours = structuredClone(next.behaviours);
     const entry = { label: label(key), sources: [key], mapping: `${describe(before)} → ${describe(after)}`.slice(0, 200) };
     const applied = result.running ? ' Applied to the running emulation.' : '';
     try {
@@ -482,36 +618,92 @@ export class Page {
     }
   }
 
-  showSettings(config) {
-    this.config = config;
-    this.$('deadzone').value = config.deadzone;
-    this.$('camera').value = config.camera_strength;
-    for (const radio of this.doc.querySelectorAll('input[name=lever]')) radio.checked = radio.value === config.throttle_lever;
-    for (const axis of ['roll', 'pitch', 'yaw', 'throttle']) this.$(`invert-${axis}`).checked = config.invert[axis];
-    this.$('split-enabled').checked = config.split_high_g.enabled;
-    this.$('split-forward').value = Math.round(config.split_high_g.forward * 100);
-    this.$('split-back').value = Math.round(config.split_high_g.back * 100);
-    for (const id of ['deadzone', 'camera', 'split-forward', 'split-back']) this.sync(this.$(id));
+  /** Settings fields: [where in the profile, key, minimum %, maximum %, error element]. Values are stored as fractions. */
+  static FIELDS = {
+    'tune-deadzone': ['axis', 'deadzone', 0, 50],
+    'tune-saturation': ['axis', 'saturation', 50, 100],
+    'tune-anti': ['axis', 'anti_deadzone', 0, 50],
+    'tune-curve': ['axis', 'curve', -100, 100],
+    camera: [null, 'camera_strength', 0, 100],
+    'detent-idle': ['throttle', 'idle', 0, 100, 'detent-error'],
+    'detent-cruise': ['throttle', 'cruise', 0, 100, 'detent-error'],
+    'detent-boost': ['throttle', 'boost', 0, 100, 'detent-error'],
+    'detent-band': ['throttle', 'band', 0, 20, 'detent-error'],
+    'precision-scale': ['precision', 'scale', 10, 100],
+    'split-forward': ['split_high_g', 'forward', 0, 100],
+    'split-back': ['split_high_g', 'back', 0, 100],
+  };
+
+  group(name) {
+    return name === 'axis' ? this.config.axes[this.axis] : name ? this.config[name] : this.config;
   }
 
-  /** Keep a number field and its slider together, and redraw the deadzone band. */
-  sync(field) {
-    const scale = field.id.startsWith('split-') ? 1 : 100;
-    const range = field.id.endsWith('-range');
-    const partner = this.$(range ? field.id.slice(0, -6) : `${field.id}-range`);
-    if (range) partner.value = field.id.startsWith('split-') ? field.value : (Number(field.value) / scale).toFixed(2);
-    else partner.value = String(Math.round(Number(field.value) * scale));
-    const band = Math.min(100, Math.max(0, Math.round(Number(this.$('deadzone').value) * 100) || 0));
-    this.$('deadzone-band').style.setProperty('--band', `${band}%`);
-    this.$('deadzone-text').textContent = `Ignored band ±${band}%`;
+  showSettings(config) {
+    this.config = config;
+    this.capture = null;
+    for (const radio of this.doc.querySelectorAll('input[name=lever]')) radio.checked = radio.value === config.throttle_lever;
+    for (const radio of this.doc.querySelectorAll('input[name=throttle-mode]')) radio.checked = radio.value === config.throttle.mode;
+    for (const axis of ['roll', 'pitch', 'yaw', 'throttle']) this.$(`invert-${axis}`).checked = config.invert[axis];
+    this.$('split-enabled').checked = config.split_high_g.enabled;
+    this.$('safe-start').checked = config.safe_start;
+    this.fill();
+  }
+
+  /** Number fields and sliders from the draft (the axis fields show the selected axis). */
+  fill() {
+    for (const [id, [group, key]] of Object.entries(Page.FIELDS)) {
+      const value = String(Math.round(this.group(group)[key] * 100));
+      this.$(id).value = value;
+      this.$(id).setAttribute('aria-invalid', 'false');
+      this.$(error(id)).textContent = '';
+      const range = this.$(`${id}-range`);
+      if (range) range.value = value;
+    }
+    this.renderSettings();
   }
 
   edit(target) {
-    if (target.name === 'lever') this.config.throttle_lever = target.value;
-    else if (target.id.startsWith('invert-')) this.config.invert[target.id.slice(7)] = target.checked;
-    else if (target.id === 'split-enabled') this.config.split_high_g.enabled = target.checked;
-    else this.sync(target);
-    this.mark(true, 'Unsaved changes.');
+    const name = target.name || target.id;
+    if (name === 'axis') {
+      this.axis = target.value;
+      return this.fill();
+    }
+    if (name === 'preview-source') {
+      this.source = target.value;
+      return this.renderSettings();
+    }
+    if (name === 'test-input' || name === 'test-lever') {
+      // Dragging a test control previews it instead of the live stick.
+      if (name === 'test-input') this.testInput = Number(target.value) / 100;
+      else this.testLever = Number(target.value) / 100;
+      this.source = 'test';
+      this.doc.querySelector('input[name=preview-source][value=test]').checked = true;
+      return this.renderSettings();
+    }
+    if (name === 'try-live') return this.setPreview(target.checked);
+    if (name === 'lever') this.config.throttle_lever = target.value;
+    else if (name === 'throttle-mode') this.config.throttle.mode = target.value;
+    else if (name.startsWith('invert-')) this.config.invert[name.slice(7)] = target.checked;
+    else if (name === 'split-enabled') this.config.split_high_g.enabled = target.checked;
+    else if (name === 'safe-start') this.config.safe_start = target.checked;
+    else {
+      // A number field or its slider: keep the pair together and take the value into the draft when it is a number.
+      const id = name.endsWith('-range') ? name.slice(0, -6) : name;
+      const partner = this.$(name.endsWith('-range') ? id : `${id}-range`);
+      if (partner) partner.value = target.value;
+      if (target.value !== '' && Number.isFinite(Number(target.value))) {
+        const [group, key] = Page.FIELDS[id];
+        this.group(group)[key] = Number(target.value) / 100;
+      }
+    }
+    return this.changed('Unsaved changes.');
+  }
+
+  /** The draft changed: mark it, redraw the previews, and send it to the game while trying it there. */
+  changed(text) {
+    this.mark(true, this.previewing ? 'Unsaved changes · running in game now.' : text);
+    this.renderSettings();
+    return this.pushPreview();
   }
 
   mark(dirty, text) {
@@ -520,38 +712,46 @@ export class Page {
     this.$('dirty').dataset.state = dirty ? 'dirty' : 'saved';
   }
 
-  number(id, maximum, inclusive) {
-    const field = this.$(id);
-    const value = Number(field.value);
-    const valid = field.value !== '' && value >= 0 && (inclusive ? value <= maximum : value < maximum);
-    field.setAttribute('aria-invalid', String(!valid));
-    this.$(`${id}-error`).textContent = valid ? '' : `Enter a number from 0 to ${inclusive ? maximum : 'below ' + maximum}.`;
-    return valid ? value : null;
+  /** Check every visible field and the cross-field rules; flag what is wrong. */
+  validate() {
+    let valid = true;
+    const fail = (id, text) => {
+      this.$(id).setAttribute('aria-invalid', 'true');
+      this.$(error(id)).textContent = text;
+      valid = false;
+    };
+    for (const [id, [, , minimum, maximum]] of Object.entries(Page.FIELDS)) {
+      const field = this.$(id);
+      const value = Number(field.value);
+      field.setAttribute('aria-invalid', 'false');
+      this.$(error(id)).textContent = '';
+      if (field.value === '' || !(value >= minimum && value <= maximum)) fail(id, `Enter a number from ${minimum} to ${maximum}.`);
+    }
+    const value = (id) => Number(this.$(id).value);
+    if (valid && value('tune-saturation') <= value('tune-deadzone')) fail('tune-saturation', 'Must be beyond the deadzone.');
+    if (valid && (value('detent-idle') >= value('detent-cruise') - value('detent-band') || value('detent-cruise') + value('detent-band') >= value('detent-boost'))) {
+      fail('detent-cruise', 'Needs idle < cruise − band and cruise + band < boost.');
+    }
+    if (valid && value('split-back') >= value('split-forward')) fail('split-back', 'Must be below the forward lever threshold.');
+    if (!valid) {
+      this.$('dirty').textContent = 'Fix the highlighted fields, then save.';
+      this.$('dirty').dataset.state = 'error';
+      return false;
+    }
+    // What is saved or previewed is exactly what the fields show.
+    for (const [id, [group, key]] of Object.entries(Page.FIELDS)) this.group(group)[key] = value(id) / 100;
+    return true;
   }
 
   async save() {
-    const deadzone = this.number('deadzone', 1, false);
-    const camera = this.number('camera', 1, true);
-    const forward = this.number('split-forward', 100, true);
-    let back = this.number('split-back', 100, true);
-    if (back !== null && forward !== null && back >= forward) {
-      this.$('split-back').setAttribute('aria-invalid', 'true');
-      this.$('split-back-error').textContent = 'Must be below the forward lever threshold.';
-      back = null;
-    }
-    if (deadzone === null || camera === null || forward === null || back === null) {
-      this.$('dirty').textContent = 'Fix the highlighted fields, then save.';
-      this.$('dirty').dataset.state = 'error';
-      return;
-    }
-    const split = { ...this.config.split_high_g, forward: forward / 100, back: back / 100 };
-    const next = structuredClone({ ...this.config, deadzone, camera_strength: camera, split_high_g: split });
+    if (!this.validate()) return;
+    const next = structuredClone(this.config);
     this.$('save').disabled = true;
     this.$('dirty').textContent = 'Saving…';
     try {
       const result = await this.api.put('/api/config', next);
-      this.config = next;
       this.saved = structuredClone(next);
+      this.previewing = false;
       this.mark(false, result.running ? 'Saved. Applied to the running emulation.' : 'Saved.');
       this.render();
       this.levers(this.lastLevers);
@@ -560,6 +760,178 @@ export class Page {
       this.$('dirty').dataset.state = 'error';
     } finally {
       this.$('save').disabled = false;
+      this.renderSettings();
+    }
+  }
+
+  async discard() {
+    if (this.previewing) await this.setPreview(false);
+    this.showSettings(structuredClone(this.saved));
+    this.mark(false, 'Changes discarded.');
+  }
+
+  /** "Try in game": start or end running the draft in the emulation. */
+  async setPreview(on) {
+    if (on && !this.validate()) {
+      this.$('try-live').checked = false;
+      return;
+    }
+    this.previewing = on;
+    if (on) {
+      await this.pushPreview();
+    } else {
+      try {
+        await this.api.del('/api/preview');
+      } catch (error) {
+        this.$('dirty').textContent = `Preview not ended: ${error.message}`;
+      }
+    }
+    this.renderSettings();
+  }
+
+  /** Send the draft while previewing; drags coalesce into one request in flight plus the latest. */
+  async pushPreview() {
+    if (!this.previewing || !this.validate()) return;
+    if (this.sending) {
+      this.queued = true;
+      return;
+    }
+    this.sending = true;
+    try {
+      await this.api.put('/api/preview', structuredClone(this.config));
+      this.mark(true, 'Unsaved changes · running in game now.');
+    } catch (error) {
+      this.previewing = false;
+      this.$('dirty').textContent = `Preview stopped: ${error.message}`;
+      this.$('dirty').dataset.state = 'error';
+    }
+    this.sending = false;
+    this.renderSettings();
+    if (this.queued) {
+      this.queued = false;
+      await this.pushPreview();
+    }
+  }
+
+  startCapture(kind) {
+    this.capture = this.capture?.kind === kind ? null : { kind, keys: [] };
+    this.renderSettings();
+  }
+
+  /** Lever travel shown on the throttle card: the live lever while emulating and selected, else the test lever. */
+  lever() {
+    const index = this.config.throttle_lever === 'right' ? 1 : 0;
+    return this.source === 'live' && this.monitor ? this.monitor.levers[index] : this.testLever;
+  }
+
+  /** Previews from the unsaved draft: curve, readouts, live strip, throttle bands and output, helpers. */
+  renderSettings() {
+    const live = this.source === 'live';
+    const tuning = this.config.axes[this.axis];
+    const input = (axis) => (live ? (this.monitor ? this.monitor[axis] : 0) : axis === this.axis ? this.testInput : 0);
+    const name = AXIS_NAMES[this.axis];
+    for (const radio of this.doc.querySelectorAll('input[name=axis]')) radio.checked = radio.value === this.axis;
+    this.$('curve').setAttribute('aria-label', `${name} response curve: stick input against NEO output`);
+    this.$('curve-band').setAttribute('x', plot(-tuning.deadzone).toFixed(1));
+    this.$('curve-band').setAttribute('width', (220 * tuning.deadzone).toFixed(1));
+    this.$('curve-path').setAttribute('d', curvePath(tuning));
+    const [x, y] = [input(this.axis), shape(input(this.axis), tuning)];
+    for (const [attribute, value] of [['x1', plot(x)], ['x2', plot(x)], ['y2', 240 - plot(y)]]) this.$('curve-drop').setAttribute(attribute, value.toFixed(1));
+    this.$('curve-dot').setAttribute('cx', plot(x).toFixed(1));
+    this.$('curve-dot').setAttribute('cy', (240 - plot(y)).toFixed(1));
+    this.$('read-input-label').textContent = `${name} · ${live ? (this.monitor ? 'live' : 'no input yet') : 'test'}`;
+    this.$('read-input').textContent = signed(x);
+    this.$('read-output').textContent = signed(y);
+    this.$('copy-axis').textContent = `Copy ${name.toLowerCase()} to ${this.axis === 'yaw' ? 'roll and pitch' : this.axis === 'roll' ? 'pitch' : 'roll'}`;
+    this.$('reset-axis').textContent = `Reset ${name.toLowerCase()}`;
+    for (const mini of this.doc.querySelectorAll('.mini')) {
+      const axis = mini.dataset.axis;
+      const out = shape(input(axis), this.config.axes[axis]);
+      mini.dataset.selected = String(axis === this.axis);
+      mini.querySelector('[data-out]').textContent = signed(out);
+      const bar = mini.querySelector('.minibar span');
+      bar.style.setProperty('--from', `${50 + Math.min(out, 0) * 50}%`);
+      bar.style.setProperty('--size', `${Math.abs(out) * 50}%`);
+    }
+    this.renderThrottle();
+    this.renderHelpers();
+    this.$('try-live').checked = this.previewing;
+    this.$('pill-preview').hidden = !this.previewing;
+  }
+
+  renderThrottle() {
+    const throttle = this.config.throttle;
+    const detents = throttle.mode === 'detents';
+    const travel = this.lever();
+    const out = throttleOut(travel, throttle);
+    const [area, text] = zone(out, throttle);
+    const side = this.config.throttle_lever === 'right' ? 'Right' : 'Left';
+    this.$('throttle-help').textContent = detents
+      ? 'ACE COMBAT throttle: centre cruises, forward boosts, back brakes. The quadrant detents mark where each band starts.'
+      : 'Lever travel maps straight to the NEO throttle. Mid-travel is cruise.';
+    this.$('throttle-source').textContent = `${side} lever · ${this.source === 'live' && this.monitor ? 'live' : 'test'}`;
+    const zoneLabel = this.$('throttle-zone');
+    zoneLabel.textContent = text;
+    if (area) zoneLabel.dataset.zone = area; else delete zoneLabel.dataset.zone;
+    const rail = this.$('throttle-rail');
+    rail.dataset.mode = throttle.mode;
+    const at = (value) => `${Math.round(value * 1000) / 10}%`;
+    for (const [property, value] of [['--idle', throttle.idle], ['--low', throttle.cruise - throttle.band], ['--high', throttle.cruise + throttle.band], ['--boost', throttle.boost]]) {
+      rail.style.setProperty(property, at(value));
+    }
+    for (const mark of this.doc.querySelectorAll('[data-mark]')) mark.style.setProperty('--at', at(throttle[mark.dataset.mark]));
+    this.doc.querySelector('.marks').dataset.mode = throttle.mode;
+    this.$('throttle-needle').style.setProperty('left', at(travel));
+    this.$('test-lever').value = String(Math.round(this.testLever * 100));
+    this.$('throttle-out').textContent = `${signed(out)} · ${out < 0 ? 'brake' : out > 0 ? 'boost' : 'cruise'}`;
+    const bar = this.$('throttle-bar');
+    bar.dataset.side = out < 0 ? 'brake' : 'boost';
+    bar.style.setProperty('--from', `${50 + Math.min(out, 0) * 50}%`);
+    bar.style.setProperty('--size', `${Math.abs(out) * 50}%`);
+    this.$('detents').hidden = !detents;
+    this.$('detent-legend').hidden = !detents;
+    for (const button of this.doc.querySelectorAll('[data-capture]')) button.disabled = !this.monitor;
+    this.$('capture-hint').textContent = this.monitor
+      ? `Put the ${side.toLowerCase()} lever in a detent, then Capture.`
+      : 'Start emulation to capture the lever in its detents.';
+  }
+
+  renderHelpers() {
+    const precision = this.config.precision.source;
+    const chip = this.$('precision-source');
+    chip.textContent = precision ? `${short(precision)} · ${label(precision)}` : 'Off';
+    chip.classList.toggle('off', !precision);
+    this.$('precision-clear').disabled = !precision;
+    const capturing = this.capture?.kind;
+    this.$('precision-pick').textContent = capturing === 'precision' ? 'Cancel' : 'Press a control…';
+    this.$('pause-record').textContent = capturing === 'pause' ? 'Done' : 'Record combo…';
+    const keys = capturing === 'pause' ? this.capture.keys : this.config.combos.pause;
+    const combo = this.$('pause-combo');
+    // Rebuilt only when the combo changes: this runs on every live poll.
+    if (combo.dataset.keys === keys.join()) return this.renderCapture(capturing);
+    combo.dataset.keys = keys.join();
+    combo.replaceChildren(...(keys.length ? keys : [null]).flatMap((key, index) => {
+      const chipItem = this.doc.createElement('span');
+      chipItem.className = key ? 'chip static' : 'chip static off';
+      chipItem.textContent = key ? short(key) : 'Off';
+      if (key) chipItem.title = label(key);
+      if (!index) return [chipItem];
+      const plus = this.doc.createElement('span');
+      plus.className = 'plus';
+      plus.textContent = '+';
+      return [plus, chipItem];
+    }));
+    return this.renderCapture(capturing);
+  }
+
+  renderCapture(capturing) {
+    this.$('pause-clear').disabled = !this.config.combos.pause.length;
+    // The prompt sits in the card being captured for.
+    for (const well of this.doc.querySelectorAll('.capture')) {
+      well.hidden = well.dataset.for !== capturing;
+      well.lastElementChild.textContent = !this.emulating ? 'Start emulation, then press the controls on the TCA.'
+        : well.dataset.for === 'precision' ? 'Press the TCA control to hold for precision aiming.'
+          : 'Press and release the controls for the combo (up to 4), then choose Done.';
     }
   }
 
@@ -589,16 +961,36 @@ export class Page {
     });
   }
 
-  /** Live input: light held controls; a new press selects that control unless a recording is being saved. */
+  /**
+   * Live input: light held controls; a new press selects that control unless a recording is being saved, or
+   * becomes the precision control / joins the pause combo while one is being picked. Previews follow the raw input.
+   */
   live(data) {
     this.status(data.status, data.links);
+    this.emulating = Boolean(data.links);
+    this.monitor = data.monitor ?? null;
+    this.$('pill-paused').hidden = !data.paused;
+    if (this.previewing && !data.preview && !this.sending) {
+      this.previewing = false;
+      this.mark(true, 'Unsaved changes · the preview ended with emulation.');
+    }
     this.$('live-input-text').textContent = data.pressed.length ? `Now sending: ${data.pressed.map(label).join(', ')}` : data.links ? 'Nothing pressed' : 'Start emulation to see presses.';
     this.$('live-input').dataset.active = String(data.pressed.length > 0);
     this.levers(data.levers);
-    const fresh = data.pressed.filter((key) => !this.held.has(key) && this.selectable(key));
+    const pressed = data.pressed.filter((key) => !this.held.has(key));
+    const fresh = pressed.filter((key) => SELECTABLE.has(key));
     this.held = new Set(data.pressed);
-    if (fresh.length && !this.$('panel-mapping').hidden && !this.busy) this.select(fresh[0]);
+    if (this.capture?.kind === 'precision' && fresh.length) {
+      this.config.precision.source = fresh[0];
+      this.capture = null;
+      this.changed(`Unsaved: hold ${label(fresh[0])} for precision aiming.`);
+    } else if (this.capture?.kind === 'pause') {
+      this.capture.keys = [...new Set([...this.capture.keys, ...fresh])].slice(0, 4);
+    }
+    const picked = pressed.filter((key) => this.selectable(key));
+    if (picked.length && !this.$('panel-mapping').hidden && !this.busy) this.select(picked[0]);
     else this.render();
+    this.renderSettings();
   }
 
   async poll() {

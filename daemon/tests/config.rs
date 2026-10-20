@@ -36,10 +36,29 @@ fn directions_map_to_hat_vectors() {
 fn validation_rules() {
     assert!(config::validate(&config::defaults()).is_ok());
     let cases: Vec<(Change, &str)> = vec![
-        (Box::new(|c| c.version = 2), "version"),
-        (Box::new(|c| c.deadzone = 1.0), "Deadzone"),
-        (Box::new(|c| c.deadzone = -0.1), "Deadzone"),
+        (Box::new(|c| c.version = 1), "version"),
+        (Box::new(|c| c.axes.roll.deadzone = 0.6), "Roll deadzone"),
+        (Box::new(|c| c.axes.pitch.deadzone = -0.1), "Pitch deadzone"),
+        (Box::new(|c| c.axes.yaw.saturation = 0.4), "Yaw full deflection"),
+        (Box::new(|c| c.axes.yaw.saturation = 1.1), "Yaw full deflection"),
+        (Box::new(|c| { c.axes.roll.deadzone = 0.5; c.axes.roll.saturation = 0.5; }), "Roll full deflection"),
+        (Box::new(|c| c.axes.roll.anti_deadzone = 0.6), "Roll anti-deadzone"),
+        (Box::new(|c| c.axes.roll.curve = -1.5), "Roll curve"),
+        (Box::new(|c| c.axes.roll.smoothing = 0.95), "Roll smoothing"),
         (Box::new(|c| c.camera_strength = 1.5), "Camera"),
+        (Box::new(|c| c.throttle.band = 0.25), "Throttle detents"),
+        (Box::new(|c| c.throttle.band = -0.01), "Throttle detents"),
+        (Box::new(|c| c.throttle.idle = -0.1), "Throttle detents"),
+        (Box::new(|c| c.throttle.idle = 0.47), "Throttle detents"),
+        (Box::new(|c| c.throttle.boost = 0.53), "Throttle detents"),
+        (Box::new(|c| c.throttle.boost = 1.1), "Throttle detents"),
+        (Box::new(|c| c.precision.source = Some("s40".into())), "Unknown TCA control s40"),
+        (Box::new(|c| c.precision.scale = 0.05), "Precision scale"),
+        (Box::new(|c| c.combos.pause = ["s1", "s2", "s3", "s4", "s5"].map(String::from).to_vec()), "at most 4"),
+        (Box::new(|c| c.combos.pause = vec!["q99".into()]), "Unknown TCA control q99"),
+        (Box::new(|c| { c.behaviours.insert("x".into(), config::Mode::Toggle); }), "Unknown TCA control x"),
+        (Box::new(|c| c.timing.pulse_ms = 10), "Pulse length"),
+        (Box::new(|c| c.timing.pulse_ms = 2000), "Pulse length"),
         (Box::new(|c| c.split_high_g.back = 0.95), "Split High-G"),
         (Box::new(|c| c.split_high_g.back = -0.1), "Split High-G"),
         (Box::new(|c| c.split_high_g.forward = 1.2), "Split High-G"),
@@ -61,7 +80,8 @@ fn parse_rejects_bad_json_unknown_fields_and_invalid_values() {
     assert_eq!(config::parse(&text).unwrap(), config::defaults());
     assert!(config::parse("{").unwrap_err().starts_with("Invalid profile"));
     assert!(config::parse(&text.replacen('{', "{\"extra\": 1,", 1)).unwrap_err().starts_with("Invalid profile"));
-    assert!(config::parse(&text.replace("\"version\": 1", "\"version\": 3")).unwrap_err().contains("version"));
+    assert!(config::parse(&text.replace("\"version\": 2", "\"version\": 3")).unwrap_err().contains("version"));
+    assert!(config::parse("[]").unwrap_err().starts_with("Invalid profile"));
     // Profiles saved before the split setting existed get it enabled at 75% / 25%.
     let without_split: serde_json::Value = {
         let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -77,18 +97,60 @@ fn parse_rejects_bad_json_unknown_fields_and_invalid_values() {
     assert_eq!(config::parse(&text.replace("\"hat\": \"camera\"", "\"hat\": \"mapped\"")).unwrap().hat, config::HatMode::Mapped);
 }
 
+/// A profile exactly as version 0.2.2 saved it.
+const V1: &str = r#"{"version": 1, "deadzone": 0.07, "camera_strength": 0.5, "throttle_lever": "right", "hat": "mapped",
+    "split_high_g": {"enabled": false, "forward": 0.8, "back": 0.2}, "invert": {"roll": false, "pitch": true, "yaw": false, "throttle": false},
+    "buttons": {"q3": [6], "s1": [1]}, "pov": {"s11": "up"}}"#;
+
+#[test]
+fn version_1_profiles_migrate_to_per_axis_tuning_and_keep_holding() {
+    let cfg = config::parse(V1).unwrap();
+    assert_eq!(cfg.version, config::VERSION);
+    let axis = config::AxisTuning { deadzone: 0.07, ..config::AxisTuning::default() };
+    assert_eq!(cfg.axes, config::Axes { roll: axis, pitch: axis, yaw: axis });
+    assert!(cfg.behaviours.is_empty()); // the latching switches keep holding, as before
+    assert_eq!((cfg.camera_strength, cfg.throttle_lever, cfg.hat, cfg.invert.pitch), (0.5, config::Lever::Right, config::HatMode::Mapped, true));
+    assert!(!cfg.split_high_g.enabled && cfg.safe_start);
+    assert_eq!((cfg.throttle, cfg.precision.clone(), cfg.combos.clone(), cfg.timing), Default::default());
+    assert_eq!((cfg.buttons["q3"].clone(), cfg.pov["s11"]), (vec![6], Direction::Up));
+    // A v1 deadzone out of the v2 range is reported, not clamped; a v1 profile without one is invalid.
+    assert!(config::parse(&V1.replace("0.07", "0.8")).unwrap_err().contains("Roll deadzone"));
+    assert!(config::parse(&V1.replace("\"deadzone\": 0.07,", "")).unwrap_err().starts_with("Invalid profile"));
+}
+
+#[test]
+fn defaults_pulse_the_latching_switches_and_arm_a_safe_start() {
+    let cfg = config::defaults();
+    let modes: Vec<_> = cfg.behaviours.iter().map(|(k, m)| (k.as_str(), *m)).collect();
+    use config::Mode::{Pulse, PulseChange};
+    assert_eq!(modes, [("q3", PulseChange), ("q4", PulseChange), ("q7", Pulse), ("q8", Pulse)]);
+    assert!(cfg.safe_start && cfg.precision.source.is_none() && cfg.combos.pause.is_empty());
+    assert_eq!((cfg.throttle.mode, cfg.timing.pulse_ms), (config::ThrottleMode::Linear, 80));
+    // Settings added in version 2 may be left out of a v2 profile.
+    let mut value: serde_json::Value = serde_json::from_str(&config::to_json(&cfg)).unwrap();
+    for key in ["throttle", "precision", "safe_start", "combos", "behaviours", "timing"] {
+        value.as_object_mut().unwrap().remove(key);
+    }
+    let sparse = config::parse(&value.to_string()).unwrap();
+    assert!(sparse.safe_start && sparse.behaviours.is_empty());
+    let mut valid = cfg.clone();
+    valid.precision.source = Some("hat-down".into());
+    valid.combos.pause = vec!["s5".into(), "q6".into()];
+    assert_eq!(config::parse(&config::to_json(&valid)).unwrap(), valid);
+}
+
 #[test]
 fn load_save_round_trip_and_failures() {
     let dir = temp("roundtrip");
     let path = dir.join("config.json");
     assert_eq!(config::load(&path).unwrap(), config::defaults());
     let mut cfg = config::defaults();
-    cfg.deadzone = 0.1;
+    cfg.axes.roll.deadzone = 0.1;
     config::save(&path, &cfg).unwrap();
     assert_eq!(config::load(&path).unwrap(), cfg);
     assert!(!dir.join("config.tmp").exists());
-    cfg.deadzone = 3.0;
-    assert!(config::save(&path, &cfg).unwrap_err().contains("Deadzone"));
+    cfg.axes.roll.deadzone = 3.0;
+    assert!(config::save(&path, &cfg).unwrap_err().contains("Roll deadzone"));
     assert!(config::save(&dir.join("missing").join("config.json"), &config::defaults()).unwrap_err().contains("could not be saved"));
     std::fs::write(&path, "nope").unwrap();
     assert!(config::load(&path).is_err());
@@ -114,11 +176,27 @@ fn shared_state_publishes_generations_and_status() {
     let mut cfg = config::defaults();
     cfg.camera_strength = 0.25;
     shared.save(cfg.clone()).unwrap();
-    assert_eq!(shared.config(), (1, cfg));
+    assert_eq!(shared.config(), (1, cfg.clone()));
     let mut bad = config::defaults();
     bad.version = 0;
-    assert!(shared.save(bad).is_err());
+    assert!(shared.save(bad.clone()).is_err());
     assert_eq!(shared.generation(), 1);
+    // A preview replaces the active settings without touching the saved profile; a save or a clear ends it.
+    let mut draft = cfg.clone();
+    draft.axes.yaw.curve = 0.4;
+    assert!(shared.set_preview(Some(bad)).is_err());
+    assert!(!shared.previewing());
+    shared.set_preview(Some(draft.clone())).unwrap();
+    assert_eq!((shared.active(), shared.config().1.clone(), shared.previewing()), ((2, draft.clone()), cfg.clone(), true));
+    shared.set_preview(None).unwrap();
+    assert_eq!((shared.active(), shared.previewing()), ((3, cfg.clone()), false));
+    shared.set_preview(Some(draft.clone())).unwrap();
+    shared.save(draft.clone()).unwrap();
+    assert_eq!((shared.active(), shared.previewing()), ((5, draft), false));
+    assert_eq!(config::load(&dir.join("config.json")).unwrap().axes.yaw.curve, 0.4);
+    assert!(!shared.paused());
+    shared.set_paused(true);
+    assert!(shared.paused());
     for (status, label, running) in [
         (Status::Idle, "Idle", false),
         (Status::Starting, "Starting", true),

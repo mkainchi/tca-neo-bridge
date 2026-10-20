@@ -226,7 +226,7 @@ fn tca_session_maps_hot_reloads_and_releases_on_disconnect() {
     let dir = temp("tca");
     let shared = Arc::new(Shared::new(dir.join("config.json"), config::defaults()));
     let (deps, _) = deps(None, dir.clone());
-    let (notify, _) = counter();
+    let (notify, notified) = counter();
     let session = Emulation::start(&deps, shared.clone(), Source::Tca, notify).unwrap();
     assert!(dir.join("hidhide-session.json").exists());
     assert_eq!(*shared.links.lock().unwrap(), Some(Links { source: "tca", hidden: true, tca: true, virtual_neo: true }));
@@ -237,15 +237,28 @@ fn tca_session_maps_hot_reloads_and_releases_on_disconnect() {
         s.reads.insert(0, [Read::Data(stick_report(1, 0))].into());
         s.reads.insert(1, [Read::Data(quadrant_report(65535))].into());
     }
-    // Left lever at idle (raw 65535, the NEO Z idle value too); default throttle is not inverted.
-    let pressed_report = |button: u16| neo::input_report([0, 32768, 65535, 32768, 32768, 32768, 32768], button, 8);
+    // Left lever at idle (raw 65535): safe start holds the throttle at centre until the lever reaches it.
+    let pressed_report = |button: u16| neo::input_report([0, 32768, 32768, 32768, 32768, 32768, 32768], button, 8);
     wait_until(|| state().frames.iter().any(|f| protocol::parse(f) == Some(pressed_report(1))));
     assert_eq!(*shared.pressed.lock().unwrap(), ["s1"]);
     assert_eq!(*shared.levers.lock().unwrap(), Some([0.0, 1.0 - 32768.0 / 65535.0]));
+    wait_until(|| shared.monitor.lock().unwrap().is_some_and(|m| m.roll == -1.0 && !m.armed));
     let mut changed = config::defaults();
     changed.buttons.insert("s1".into(), vec![15]);
-    shared.save(changed).unwrap();
+    shared.save(changed.clone()).unwrap();
     wait_until(|| state().frames.iter().any(|f| protocol::parse(f) == Some(pressed_report(1 << 14))));
+    // A preview runs without being saved; its pause combo (s1 + s2) pauses input: neutral frames, a tray refresh.
+    let mut preview = changed;
+    preview.combos.pause = vec!["s1".into(), "s2".into()];
+    shared.set_preview(Some(preview)).unwrap();
+    let before = notified.load(Ordering::SeqCst);
+    state().reads.insert(0, [Read::Data(stick_report(3, 0))].into());
+    wait_until(|| shared.paused());
+    assert!(notified.load(Ordering::SeqCst) > before);
+    state().frames.clear();
+    wait_until(|| state().frames.iter().any(|f| protocol::parse(f) == Some(neo::neutral())));
+    assert!(state().frames.iter().all(|f| protocol::parse(f) == Some(neo::neutral())));
+    state().reads.insert(0, [Read::Data(stick_report(1, 0))].into());
     let mut hat_up = stick_report(1, 0);
     hat_up[7] = 0;
     state().reads.insert(0, [Read::Data(hat_up)].into());
@@ -255,6 +268,8 @@ fn tca_session_maps_hot_reloads_and_releases_on_disconnect() {
     assert!(!dir.join("hidhide-session.json").exists());
     assert!(shared.pressed.lock().unwrap().is_empty());
     assert_eq!(*shared.levers.lock().unwrap(), None);
+    // The session ends unpaused, without a preview or monitor.
+    assert!(!shared.paused() && !shared.previewing() && shared.monitor.lock().unwrap().is_none());
     drop(session);
 }
 

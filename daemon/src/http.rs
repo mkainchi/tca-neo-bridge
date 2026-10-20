@@ -95,12 +95,20 @@ pub fn handle(request: &Request, shared: &Shared, port: u16, token: &str) -> Res
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/api/config") => {
             let (_, current) = shared.config();
-            json_reply(200, json!({"config": current, "defaults": config::defaults(), "status": shared.status().label(), "links": *shared.links.lock().unwrap(), "profile": shared.config_path.display().to_string()}))
+            json_reply(200, json!({"config": current, "defaults": config::defaults(), "status": shared.status().label(), "links": *shared.links.lock().unwrap(), "profile": shared.config_path.display().to_string(), "preview": *shared.preview.lock().unwrap()}))
         }
         ("PUT", "/api/config") => match config::parse(&request.body).and_then(|c| shared.save(c)) {
             Ok(()) => json_reply(200, json!({"saved": true, "running": shared.status().running()})),
             Err(error) => json_reply(400, json!({"error": error})),
         },
+        ("PUT", "/api/preview") => match config::parse(&request.body).and_then(|c| shared.set_preview(Some(c))) {
+            Ok(()) => json_reply(200, json!({"preview": true, "running": shared.status().running()})),
+            Err(error) => json_reply(400, json!({"error": error})),
+        },
+        ("DELETE", "/api/preview") => {
+            let _ = shared.set_preview(None);
+            json_reply(200, json!({"preview": false}))
+        }
         ("GET", "/api/labels") => match labels::load(&shared.labels_path()) {
             Ok(entries) => json_reply(200, json!({"labels": entries})),
             Err(error) => json_reply(400, json!({"error": error})),
@@ -109,7 +117,10 @@ pub fn handle(request: &Request, shared: &Shared, port: u16, token: &str) -> Res
             Ok(count) => json_reply(200, json!({"saved": count})),
             Err(error) => json_reply(400, json!({"error": error})),
         },
-        ("GET", "/api/live") => json_reply(200, json!({"pressed": *shared.pressed.lock().unwrap(), "levers": *shared.levers.lock().unwrap(), "status": shared.status().label(), "links": *shared.links.lock().unwrap()})),
+        ("GET", "/api/live") => json_reply(
+            200,
+            json!({"pressed": *shared.pressed.lock().unwrap(), "levers": *shared.levers.lock().unwrap(), "monitor": *shared.monitor.lock().unwrap(), "paused": shared.paused(), "preview": shared.previewing(), "status": shared.status().label(), "links": *shared.links.lock().unwrap()}),
+        ),
         _ => json_reply(404, json!({"error": "Unknown request."})),
     }
 }

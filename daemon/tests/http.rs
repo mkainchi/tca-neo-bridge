@@ -74,7 +74,16 @@ fn routes_assets_tokens_and_host_checks() {
     assert_eq!(value["config"], value["defaults"]);
     shared.pressed.lock().unwrap().push("s5".into());
     shared.set_status(Status::Emulating);
-    assert_eq!(json(&get("/api/live", "secret").body), serde_json::json!({"pressed": ["s5"], "levers": null, "status": "Emulating", "links": null}));
+    assert_eq!(
+        json(&get("/api/live", "secret").body),
+        serde_json::json!({"pressed": ["s5"], "levers": null, "monitor": null, "paused": false, "preview": false, "status": "Emulating", "links": null})
+    );
+    shared.set_paused(true);
+    let mut mapper = neo_daemon::neo::Mapper::new(&config::defaults());
+    mapper.convert(Some(&[1u8; 64]), Some(&[1u8; 44]));
+    *shared.monitor.lock().unwrap() = mapper.monitor();
+    let live = json(&get("/api/live", "secret").body);
+    assert_eq!((live["paused"].clone(), live["monitor"]["armed"].clone(), live["monitor"]["axes"].as_array().unwrap().len()), (true.into(), false.into(), 7));
     *shared.links.lock().unwrap() = Some(Links { source: "tca", hidden: true, tca: true, virtual_neo: true });
     assert_eq!(json(&get("/api/live", "secret").body)["links"], serde_json::json!({"source": "tca", "hidden": true, "tca": true, "virtual_neo": true}));
     *shared.levers.lock().unwrap() = Some([0.25, 1.0]);
@@ -93,9 +102,30 @@ fn saving_validates_persists_and_hot_reloads() {
     assert_eq!(config::load(&shared.config_path).unwrap(), cfg);
     shared.set_status(Status::Emulating);
     assert_eq!(json(&put(&config::to_json(&cfg)).body)["running"], true);
-    let rejected = put(&config::to_json(&cfg).replace("0.04", "1.5"));
+    let rejected = put(&config::to_json(&cfg).replacen("0.04", "1.5", 1));
     assert_eq!(rejected.status, 400);
-    assert!(json(&rejected.body)["error"].as_str().unwrap().contains("Deadzone"));
+    assert!(json(&rejected.body)["error"].as_str().unwrap().contains("Roll deadzone"));
+    assert_eq!(shared.generation(), 2);
+}
+
+#[test]
+fn previews_run_unsaved_settings_until_cleared_or_saved() {
+    let shared = shared("preview");
+    let call = |method: &str, path: &str, body: &str| http::handle(&request(method, path, "t", body), &shared, 8000, "t");
+    assert_eq!(json(&call("GET", "/api/config", "").body)["preview"], serde_json::Value::Null);
+    let mut draft = config::defaults();
+    draft.axes.pitch.curve = 0.3;
+    let started = call("PUT", "/api/preview", &config::to_json(&draft));
+    assert_eq!((started.status, json(&started.body)), (200, serde_json::json!({"preview": true, "running": false})));
+    assert_eq!((shared.active().1, shared.config().1), (draft.clone(), config::defaults()));
+    assert!(!shared.config_path.exists()); // never saved
+    let page = json(&call("GET", "/api/config", "").body);
+    assert_eq!((page["preview"]["axes"]["pitch"]["curve"].clone(), json(&call("GET", "/api/live", "").body)["preview"].clone()), (0.3.into(), true.into()));
+    let rejected = call("PUT", "/api/preview", "{}");
+    assert_eq!(rejected.status, 400);
+    assert!(shared.previewing());
+    let cleared = call("DELETE", "/api/preview", "");
+    assert_eq!((cleared.status, json(&cleared.body), shared.previewing()), (200, serde_json::json!({"preview": false}), false));
     assert_eq!(shared.generation(), 2);
 }
 

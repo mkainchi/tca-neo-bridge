@@ -1,4 +1,4 @@
-//! Notification-area icon and menu: Start/Stop emulation, Configure…, Install/Reinstall driver…, Quit.
+//! Notification-area icon and menu: Start/Stop emulation, Pause/Resume input, Configure…, Install/Reinstall driver…, Quit.
 use crate::driver::DriverManager;
 use crate::emulation::Controller;
 use crate::ffi::{self, HANDLE, HWND, MSG, NOTIFYICONDATAW, PCWSTR, POINT, WNDCLASSEXW};
@@ -20,6 +20,7 @@ pub const ID_STOP: usize = 2;
 pub const ID_CONFIGURE: usize = 3;
 pub const ID_QUIT: usize = 4;
 pub const ID_DRIVER: usize = 5;
+pub const ID_PAUSE: usize = 6;
 const NIM_ADD: u32 = 0;
 const NIM_MODIFY: u32 = 1;
 const NIM_DELETE: u32 = 2;
@@ -131,7 +132,7 @@ impl Drop for IconSet {
 }
 
 /// (command, label, enabled); `None` command is a separator. `driver` is (installed, installing).
-pub fn menu_items(status: &Status, driver: (Option<bool>, bool)) -> Vec<(Option<usize>, &'static str, bool)> {
+pub fn menu_items(status: &Status, driver: (Option<bool>, bool), paused: bool) -> Vec<(Option<usize>, &'static str, bool)> {
     let busy = matches!(status, Status::Starting | Status::Stopping);
     let driver_label = match driver {
         (_, true) => "Installing driver\u{2026}",
@@ -141,6 +142,7 @@ pub fn menu_items(status: &Status, driver: (Option<bool>, bool)) -> Vec<(Option<
     vec![
         (Some(ID_START), "Start emulation", !status.running()),
         (Some(ID_STOP), "Stop emulation", *status == Status::Emulating),
+        (Some(ID_PAUSE), if paused { "Resume input" } else { "Pause input" }, *status == Status::Emulating),
         (None, "", false),
         (Some(ID_CONFIGURE), "Configure\u{2026}", true),
         (Some(ID_DRIVER), driver_label, !status.running() && !driver.1),
@@ -149,8 +151,9 @@ pub fn menu_items(status: &Status, driver: (Option<bool>, bool)) -> Vec<(Option<
     ]
 }
 
-pub fn tooltip(status: &Status) -> String {
-    format!("TCA-NEO bridge \u{2014} {}", status.label())
+pub fn tooltip(status: &Status, paused: bool) -> String {
+    let note = if paused && *status == Status::Emulating { " (input paused)" } else { "" };
+    format!("TCA-NEO bridge \u{2014} {}{note}", status.label())
 }
 
 pub enum Action {
@@ -182,7 +185,7 @@ impl Tray {
         data.uFlags = NIF_MESSAGE_ICON_TIP;
         data.uCallbackMessage = WM_TRAY;
         data.hIcon = self.icons.for_status(status);
-        ffi::fill(&mut data.szTip, &tooltip(status));
+        ffi::fill(&mut data.szTip, &tooltip(status, self.controller.shared.paused()));
         data
     }
 
@@ -239,6 +242,11 @@ impl Tray {
         match id {
             ID_START => self.controller.start(),
             ID_STOP => self.controller.stop(),
+            ID_PAUSE if self.controller.shared.status() == Status::Emulating => {
+                let shared = &self.controller.shared;
+                shared.set_paused(!shared.paused());
+                self.refresh();
+            }
             ID_CONFIGURE => self.configure(),
             ID_DRIVER if !self.controller.shared.status().running() => self.driver.install(self.hwnd),
             ID_QUIT if !matches!(self.controller.shared.status(), Status::Starting | Status::Stopping) => {
@@ -282,11 +290,11 @@ impl Drop for Tray {
 }
 
 /// Build and track the popup menu (modal; runs with the tray state unborrowed). Returns the chosen command.
-pub fn show_menu(api: UiApi, hwnd: HWND, status: &Status, driver: (Option<bool>, bool)) -> usize {
+pub fn show_menu(api: UiApi, hwnd: HWND, status: &Status, driver: (Option<bool>, bool), paused: bool) -> usize {
     // SAFETY: menu handle is created and destroyed here; label buffers outlive AppendMenuW.
     unsafe {
         let menu = (api.create_menu)();
-        for (id, label, enabled) in menu_items(status, driver) {
+        for (id, label, enabled) in menu_items(status, driver, paused) {
             let text = ffi::wide(label);
             let flags = match id {
                 None => MF_SEPARATOR,
@@ -316,12 +324,12 @@ pub unsafe extern "system" fn wndproc(hwnd: HWND, message: u32, wparam: usize, l
     // Shell calls made while handling a message (Shell_NotifyIconW, ShellExecuteW) can deliver messages
     // re-entrantly. Those see the tray borrowed: they get default handling, and status refreshes are re-queued.
     let action = TRAY.with(|tray| {
-        tray.try_borrow_mut().ok().map(|mut t| t.as_mut().map(|t| (t.handle(message, wparam, lparam), t.api, (t.controller.shared.status(), t.driver.menu()))))
+        tray.try_borrow_mut().ok().map(|mut t| t.as_mut().map(|t| (t.handle(message, wparam, lparam), t.api, (t.controller.shared.status(), t.driver.menu(), t.controller.shared.paused()))))
     });
     match action {
         Some(Some((Action::Done(result), _, _))) => result,
-        Some(Some((Action::Menu, api, (status, driver)))) => {
-            let chosen = show_menu(api, hwnd, &status, driver);
+        Some(Some((Action::Menu, api, (status, driver, paused)))) => {
+            let chosen = show_menu(api, hwnd, &status, driver, paused);
             let destroy = TRAY.with(|tray| tray.try_borrow_mut().ok().is_some_and(|mut t| t.as_mut().is_some_and(|t| t.command(chosen))));
             if destroy {
                 (api.destroy_window)(hwnd);

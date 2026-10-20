@@ -1,7 +1,7 @@
 //! Emulation session: HidHide isolation → TCA readers → report pipe → virtual NEO, torn down in reverse.
 use crate::device::{DeviceApi, PipeServer, SoftwareDevice};
 use crate::hidhide::Hiding;
-use crate::neo::{self, Mapper};
+use crate::neo::{self, Event, Mapper};
 use crate::shared::{Links, Shared, Status};
 use crate::tca::{self, HidApi, Reader};
 use crate::validation;
@@ -68,9 +68,9 @@ pub struct Emulation {
     thread: Option<JoinHandle<()>>,
 }
 
-fn run_loop(resources: &Resources, shared: &Shared, period: Duration, stop: &AtomicBool) -> Result<(), String> {
+fn run_loop(resources: &Resources, shared: &Shared, period: Duration, stop: &AtomicBool, notify: &Notify) -> Result<(), String> {
     let started = Instant::now();
-    let (mut generation, config) = shared.config();
+    let (mut generation, config) = shared.active();
     let mut mapper = Mapper::new(&config);
     let pipe = resources.pipe.as_ref().unwrap();
     while !stop.load(Ordering::SeqCst) {
@@ -80,8 +80,9 @@ fn run_loop(resources: &Resources, shared: &Shared, period: Duration, stop: &Ato
                     return Err(DISCONNECTED.into());
                 }
                 if shared.generation() != generation {
-                    let (latest, config) = shared.config();
-                    (generation, mapper) = (latest, Mapper::new(&config));
+                    let (latest, config) = shared.active();
+                    generation = latest;
+                    mapper.reconfigure(&config);
                 }
                 let (stick, quadrant) = (stick.snapshot(), quadrant.snapshot());
                 *shared.pressed.lock().unwrap() = match (&stick, &quadrant) {
@@ -91,7 +92,19 @@ fn run_loop(resources: &Resources, shared: &Shared, period: Duration, stop: &Ato
                     _ => Vec::new(),
                 };
                 *shared.levers.lock().unwrap() = quadrant.as_deref().map(neo::levers);
-                mapper.convert(stick.as_deref(), quadrant.as_deref())
+                let report = mapper.at(started.elapsed()).convert(stick.as_deref(), quadrant.as_deref());
+                *shared.monitor.lock().unwrap() = mapper.monitor();
+                for event in mapper.take_events() {
+                    match event {
+                        Event::TogglePause => shared.set_paused(!shared.paused()),
+                    }
+                    notify();
+                }
+                if shared.paused() {
+                    neo::neutral()
+                } else {
+                    report
+                }
             }
             None => validation::report(started.elapsed().as_secs_f64()),
         };
@@ -112,9 +125,12 @@ impl Emulation {
         let stop = Arc::new(AtomicBool::new(false));
         let (thread_stop, period) = (stop.clone(), deps.period);
         let thread = std::thread::spawn(move || {
-            let outcome = run_loop(&resources, &shared, period, &thread_stop);
+            let outcome = run_loop(&resources, &shared, period, &thread_stop, &notify);
             shared.pressed.lock().unwrap().clear();
             *shared.levers.lock().unwrap() = None;
+            *shared.monitor.lock().unwrap() = None;
+            shared.set_paused(false);
+            let _ = shared.set_preview(None);
             let released = resources.release();
             *shared.links.lock().unwrap() = None;
             shared.set_status(match outcome.and(released) {
