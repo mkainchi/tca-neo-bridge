@@ -28,6 +28,7 @@
       <li id="pill-neo" class="pill" data-state="off"><span class="dot"></span><span>Virtual NEO: absent</span></li>
     </ul>
   </header>
+  <section id="warnings" class="warnings" aria-label="Launch warnings" hidden></section>
 
   <nav class="bar" aria-label="Configuration">
     <div class="tabs" role="tablist" aria-label="Configuration sections">
@@ -568,6 +569,67 @@
             </ul>
           </div>
           <p class="help">Either lever can be the forward one. While split, the throttle follows it, with the same response and inversion as normal.</p>
+        </section>
+
+        <section class="panel" aria-labelledby="head-heading">
+          <div class="panel-head">
+            <h2 id="head-heading">Head tracking</h2>
+            <span class="cap">OpenTrack → camera</span>
+          </div>
+          <label class="tog wide"><input type="checkbox" id="head-enabled"><span>Look around with your head: OpenTrack moves the NEO camera</span></label>
+          <p id="head-status" class="well head-status" data-state="off"><span class="dot"></span><span id="head-status-text">Off</span></p>
+          <div class="head-grid">
+            <div class="card">
+              <label for="head-port" class="label">UDP port</label>
+              <span class="unit"><input id="head-port" class="num" type="number" min="1024" max="65535" step="1" inputmode="numeric" aria-describedby="head-error"></span>
+            </div>
+            <div class="card">
+              <label for="head-yaw" class="label">Full look left / right</label>
+              <span class="unit"><input id="head-yaw" class="num short" type="number" min="5" max="180" step="1" inputmode="numeric" aria-describedby="head-error"><span class="mono">°</span></span>
+            </div>
+            <div class="card">
+              <label for="head-pitch" class="label">Full look up / down</label>
+              <span class="unit"><input id="head-pitch" class="num short" type="number" min="5" max="90" step="1" inputmode="numeric" aria-describedby="head-error"><span class="mono">°</span></span>
+            </div>
+            <div class="card">
+              <label for="head-timeout" class="label">Fall back to the hat after</label>
+              <span class="unit"><input id="head-timeout" class="num" type="number" min="100" max="5000" step="50" inputmode="numeric" aria-describedby="head-error"><span class="mono">ms</span></span>
+            </div>
+            <div class="card">
+              <label for="head-deadzone" class="label">Deadzone</label>
+              <span class="unit"><input id="head-deadzone" class="num short" type="number" min="0" max="50" step="1" inputmode="numeric" aria-describedby="head-error"><span class="mono">%</span></span>
+            </div>
+            <div class="card">
+              <label for="head-curve" class="label">Curve</label>
+              <span class="unit"><input id="head-curve" class="num short" type="number" min="-100" max="100" step="1" inputmode="numeric" aria-describedby="head-error"><span class="mono">%</span></span>
+            </div>
+          </div>
+          <p id="head-error" class="error" role="alert"></p>
+          <div class="togs">
+            <label class="tog"><input type="checkbox" id="head-invert-yaw"><span>Invert left / right</span></label>
+            <label class="tog"><input type="checkbox" id="head-invert-pitch"><span>Invert up / down</span></label>
+          </div>
+          <div class="head-view">
+            <svg id="head-view" viewBox="0 0 180 180" role="img" aria-label="Head direction and camera output">
+              <path d="M90 10V170M10 90H170" class="axis-line"></path>
+              <rect id="head-band" x="90" y="90" width="0" height="0" class="band"></rect>
+              <circle id="head-dot" cx="90" cy="90" r="7" class="dot-mark"></circle>
+            </svg>
+            <div class="readouts stacked">
+              <div class="read"><span class="cap">Head yaw</span><b id="head-yaw-read" class="mono">—</b></div>
+              <div class="read"><span class="cap">Head pitch</span><b id="head-pitch-read" class="mono">—</b></div>
+              <div class="read out"><span class="cap">Camera X / Y</span><b id="head-camera-read" class="mono">—</b></div>
+            </div>
+          </div>
+          <p class="help">The hat still works and wins while pressed. The port and turning head tracking on or off take effect when emulation starts.</p>
+          <div class="card">
+            <p class="label">Set up OpenTrack</p>
+            <ol class="steps">
+              <li>Output: <b>UDP over network</b>.</li>
+              <li>Remote IP <span class="mono">127.0.0.1</span>, port <span id="head-port-step" class="mono">4242</span>.</li>
+              <li>Start tracking, then start emulation: the status above turns green.</li>
+            </ol>
+          </div>
         </section>
       </div>
 

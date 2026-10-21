@@ -17,6 +17,7 @@ function defaults() {
     behaviours: { q3: 'pulse_change' }, timing: { pulse_ms: 80, long_ms: 500, double_ms: 250, repeat_ms: 120 },
     long_press: {}, double_tap: {}, shift: null, shifted: { buttons: {}, pov: {} },
     camera: { ramp_ms: 0, full_after_hold: false, lever: false }, yaw_source: 'twist',
+    head_tracking: { enabled: false, port: 4242, yaw_range: 45, pitch_range: 30, invert_yaw: false, invert_pitch: false, timeout_ms: 500, tuning: { ...axis(), deadzone: 0.03 } },
     buttons: { s1: [1], s5: [5], s6: [7], q2: [7], q3: [6] }, pov: { s11: 'up' },
   };
 }
@@ -1258,6 +1259,66 @@ group('cheat sheet', () => {
     expect(document.body.textContent).toContain('Right leverThrottle');
     expect(document.body.textContent).toContain('HatCamera · full after 500 ms hold');
     expect(app.cheatSheet(plain, '<x>', 'd')).toContain('&lt;x&gt;');
+  });
+});
+
+group('reliability', () => {
+  it('shows launch warnings once each and the reconnecting TCA pill', async () => {
+    const api = fakeApi();
+    const original = api.get;
+    api.get = vi.fn(async (path) => (path === '/api/config' ? { ...(await original(path)), warnings: ['Steam was already running.'] } : original(path)));
+    const p = await page(api);
+    expect([$('warnings').hidden, $('warnings').textContent]).toEqual([false, 'Steam was already running.']);
+    expect($('warnings').querySelector('[role=alert] svg')).not.toBeNull();
+    const first = $('warnings').firstChild;
+    p.live({ pressed: [], status: 'Emulating', links: LINKS, warnings: ['Steam was already running.'] });
+    expect($('warnings').firstChild).toBe(first); // unchanged: not re-announced
+    p.live({ pressed: [], status: 'Emulating', links: { ...LINKS, tca: false } });
+    expect([$('warnings').hidden, $('pill-tca').textContent, $('pill-tca').dataset.state]).toEqual([true, 'TCA: reconnecting…', 'busy']);
+    expect(app.pills('Idle', null).tca).toEqual(['off', 'TCA: not open']);
+  });
+});
+
+group('head tracking', () => {
+  it('reports its state and previews the camera through the draft settings', async () => {
+    const api = fakeApi();
+    const p = await page(api);
+    expect([$('head-status').dataset.state, $('head-status-text').textContent, $('head-yaw-read').textContent]).toEqual(['off', 'Off', '—']);
+    $('head-enabled').checked = true;
+    fire($('head-enabled'));
+    expect([p.config.head_tracking.enabled, $('head-status-text').textContent]).toEqual([true, 'Starts with emulation']);
+    p.live({ pressed: [], status: 'Emulating', links: LINKS, monitor: monitor() });
+    expect($('head-status-text').textContent).toBe('Waiting for OpenTrack on UDP port 4242…');
+    p.live({ pressed: [], status: 'Emulating', links: LINKS, monitor: monitor({ head: [22.5, -15] }) });
+    expect([$('head-status').dataset.state, $('head-status-text').textContent]).toEqual(['ok', 'Receiving from OpenTrack']);
+    expect([$('head-yaw-read').textContent, $('head-pitch-read').textContent]).toEqual(['+23°', '−15°']);
+    const [x, y] = app.headCamera([22.5, -15], p.config.head_tracking);
+    expect($('head-camera-read').textContent).toBe(`${app.signed(x)} / ${app.signed(y)}`);
+    expect($('head-dot').getAttribute('cx')).toBe((90 + x * 80).toFixed(1));
+    expect($('head-view').getAttribute('aria-label')).toBe(`Camera at ${app.signed(x)} across, ${app.signed(y)} down`);
+    p.live({ pressed: [], status: 'Emulating', links: LINKS, monitor: monitor({ head: [0, 0] }) });
+    expect($('head-yaw-read').textContent).toBe('0°');
+    // Inverts and settings change the preview straight away.
+    for (const id of ['head-invert-yaw', 'head-invert-pitch']) {
+      $(id).checked = true;
+      fire($(id));
+    }
+    expect([p.config.head_tracking.invert_yaw, p.config.head_tracking.invert_pitch]).toEqual([true, true]);
+    expect(app.headCamera([22.5, -15], p.config.head_tracking)).toEqual([-x, -y]);
+    $('head-deadzone').value = '10';
+    fire($('head-deadzone'));
+    expect([p.config.head_tracking.tuning.deadzone, $('head-band').getAttribute('width')]).toEqual([0.1, '16.0']);
+    $('head-port').value = '5000';
+    fire($('head-port'));
+    expect([p.config.head_tracking.port, $('head-port-step').textContent]).toEqual([5000, '5000']);
+    // Validation and saving.
+    $('head-yaw').value = '500';
+    await p.save();
+    expect($('head-error').textContent).toBe('Enter a number from 5 to 180.');
+    $('head-yaw').value = '60';
+    $('head-curve').value = '25';
+    await p.save();
+    expect(api.calls.at(-1)[2].head_tracking).toMatchObject({ enabled: true, port: 5000, yaw_range: 60, invert_yaw: true, tuning: { deadzone: 0.1, curve: 0.25 } });
   });
 });
 

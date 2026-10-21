@@ -63,6 +63,8 @@ pub struct Shared {
     pub levers: Mutex<Option<[f64; 2]>>,
     pub status: Mutex<Status>,
     pub links: Mutex<Option<Links>>,
+    /// Launch-order warnings from the last start (Steam running, Steam Input on).
+    pub warnings: Mutex<Vec<String>>,
     /// Tray balloons waiting to be shown (profile switches from the TCA, for example).
     pub notices: Mutex<VecDeque<Notice>>,
     /// Private diagnostics (status changes, panics). Never contains device paths or serials.
@@ -89,6 +91,7 @@ impl Shared {
             status: Mutex::new(Status::Idle),
             links: Mutex::new(None),
             notices: Mutex::new(VecDeque::new()),
+            warnings: Mutex::new(Vec::new()),
             log: None,
         }
     }

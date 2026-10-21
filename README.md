@@ -110,6 +110,18 @@ The header shows the daemon status and, while emulating, whether the TCA is open
 
 Profiles saved by version 0.2.x are upgraded when loaded: their single deadzone becomes each axis's deadzone, and every control keeps holding its NEO button as before.
 
+### Head tracking
+
+Under *Axes and settings*, **Head tracking** lets you look around with your head through [OpenTrack](https://github.com/opentrack/opentrack) (TrackIR, a webcam or a phone). In OpenTrack, set the output to **UDP over network**, remote IP `127.0.0.1` and the port shown (4242 by default), and start tracking. The bridge listens on this computer only. Head yaw and pitch move the NEO camera through their own deadzone and curve, with full deflection at the look ranges you set; invert either if it moves the wrong way. The hat still works and wins while pressed, and without OpenTrack data for the fall-back time the camera returns to the hat. The status line shows whether data arrives. The port and turning it on or off take effect when emulation starts.
+
+### If the TCA disconnects
+
+The virtual NEO stays, so the game keeps its controller. Every control is released at once, a tray balloon says so, the header pill shows **TCA: reconnecting…**, and the bridge looks for the TCA every second. When it returns, even on another USB port, it is hidden from the game again and a balloon confirms it; with safe start on, move the throttle to centre once. Emulation stops only if the returning TCA cannot be hidden again.
+
+### Launch warnings
+
+When emulation starts, the bridge checks the launch order and warns, without changing anything, if Steam was already running or Steam Input is on for ACE COMBAT 8. The warnings appear as tray balloons and as a banner on the configuration page.
+
 ### Live tab
 
 ![Live tab: raw TCA input next to what the NEO receives, with the profile menu open](docs/images/live.png)
@@ -168,7 +180,10 @@ Run `neo-daemon.exe --data <folder>` to use another folder.
 | A control is "stuck" | A quadrant switch set to **Hold** is resting in an active position. Set its **Behaviour** to **Pulse on change** on the Mapping tab; see *Default mapping*. |
 | The throttle does nothing after starting | Safe start is waiting: move the throttle lever (or the sidestick slider) to centre once. |
 | The aircraft is too twitchy or too sluggish | Tune that axis's curve and deadzone on *Axes and settings*. Try them with **Try in game**, then save. |
-| The game sees the TCA devices as well | Start emulation **before** starting Steam and the game. |
+| The game sees the TCA devices as well | Start emulation **before** starting Steam and the game. The page warns when Steam was already running. |
+| "Steam Input is on for ACE COMBAT 8" | In Steam, open the game's **Properties › Controller** and choose **Disable Steam Input**. |
+| "Head tracking could not listen on UDP port …" | Another program uses that port. Choose another port in *Head tracking* and in OpenTrack, then start emulation again. |
+| The camera moves the wrong way with head tracking | Turn on **Invert left / right** or **Invert up / down**. |
 | Something else | Check `neo-daemon.log` and `driver-install.log` (see *Files and data*), then [open an issue](https://github.com/mkainchi/tca-neo-bridge/issues/new) and attach both. |
 
 ## Uninstall

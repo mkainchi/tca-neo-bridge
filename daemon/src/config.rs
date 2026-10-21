@@ -214,6 +214,29 @@ pub struct Camera {
     pub lever: bool,
 }
 
+/// Head tracking from OpenTrack's "UDP over network" output on 127.0.0.1: head yaw and pitch (degrees, full look at
+/// the ranges) move the camera through `tuning`. The hat wins while pressed; without a sample for `timeout_ms` the
+/// camera falls back to the hat. Port and enabling take effect when emulation starts.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeadTracking {
+    pub enabled: bool,
+    pub port: u16,
+    pub yaw_range: f64,
+    pub pitch_range: f64,
+    pub invert_yaw: bool,
+    pub invert_pitch: bool,
+    pub timeout_ms: u32,
+    pub tuning: AxisTuning,
+}
+
+impl Default for HeadTracking {
+    fn default() -> Self {
+        let tuning = AxisTuning { deadzone: 0.03, ..AxisTuning::default() };
+        Self { enabled: false, port: 4242, yaw_range: 45.0, pitch_range: 30.0, invert_yaw: false, invert_pitch: false, timeout_ms: 500, tuning }
+    }
+}
+
 /// What drives NEO yaw: the sidestick twist, nothing, or the difference between the two quadrant levers.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -281,6 +304,8 @@ pub struct Config {
     pub camera: Camera,
     #[serde(default)]
     pub yaw_source: YawSource,
+    #[serde(default)]
+    pub head_tracking: HeadTracking,
     pub buttons: BTreeMap<String, Vec<u8>>,
     pub pov: BTreeMap<String, Direction>,
 }
@@ -318,6 +343,7 @@ pub fn defaults() -> Config {
         shifted: Layer::default(),
         camera: Camera::default(),
         yaw_source: YawSource::Twist,
+        head_tracking: HeadTracking::default(),
         buttons: buttons.iter().map(|(k, v)| (k.to_string(), vec![*v])).collect(),
         pov: BTreeMap::new(),
     }
@@ -417,6 +443,11 @@ pub fn validate(config: &Config) -> Result<(), String> {
     }
     config.pov.keys().chain(config.shifted.pov.keys()).try_for_each(|key| known(key))?;
     config.shift.iter().try_for_each(|key| known(key))?;
+    let head = &config.head_tracking;
+    if head.port < 1024 || !within(head.yaw_range, 5.0, 180.0) || !within(head.pitch_range, 5.0, 90.0) || !(100..=5000).contains(&head.timeout_ms) {
+        return Err("Head tracking needs a port from 1024, look ranges of 5 to 180° (yaw) and 5 to 90° (pitch), and a 100 to 5000 ms timeout.".into());
+    }
+    validate_axis("Head tracking", &head.tuning)?;
     if config.camera.ramp_ms > 2000 {
         return Err("Camera ramp must be at most 2000 ms.".into());
     }

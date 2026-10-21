@@ -684,3 +684,29 @@ fn next_profile_combo_and_monitor_report_what_is_sent() {
     let monitor = mapper.monitor().unwrap();
     assert_eq!((monitor.shift, monitor.buttons, monitor.pov), (true, 0b1001, 0)); // S1 → NEO 1, S16 → NEO 4, S11 → POV up
 }
+
+#[test]
+fn head_tracking_moves_the_camera_unless_the_hat_is_pressed() {
+    let mut cfg = research();
+    cfg.head_tracking.enabled = true;
+    cfg.head_tracking.tuning = config::AxisTuning { deadzone: 0.0, ..config::AxisTuning::default() };
+    let camera = |mapper: &mut Mapper, hat: u8, head: Option<[f64; 2]>| {
+        let (axes, _, _) = fields(&mapper.head(head).convert(Some(&stick(8192, 8192, 128, 128, hat, &[])), Some(&quadrant(32768, 32768, &[]))));
+        (axes[3], axes[4])
+    };
+    let mut mapper = Mapper::new(&cfg);
+    // Half the yaw range right, a full look up (camera up is negative Ry); beyond the range is full deflection.
+    assert_eq!(camera(&mut mapper, 8, Some([22.5, 30.0])), (unit16(0.5), 0));
+    assert_eq!(camera(&mut mapper, 8, Some([-90.0, -60.0])), (0, 65535));
+    assert_eq!(mapper.monitor().unwrap().head, Some([-90.0, -60.0]));
+    assert_eq!(camera(&mut mapper, 2, Some([-90.0, 0.0])), (65535, 32768)); // the hat (right) wins
+    assert_eq!(camera(&mut mapper, 8, None), (32768, 32768)); // no fresh sample: the hat, centred
+    cfg.head_tracking.invert_yaw = true;
+    cfg.head_tracking.invert_pitch = true;
+    mapper.reconfigure(&cfg);
+    assert_eq!(camera(&mut mapper, 8, Some([22.5, 30.0])), (unit16(-0.5), 65535));
+    cfg.head_tracking.enabled = false;
+    mapper.reconfigure(&cfg);
+    assert_eq!(camera(&mut mapper, 8, Some([22.5, 30.0])), (32768, 32768));
+    assert_eq!(mapper.monitor().unwrap().head, None);
+}

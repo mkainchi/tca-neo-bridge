@@ -211,6 +211,12 @@ impl Tray {
             data.dwInfoFlags = if notice.error { 3 } else { 1 }; // NIIF_ERROR / NIIF_INFO
             ffi::fill(&mut data.szInfoTitle, notice.title);
             ffi::fill(&mut data.szInfo, &notice.text);
+            // SAFETY: as below. A notice takes this refresh: the next one shows what else waits (notices, an error).
+            unsafe {
+                (self.api.notify_icon)(NIM_MODIFY, &data);
+                (self.api.post_message)(self.hwnd, WM_STATUS, 0, 0);
+            }
+            return;
         } else if let Status::Error(message) = &status {
             if self.shown.as_ref() != Some(&status) {
                 data.uFlags |= NIF_INFO;

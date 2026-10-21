@@ -449,6 +449,27 @@ button.nrow:hover { background: var(--raise); }
   .cheatsheet tr { break-inside: avoid; }
 }
 
+/* Launch warnings under the header */
+.warnings { display: flex; flex-direction: column; gap: 8px; padding: 12px 24px; background: var(--bar); border-bottom: 1px solid var(--line); }
+.warning { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border-radius: 3px; border: 1px solid rgb(245 158 11 / .5); background: rgb(245 158 11 / .08); font-size: 13px; color: var(--soft); }
+.warning svg { flex: none; margin-top: 2px; fill: none; stroke: var(--warn); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Head tracking */
+.head-status { color: var(--muted); }
+.head-status[data-state=ok] { color: var(--white); border-color: rgb(16 185 129 / .5); }
+.head-status[data-state=ok] .dot { background: var(--ok); }
+.head-status[data-state=wait] .dot { background: var(--warn); }
+.head-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.head-grid .card { gap: 8px; justify-content: space-between; }
+.head-grid .label { font-size: 13px; }
+.head-view { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 16px; align-items: center; }
+.head-view svg { display: block; width: 180px; height: 180px; border-radius: var(--radius); background: var(--ground); border: 1px solid var(--line-2); }
+.head-view .axis-line { stroke: var(--line); fill: none; }
+.head-view .band { fill: rgb(245 158 11 / .15); }
+.head-view .dot-mark { fill: var(--white); stroke: var(--accent); stroke-width: 2; }
+.readouts.stacked { grid-template-columns: minmax(0, 1fr); }
+.steps { display: flex; flex-direction: column; gap: 6px; margin: 0; padding-left: 20px; font-size: 13px; color: var(--soft); list-style: decimal; }
+
 /* Narrower windows: TCA views stack; then the editor comes before the diagrams */
 @media (max-width: 1800px) {
   .row-link { grid-template-columns: minmax(0, .9fr) minmax(0, 1fr) minmax(300px, 1fr); }
@@ -464,6 +485,9 @@ button.nrow:hover { background: var(--raise); }
   .graph svg { max-width: none; }
   .detents { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .live-axis { grid-template-columns: 96px minmax(0, 1fr) 52px; }
+  .head-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .head-view { grid-template-columns: minmax(0, 1fr); }
+  .warnings { padding: 12px 16px; }
   .neo-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) {

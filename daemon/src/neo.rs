@@ -182,6 +182,8 @@ pub struct Monitor {
     /// NEO buttons 1..15 as bits 0..14, and the POV (8 when centred), as sent.
     pub buttons: u16,
     pub pov: u8,
+    /// The head-tracking sample (degrees) the camera used this frame.
+    pub head: Option<[f64; 2]>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -237,6 +239,8 @@ pub struct Mapper {
     smoothed: [Option<f64>; 3],
     /// When the hat started moving the camera, for the ramp and full strength after a long press.
     hat_since: Option<Duration>,
+    /// Head yaw and pitch in degrees from head tracking, when a fresh sample exists.
+    head: Option<[f64; 2]>,
     now: Duration,
     events: Vec<Event>,
     monitor: Option<Monitor>,
@@ -263,6 +267,7 @@ impl Mapper {
             start_side: None,
             smoothed: [None; 3],
             hat_since: None,
+            head: None,
             now: Duration::ZERO,
             events: Vec::new(),
             monitor: None,
@@ -304,11 +309,18 @@ impl Mapper {
         next.start_side = self.start_side;
         next.smoothed = self.smoothed;
         next.hat_since = self.hat_since;
+        next.head = self.head;
         next.now = self.now;
         *self = next;
     }
 
     /// Time of the next frame, for pulses (any monotonic clock).
+    /// The head-tracking sample for the next frame (None: no fresh data).
+    pub fn head(&mut self, sample: Option<[f64; 2]>) -> &mut Self {
+        self.head = sample;
+        self
+    }
+
     pub fn at(&mut self, now: Duration) -> &mut Self {
         self.now = now;
         self
@@ -496,7 +508,14 @@ impl Mapper {
         };
         // The hat wins over the spare-lever camera while it is pressed.
         let deflection = self.camera(camera);
-        let (camera_x, camera_y) = if camera == (0, 0) && self.config.camera.lever {
+        // Camera sources by priority: the hat, then head tracking, then the spare lever.
+        let tracking = &self.config.head_tracking;
+        let head = self.head.filter(|_| camera == (0, 0) && tracking.enabled);
+        let (camera_x, camera_y) = if let Some([yaw, pitch]) = head {
+            let sign = |invert: bool| if invert { -1.0 } else { 1.0 };
+            // Looking up (positive pitch) is camera up, which the NEO reports as negative Ry.
+            (shape(sign(tracking.invert_yaw) * yaw / tracking.yaw_range, &tracking.tuning), shape(-sign(tracking.invert_pitch) * pitch / tracking.pitch_range, &tracking.tuning))
+        } else if camera == (0, 0) && self.config.camera.lever {
             (shape(2.0 * positions[1 - lever_index] - 1.0, &CAMERA_LEVER) * self.config.camera_strength, 0.0)
         } else {
             (f64::from(camera.0) * deflection, f64::from(camera.1) * deflection)
@@ -545,6 +564,7 @@ impl Mapper {
             shift: shifted,
             buttons,
             pov: hat,
+            head,
         });
         input_report(axes, buttons, hat)
     }

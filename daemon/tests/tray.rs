@@ -234,12 +234,22 @@ fn apis() -> Apis {
         driver: driver_api(),
         runner: neo_daemon::hidhide::real_runner,
         pnputil: fake_pnputil,
+        launch: fake_launch,
+        system32: temp("system32"),
         program_files: temp("no-hidhide"),
         local_app_data: Some(temp("localappdata")),
         pipe_name: "p".into(),
         bind: "127.0.0.1:0".into(),
         period: Duration::from_millis(1),
     }
+}
+
+/// tasklist reports Steam running; reg has no Steam folder.
+fn fake_launch() -> neo_daemon::process::Runner {
+    Box::new(|tool: &std::path::Path, _: &[String]| match tool.file_name().unwrap().to_str().unwrap() {
+        "tasklist.exe" => Ok((Some(0), "\"steam.exe\",\"1234\"".into())),
+        _ => Ok((Some(1), String::new())),
+    })
 }
 
 fn fake_pnputil() -> neo_daemon::process::Runner {
@@ -281,6 +291,7 @@ fn default_data_lives_in_local_app_data_whatever_the_launch_folder() {
     assert_eq!(app::default_data(Some(&base), &exe), base.join("tca-neo-bridge"));
     assert_eq!(app::default_data(None, &exe), PathBuf::from(r"C:\Tools\tca-neo-bridge\data"));
     let _ = app::pnputil_runner();
+    let _ = app::launch_runner();
 }
 #[test]
 fn token_requires_system_randomness() {
@@ -451,6 +462,8 @@ fn installed_tray(source: Source) -> std::sync::Arc<neo_daemon::shared::Shared> 
         hiding: Box::new(|| Err("Install HidHide before emulating.".into())),
         period: Duration::from_millis(1),
         device_timeout: Duration::from_millis(20),
+        retry: Duration::from_millis(5),
+        checks: Box::new(|| vec![neo_daemon::launch::STEAM_INPUT.to_string()]),
     };
     let notify: neo_daemon::emulation::Notify = std::sync::Arc::new(|| unsafe {
         post_message(42, WM_STATUS, 0, 0);
@@ -520,8 +533,12 @@ fn menu_commands_errors_balloons_and_busy_quit() {
     wait_status(&shared, |s| matches!(s, Status::Error(_)));
     send(WM_STATUS, 0, 0);
     send(WM_STATUS, 0, 0);
-    let balloons = ui().icons.iter().filter(|i| i.1 & 0x10 != 0).count();
-    assert_eq!(balloons, 1);
+    send(WM_STATUS, 0, 0);
+    // Every start also checks the launch order: here Steam Input is reported, once per start.
+    let balloons: Vec<String> = ui().icons.iter().filter(|i| i.1 & 0x10 != 0).map(|i| i.3.clone()).collect();
+    assert_eq!(balloons.iter().filter(|text| text.contains("ACE COMBAT 8, so Steam remaps")).count(), 2);
+    assert_eq!(balloons.len(), 3); // two launch warnings and the start error, shown once
+    assert_eq!(*shared.warnings.lock().unwrap(), [neo_daemon::launch::STEAM_INPUT]);
     // Quit is refused while busy.
     shared.set_status(Status::Starting);
     send(WM_COMMAND, ID_QUIT, 0);

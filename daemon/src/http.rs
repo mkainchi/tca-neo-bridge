@@ -95,7 +95,7 @@ pub fn handle(request: &Request, shared: &Shared, port: u16, token: &str) -> Res
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/api/config") => {
             let (_, current) = shared.config();
-            json_reply(200, json!({"config": current, "defaults": config::defaults(), "status": shared.status().label(), "links": *shared.links.lock().unwrap(), "profile": shared.config_path.display().to_string(), "preview": *shared.preview.lock().unwrap()}))
+            json_reply(200, json!({"config": current, "defaults": config::defaults(), "status": shared.status().label(), "links": *shared.links.lock().unwrap(), "profile": shared.config_path.display().to_string(), "preview": *shared.preview.lock().unwrap(), "warnings": *shared.warnings.lock().unwrap()}))
         }
         ("PUT", "/api/config") => match config::parse(&request.body).and_then(|c| shared.save(c)) {
             Ok(()) => json_reply(200, json!({"saved": true, "running": shared.status().running()})),
@@ -121,7 +121,7 @@ pub fn handle(request: &Request, shared: &Shared, port: u16, token: &str) -> Res
         (method, path) if path.starts_with("/api/profiles/") => profile_route(method, &path["/api/profiles/".len()..], shared),
         ("GET", "/api/live") => json_reply(
             200,
-            json!({"pressed": *shared.pressed.lock().unwrap(), "levers": *shared.levers.lock().unwrap(), "monitor": *shared.monitor.lock().unwrap(), "paused": shared.paused(), "preview": shared.previewing(), "status": shared.status().label(), "links": *shared.links.lock().unwrap()}),
+            json!({"pressed": *shared.pressed.lock().unwrap(), "levers": *shared.levers.lock().unwrap(), "monitor": *shared.monitor.lock().unwrap(), "paused": shared.paused(), "preview": shared.previewing(), "warnings": *shared.warnings.lock().unwrap(), "status": shared.status().label(), "links": *shared.links.lock().unwrap()}),
         ),
         _ => json_reply(404, json!({"error": "Unknown request."})),
     }

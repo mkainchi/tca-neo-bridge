@@ -100,6 +100,14 @@ export const AXES = ['roll', 'pitch', 'yaw'];
 /** Button combos: [page id prefix, profile field, name in messages]. */
 const COMBOS = [['pause', 'pause', 'pause'], ['next', 'next_profile', 'next-profile']];
 const TABS = ['tab-mapping', 'tab-settings', 'tab-live'];
+const HEAD_TOGGLES = [['head-enabled', 'enabled'], ['head-invert-yaw', 'invert_yaw'], ['head-invert-pitch', 'invert_pitch']];
+const WARNING_ICON = '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M10 3 18 17H2Z"/><path d="M10 8v4M10 14.5v.5"/></svg>';
+
+/** Camera deflection (-1..1, NEO convention: up is negative Y) from a head sample, as the daemon computes it. */
+export function headCamera([yaw, pitch], tracking) {
+  const sign = (invert) => (invert ? -1 : 1);
+  return [shape((sign(tracking.invert_yaw) * yaw) / tracking.yaw_range, tracking.tuning), shape((-sign(tracking.invert_pitch) * pitch) / tracking.pitch_range, tracking.tuning)];
+}
 const AXIS_NAMES = { roll: 'Roll', pitch: 'Pitch', yaw: 'Yaw' };
 
 /** One axis value in -1..1 through deadzone, saturation, curve and anti-deadzone (same as neo::shape). */
@@ -273,7 +281,7 @@ export function pills(status, links) {
   const validation = links?.source === 'validation';
   return {
     status: state,
-    tca: validation ? ['busy', 'Source: validation stream'] : links?.tca ? ['ok', 'TCA: sidestick + quadrant open'] : ['off', 'TCA: not open'],
+    tca: validation ? ['busy', 'Source: validation stream'] : links?.tca ? ['ok', 'TCA: sidestick + quadrant open'] : links ? ['busy', 'TCA: reconnecting…'] : ['off', 'TCA: not open'],
     hidhide: links?.hidden ? ['ok', 'HidHide: TCA hidden'] : ['off', validation ? 'HidHide: not needed' : 'HidHide: off'],
     neo: links?.virtual_neo ? ['ok', 'Virtual NEO present'] : ['off', 'Virtual NEO: absent'],
   };
@@ -345,6 +353,7 @@ export class Page {
       this.mark(true, 'Unsaved changes · running in game now.');
     }
     this.status(data.status, data.links);
+    this.warnings(data.warnings);
     this.render();
     this.renderSettings();
     try {
@@ -1036,9 +1045,16 @@ export class Page {
     'precision-scale': ['precision', 'scale', 10, 100],
     'split-forward': ['split_high_g', 'forward', 0, 100],
     'split-back': ['split_high_g', 'back', 0, 100],
+    'head-port': ['head_tracking', 'port', 1024, 65535, 'head-error', 1],
+    'head-yaw': ['head_tracking', 'yaw_range', 5, 180, 'head-error', 1],
+    'head-pitch': ['head_tracking', 'pitch_range', 5, 90, 'head-error', 1],
+    'head-timeout': ['head_tracking', 'timeout_ms', 100, 5000, 'head-error', 1],
+    'head-deadzone': ['head', 'deadzone', 0, 50, 'head-error'],
+    'head-curve': ['head', 'curve', -100, 100, 'head-error'],
   };
 
   group(name) {
+    if (name === 'head') return this.config.head_tracking.tuning;
     return name === 'axis' ? this.config.axes[this.axis] : name ? this.config[name] : this.config;
   }
 
@@ -1050,6 +1066,7 @@ export class Page {
     for (const axis of ['roll', 'pitch', 'yaw', 'throttle']) this.$(`invert-${axis}`).checked = config.invert[axis];
     this.$('safe-start').checked = config.safe_start;
     this.$('camera-full').checked = config.camera.full_after_hold;
+    for (const [id, key] of HEAD_TOGGLES) this.$(id).checked = config.head_tracking[key];
     this.leverUsers();
     this.fill();
   }
@@ -1115,6 +1132,7 @@ export class Page {
     else if (name.startsWith('invert-')) this.config.invert[name.slice(7)] = target.checked;
     else if (name === 'safe-start') this.config.safe_start = target.checked;
     else if (name === 'camera-full') this.config.camera.full_after_hold = target.checked;
+    else if (name.startsWith('head-') && target.type === 'checkbox') this.config.head_tracking[HEAD_TOGGLES.find(([id]) => id === name)[1]] = target.checked;
     else if (name === 'split-enabled') {
       this.config.split_high_g.enabled = target.checked;
       if (target.checked) text = this.exclusive('split');
@@ -1299,9 +1317,49 @@ export class Page {
     this.$('tune-lag').textContent = delay ? `≈ ${delay} ms added delay` : 'No added delay';
     this.renderThrottle();
     this.renderCamera();
+    this.renderHead();
     this.renderHelpers();
     this.$('try-live').checked = this.previewing;
     this.$('pill-preview').hidden = !this.previewing;
+  }
+
+  /** Launch-order warnings from the daemon, one alert each; the banner hides when there are none. */
+  warnings(list = []) {
+    const banner = this.$('warnings');
+    if (banner.dataset.text === list.join('\n')) return;
+    banner.dataset.text = list.join('\n');
+    banner.hidden = !list.length;
+    banner.replaceChildren(...list.map((text) => {
+      const item = this.doc.createElement('p');
+      item.className = 'warning';
+      item.setAttribute('role', 'alert');
+      item.innerHTML = `${WARNING_ICON}<span></span>`;
+      item.lastChild.textContent = text;
+      return item;
+    }));
+  }
+
+  /** Head tracking: whether samples arrive, and where the latest one puts the camera through the draft settings. */
+  renderHead() {
+    const tracking = this.config.head_tracking;
+    const sample = this.monitor?.head ?? null;
+    const [state, text] = !tracking.enabled ? ['off', 'Off']
+      : sample ? ['ok', 'Receiving from OpenTrack']
+        : this.emulating ? ['wait', `Waiting for OpenTrack on UDP port ${tracking.port}…`]
+          : ['wait', 'Starts with emulation'];
+    this.$('head-status').dataset.state = state;
+    this.$('head-status-text').textContent = text;
+    this.$('head-port-step').textContent = String(tracking.port);
+    const band = 80 * tracking.tuning.deadzone;
+    for (const [attribute, value] of [['x', 90 - band], ['y', 90 - band], ['width', 2 * band], ['height', 2 * band]]) this.$('head-band').setAttribute(attribute, value.toFixed(1));
+    const [x, y] = sample ? headCamera(sample, tracking) : [0, 0];
+    this.$('head-dot').setAttribute('cx', (90 + x * 80).toFixed(1));
+    this.$('head-dot').setAttribute('cy', (90 + y * 80).toFixed(1));
+    this.$('head-view').setAttribute('aria-label', sample ? `Camera at ${signed(x)} across, ${signed(y)} down` : 'No head-tracking data');
+    const degrees = (value) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(Math.round(value))}°`;
+    this.$('head-yaw-read').textContent = sample ? degrees(sample[0]) : '—';
+    this.$('head-pitch-read').textContent = sample ? degrees(sample[1]) : '—';
+    this.$('head-camera-read').textContent = sample ? `${signed(x)} / ${signed(y)}` : '—';
   }
 
   /** Camera ramp graph and help, and the yaw source help, from the draft. */
@@ -1450,6 +1508,7 @@ export class Page {
    */
   live(data) {
     this.status(data.status, data.links);
+    this.warnings(data.warnings);
     this.emulating = Boolean(data.links);
     this.monitor = data.monitor ?? null;
     this.$('pill-paused').hidden = !data.paused;

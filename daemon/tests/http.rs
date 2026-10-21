@@ -76,7 +76,7 @@ fn routes_assets_tokens_and_host_checks() {
     shared.set_status(Status::Emulating);
     assert_eq!(
         json(&get("/api/live", "secret").body),
-        serde_json::json!({"pressed": ["s5"], "levers": null, "monitor": null, "paused": false, "preview": false, "status": "Emulating", "links": null})
+        serde_json::json!({"pressed": ["s5"], "levers": null, "monitor": null, "paused": false, "preview": false, "warnings": [], "status": "Emulating", "links": null})
     );
     shared.set_paused(true);
     let mut mapper = neo_daemon::neo::Mapper::new(&config::defaults());
