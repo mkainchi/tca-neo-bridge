@@ -259,6 +259,23 @@ fn tca_session_maps_hot_reloads_and_releases_on_disconnect() {
     wait_until(|| state().frames.iter().any(|f| protocol::parse(f) == Some(neo::neutral())));
     assert!(state().frames.iter().all(|f| protocol::parse(f) == Some(neo::neutral())));
     state().reads.insert(0, [Read::Data(stick_report(1, 0))].into());
+    // The next-profile combo (s4): without saved profiles it explains why; with one it switches to it.
+    shared.set_paused(false);
+    let mut cycling = config::defaults();
+    cycling.combos.next_profile = vec!["s4".into()];
+    shared.set_preview(Some(cycling)).unwrap();
+    state().reads.insert(0, [Read::Data(stick_report(8, 0))].into());
+    wait_until(|| shared.notices.lock().unwrap().len() == 1);
+    assert_eq!(shared.take_notice().map(|n| (n.title, n.error)), Some(("Profile not switched", true)));
+    state().reads.insert(0, [Read::Data(stick_report(0, 0))].into());
+    wait_until(|| shared.pressed.lock().unwrap().is_empty());
+    let mut night = config::defaults();
+    night.axes.roll.curve = 0.25;
+    neo_daemon::profiles::save(&shared.profiles_dir(), "Night", &night).unwrap();
+    state().reads.insert(0, [Read::Data(stick_report(8, 0))].into());
+    wait_until(|| shared.notices.lock().unwrap().len() == 1);
+    assert_eq!(shared.take_notice().map(|n| n.text), Some("Now flying with Night.".into()));
+    assert_eq!((shared.config().1, shared.previewing()), (night, false));
     let mut hat_up = stick_report(1, 0);
     hat_up[7] = 0;
     state().reads.insert(0, [Read::Data(hat_up)].into());

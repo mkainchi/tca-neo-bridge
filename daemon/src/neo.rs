@@ -160,7 +160,11 @@ pub fn detent(travel: f64, throttle: &Throttle) -> f64 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
     TogglePause,
+    NextProfile,
 }
+
+/// Button combos and the event each raises when completed.
+const COMBO_EVENTS: [Event; 2] = [Event::TogglePause, Event::NextProfile];
 
 /// Raw inputs (axes -1..1, lever travel 0..1) next to what the NEO receives, for the page's live previews.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -173,6 +177,11 @@ pub struct Monitor {
     pub axes: [u16; 7],
     pub armed: bool,
     pub precision: bool,
+    /// The shift control is held.
+    pub shift: bool,
+    /// NEO buttons 1..15 as bits 0..14, and the POV (8 when centred), as sent.
+    pub buttons: u16,
+    pub pov: u8,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -219,8 +228,9 @@ pub struct Mapper {
     /// False until the first complete frame: sources already down then (a latched switch) are not edges.
     primed: bool,
     precision: Option<usize>,
-    pause: u64,
-    pause_held: bool,
+    /// Source masks of the pause and next-profile combos (0: off), and whether each was complete last frame.
+    combos: [u64; 2],
+    combos_held: [bool; 2],
     throttle: ThrottleSelector,
     armed: bool,
     start_side: Option<bool>,
@@ -246,8 +256,8 @@ impl Mapper {
             states: [SourceState::default(); SOURCES],
             primed: false,
             precision: config.precision.source.as_deref().map(slot),
-            pause: config.combos.pause.iter().fold(0, |mask, key| mask | 1 << slot(key)),
-            pause_held: false,
+            combos: [&config.combos.pause, &config.combos.next_profile].map(|keys| keys.iter().fold(0, |mask, key| mask | 1 << slot(key))),
+            combos_held: [false; 2],
             throttle: ThrottleSelector::default(),
             armed: !config.safe_start,
             start_side: None,
@@ -288,7 +298,7 @@ impl Mapper {
         let mut next = Mapper::new(config);
         next.states = self.states;
         next.primed = self.primed;
-        next.pause_held = self.pause_held;
+        next.combos_held = self.combos_held;
         next.throttle = self.throttle.clone();
         next.armed |= self.armed;
         next.start_side = self.start_side;
@@ -435,14 +445,16 @@ impl Mapper {
             for (slot, state) in self.states.iter_mut().enumerate() {
                 state.down = pressed >> slot & 1 == 1;
             }
-            self.pause_held = self.pause != 0 && pressed & self.pause == self.pause;
+            self.combos_held = self.combos.map(|mask| mask != 0 && pressed & mask == mask);
             self.primed = true;
         }
-        let combo = self.pause != 0 && pressed & self.pause == self.pause;
-        if combo && !self.pause_held {
-            self.events.push(Event::TogglePause);
+        for (index, mask) in self.combos.into_iter().enumerate() {
+            let complete = mask != 0 && pressed & mask == mask;
+            if complete && !self.combos_held[index] {
+                self.events.push(COMBO_EVENTS[index]);
+            }
+            self.combos_held[index] = complete;
         }
-        self.pause_held = combo;
         let precise = self.precision.is_some_and(|slot| pressed >> slot & 1 == 1);
         let scale = if precise { self.config.precision.scale } else { 1.0 };
 
@@ -530,6 +542,9 @@ impl Mapper {
             axes,
             armed: self.armed,
             precision: precise,
+            shift: shifted,
+            buttons,
+            pov: hat,
         });
         input_report(axes, buttons, hat)
     }

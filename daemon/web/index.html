@@ -33,8 +33,30 @@
     <div class="tabs" role="tablist" aria-label="Configuration sections">
       <button id="tab-mapping" class="tab" role="tab" type="button" aria-selected="true" aria-controls="panel-mapping">Mapping</button>
       <button id="tab-settings" class="tab" role="tab" type="button" aria-selected="false" aria-controls="panel-settings" tabindex="-1">Axes and settings</button>
+      <button id="tab-live" class="tab" role="tab" type="button" aria-selected="false" aria-controls="panel-live" tabindex="-1">Live</button>
     </div>
-    <p class="mono path">Profile · <span id="profile-path">config.json</span> · changes apply immediately</p>
+    <div class="profile-bar">
+      <span class="cap" id="profile-label">Profile</span>
+      <button id="profile-picker" class="picker mono" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="profile-menu" aria-describedby="profile-label"><span id="profile-name">Unsaved profile</span><svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5"/></svg></button>
+      <button id="print" class="btn quiet" type="button">Print cheat sheet</button>
+      <div id="profile-menu" class="menu" hidden>
+        <p class="cap" id="profiles-heading">Switch profile</p>
+        <ul id="profile-list" class="profile-list" aria-labelledby="profiles-heading"></ul>
+        <p id="profiles-empty" class="help">No saved profiles yet. Save the current one under a name.</p>
+        <form id="save-as" class="save-as" novalidate>
+          <label for="profile-new" class="sr">New profile name</label>
+          <input id="profile-new" class="text mono" type="text" maxlength="40" placeholder="Name, e.g. Dogfight" autocomplete="off" aria-describedby="profile-status">
+          <button class="btn primary" type="submit">Save as</button>
+        </form>
+        <div class="actions">
+          <label class="btn quiet file"><input id="profile-import" type="file" accept=".json,application/json"><span>Import…</span></label>
+          <button id="profile-export" class="btn quiet" type="button">Export</button>
+          <button id="profile-delete" class="btn quiet hazard" type="button">Delete</button>
+        </div>
+        <p id="profile-status" class="mono note" role="status" aria-live="polite"></p>
+        <p class="path mono">Saved settings · <span id="profile-path">config.json</span></p>
+      </div>
+    </div>
   </nav>
 
   <main>
@@ -491,6 +513,17 @@
             </div>
             <p class="well capture" data-for="pause" role="status" hidden><span class="dot"></span><span></span></p>
           </div>
+
+          <div class="card">
+            <div><p class="label">Next profile</p><p class="help">Press these together to switch to the next saved profile, in name order. A tray balloon names it. Also in the tray menu.</p></div>
+            <div class="chip-row">
+              <span class="cap">Combo</span>
+              <span id="next-combo" class="chips"></span>
+              <button id="next-record" class="btn quiet" type="button">Record combo…</button>
+              <button id="next-clear" class="btn quiet" type="button">Clear</button>
+            </div>
+            <p class="well capture" data-for="next" role="status" hidden><span class="dot"></span><span></span></p>
+          </div>
         </section>
 
         <section class="panel" aria-labelledby="split-heading">
@@ -549,7 +582,37 @@
       </div>
     </form>
   </section>
+  <section id="panel-live" role="tabpanel" aria-labelledby="tab-live" class="live" hidden>
+    <section class="panel" aria-labelledby="live-axes-heading">
+      <div class="panel-head">
+        <h2 id="live-axes-heading">Axes · raw → NEO</h2>
+        <ul class="zones" aria-hidden="true"><li><span class="raw-key"></span>TCA raw</li><li><span class="out-key"></span>Sent to NEO</li></ul>
+      </div>
+      <p id="live-empty" class="empty">Start emulation to see the TCA and what the NEO receives.</p>
+      <div id="live-axes" class="live-axes"></div>
+    </section>
+    <div class="stack">
+      <section class="panel" aria-labelledby="live-state-heading">
+        <div class="panel-head"><h2 id="live-state-heading">State</h2></div>
+        <ul id="live-states" class="states" aria-label="Bridge state"></ul>
+        <div class="block">
+          <h3 class="cap">TCA controls pressed</h3>
+          <p id="live-pressed" class="chips"></p>
+        </div>
+      </section>
+      <section class="panel" aria-labelledby="live-neo-heading">
+        <div class="panel-head"><h2 id="live-neo-heading">NEO buttons and POV</h2></div>
+        <ul id="live-buttons" class="neo-grid" aria-label="NEO buttons"></ul>
+        <div class="pov-row">
+          <div id="live-pov" class="pov" role="img" aria-label="POV centred"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+          <p id="live-pov-text" class="help">POV centred</p>
+        </div>
+      </section>
+    </div>
+  </section>
   </main>
+
+  <section id="cheatsheet" class="cheatsheet" aria-label="Printable cheat sheet" hidden></section>
 </div>
 </body>
 </html>

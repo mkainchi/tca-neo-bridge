@@ -66,6 +66,7 @@ The icon's badge shows the emulation status: a gray hollow circle when idle, a g
 | Start emulation / Stop emulation | Hide the TCA devices and create the virtual NEO, or undo both. |
 | Configure… | Opens the configuration page in your browser (local only). Double-clicking the icon does the same. |
 | Pause input / Resume input | While emulating, releases every control and sends a neutral NEO until resumed. The tooltip shows *input paused*. A TCA button combo can do the same (see *Axes and settings*). |
+| Profile ▸ | Appears once a profile is saved under a name. Choosing one makes it the active profile, even mid-flight; a balloon confirms it. The active one is checked. |
 | Install driver… / Reinstall driver… | Installs the driver, or replaces it with a freshly signed copy. Available while not emulating. |
 | Quit | Stops emulation and exits. |
 
@@ -109,6 +110,24 @@ The header shows the daemon status and, while emulating, whether the TCA is open
 
 Profiles saved by version 0.2.x are upgraded when loaded: their single deadzone becomes each axis's deadzone, and every control keeps holding its NEO button as before.
 
+### Live tab
+
+![Live tab: raw TCA input next to what the NEO receives, with the profile menu open](docs/images/live.png)
+
+While emulating, the **Live** tab shows every axis as the raw TCA input above what the NEO receives, so you can see the effect of your curves, detents and camera settings in flight. It also shows the bridge state (throttle armed or waiting for safe start, precision, shift, paused, preview), the TCA controls being pressed, the 15 NEO buttons lit as they are sent, and the POV.
+
+### Profiles and cheat sheet
+
+The **Profile** menu in the tab bar lists your saved profiles. Choose one to switch to it; the current settings must be saved or discarded first.
+
+- **Save as** stores the saved settings under a name (letters, digits, spaces, `_` and `-`) and makes it the active profile.
+- **Import…** loads a profile JSON file someone shared. The bridge checks it, and upgrades older ones, before it becomes your settings; save it under a name to keep it.
+- **Export** downloads the saved settings as a JSON file.
+- **Delete** removes the active profile after a second click. The settings themselves stay.
+- A **Next profile** combo under *Control helpers* cycles through the saved profiles in name order while flying, and the tray has a **Profile** submenu.
+
+**Print cheat sheet** prints a light A4 page from the saved profile: every mapped control with its press, long press, double tap and shift-layer action, the axes, the helpers and the timings.
+
 ### Default mapping
 
 | TCA | NEO | ACE COMBAT 8 action |
@@ -134,6 +153,7 @@ Everything is kept per user in `%LOCALAPPDATA%\tca-neo-bridge`:
 - `neo-daemon.log`: status changes and errors (never device paths or serial numbers).
 - `driver-install.log`.
 - `hidhide-session.json`: only while emulating; used to restore HidHide after an interruption.
+- `profiles\`: named profiles (`<name>.json`) and `active.txt`, the name of the active one.
 
 Run `neo-daemon.exe --data <folder>` to use another folder.
 

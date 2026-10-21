@@ -671,3 +671,16 @@ fn yaw_can_be_off_or_come_from_the_lever_difference() {
     let (axes, _, _) = fields(&mapper.convert(Some(&neutral_stick()), Some(&quadrant(raw(0.4), raw(0.6), &[]))));
     assert_eq!((axes[2], axes[5]), (32768, unit16(neo::shape(-0.2, &cfg.axes.yaw))));
 }
+
+#[test]
+fn next_profile_combo_and_monitor_report_what_is_sent() {
+    let mut cfg = research();
+    cfg.combos.next_profile = vec!["s16".into()];
+    cfg.shift = Some("s17".into());
+    let mut mapper = Mapper::new(&cfg);
+    mapper.convert(Some(&neutral_stick()), Some(&quadrant(32768, 32768, &[])));
+    mapper.convert(Some(&stick(8192, 8192, 128, 128, 8, &[16, 17, 1, 11])), Some(&quadrant(32768, 32768, &[])));
+    assert_eq!(mapper.take_events(), [Event::NextProfile]);
+    let monitor = mapper.monitor().unwrap();
+    assert_eq!((monitor.shift, monitor.buttons, monitor.pov), (true, 0b1001, 0)); // S1 → NEO 1, S16 → NEO 4, S11 → POV up
+}

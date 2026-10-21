@@ -13,7 +13,7 @@ function defaults() {
     invert: { roll: false, pitch: false, yaw: false, throttle: false },
     split_high_g: { enabled: true, forward: 0.95, back: 0.05 },
     throttle: { mode: 'linear', idle: 0.1, cruise: 0.5, boost: 0.9, band: 0.03 },
-    precision: { source: null, scale: 0.5 }, safe_start: true, combos: { pause: [] },
+    precision: { source: null, scale: 0.5 }, safe_start: true, combos: { pause: [], next_profile: [] },
     behaviours: { q3: 'pulse_change' }, timing: { pulse_ms: 80, long_ms: 500, double_ms: 250, repeat_ms: 120 },
     long_press: {}, double_tap: {}, shift: null, shifted: { buttons: {}, pov: {} },
     camera: { ramp_ms: 0, full_after_hold: false, lever: false }, yaw_source: 'twist',
@@ -36,14 +36,17 @@ function fakeApi(overrides = {}) {
       calls.push(['GET', path]);
       if (path === '/api/config') return { config: defaults(), defaults: defaults(), status: 'Idle', links: null, profile: 'C:\\neo\\data\\config.json', preview: null };
       if (path === '/api/labels') return { labels: [{ label: 'Old', sources: ['s3'], mapping: 'Nothing → NEO 3 (Weapon select)' }] };
+      if (path === '/api/profiles') return { profiles: ['Attack', 'Cruise'], active: 'Cruise' };
       return { pressed: [], status: 'Idle' };
     }),
+    post: vi.fn(async (path) => { calls.push(['POST', path]); return { profiles: ['Attack', 'Cruise'], active: 'Attack', config: { ...defaults(), camera_strength: 0.5 }, running: true }; }),
     put: vi.fn(async (path, value) => {
       calls.push(['PUT', path, structuredClone(value)]);
       if (path === '/api/labels') return { saved: value.length };
+      if (path.startsWith('/api/profiles/')) return { profiles: ['Attack', 'Cruise', 'Dogfight'], active: 'Dogfight', config: defaults(), running: false };
       return path === '/api/preview' ? { preview: true, running: true } : { saved: true, running: false };
     }),
-    del: vi.fn(async (path) => { calls.push(['DELETE', path]); return { preview: false }; }),
+    del: vi.fn(async (path) => { calls.push(['DELETE', path]); return path.startsWith('/api/profiles/') ? { profiles: ['Attack'], active: null, config: defaults() } : { preview: false }; }),
     ...overrides,
   };
 }
@@ -132,6 +135,8 @@ group('helpers', () => {
     await expect(api.put('/api/config', { a: 1 })).rejects.toThrow('Deadzone must be below 1.');
     expect(fetchImpl.mock.calls[1][1].body).toBe('{"a":1}');
     await expect(api.del('/api/preview')).rejects.toThrow();
+    await expect(api.post('/api/profiles/A/activate')).rejects.toThrow();
+    expect(fetchImpl.mock.calls[3][1].method).toBe('POST');
     expect(fetchImpl.mock.calls[2][1].method).toBe('DELETE');
   });
 });
@@ -1033,6 +1038,226 @@ group('camera, yaw and timing', () => {
     expect([p.config.shift, $('shift-source').textContent, $('dirty').textContent]).toEqual(['s16', 'S16 · Sidestick button 16', 'Unsaved: hold Sidestick button 16 for the shift layer.']);
     $('shift-clear').click();
     expect([p.config.shift, $('dirty').textContent]).toEqual([null, 'Unsaved: shift layer off.']);
+  });
+});
+
+group('profiles', () => {
+  it('lists profiles, opens and closes the menu, and switches profile', async () => {
+    const api = fakeApi();
+    const p = await page(api);
+    expect($('profile-name').textContent).toBe('Cruise');
+    expect([...document.querySelectorAll('#profile-list button')].map((b) => [b.textContent, b.getAttribute('aria-current')])).toEqual([['Attack', 'false'], ['Cruiseactive', 'true']]);
+    expect([$('profiles-empty').hidden, $('profile-delete').disabled]).toEqual([true, false]);
+    $('profile-picker').click();
+    expect([$('profile-menu').hidden, $('profile-picker').getAttribute('aria-expanded'), document.activeElement]).toEqual([false, 'true', $('profile-new')]);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect([$('profile-menu').hidden, document.activeElement]).toEqual([true, $('profile-picker')]);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); // already closed: nothing to do
+    $('profile-picker').click();
+    $('profile-list').click(); // inside the menu: stays open
+    expect($('profile-menu').hidden).toBe(false);
+    document.body.click(); // outside: closes
+    expect($('profile-menu').hidden).toBe(true);
+    document.body.click();
+    // Switching with unsaved edits is refused; otherwise the daemon's profile becomes the page's state.
+    p.mark(true, 'Unsaved changes.');
+    document.querySelector('#profile-list button').click();
+    expect([$('profile-status').textContent, $('profile-status').dataset.state, api.post.mock.calls.length]).toEqual(['Save or discard unsaved settings first.', 'error', 0]);
+    p.mark(false, '');
+    await p.activate('Attack');
+    expect(api.calls.at(-1)).toEqual(['POST', '/api/profiles/Attack/activate']);
+    expect([p.saved.camera_strength, $('camera').value, $('profile-name').textContent, $('dirty').textContent]).toEqual([0.5, '50', 'Attack', 'Switched to Attack. Applied to the running emulation.']);
+    api.post = vi.fn(async () => ({ profiles: ['Attack'], active: 'Attack', config: defaults(), running: false }));
+    await p.activate('Attack');
+    expect($('profile-status').textContent).toBe('Switched to Attack.');
+    api.post = vi.fn(async () => { throw new Error('There is no profile named Gone.'); });
+    await p.activate('Gone');
+    expect($('profile-status').textContent).toBe('Not switched: There is no profile named Gone.');
+  });
+
+  it('saves the saved settings under a name, and deletes the active profile in two clicks', async () => {
+    const api = fakeApi();
+    const p = await page(api);
+    $('profile-new').value = ' bad/name ';
+    $('save-as').dispatchEvent(new Event('submit', { cancelable: true }));
+    expect([$('profile-new').getAttribute('aria-invalid'), $('profile-status').textContent]).toEqual(['true', 'Use 1 to 40 letters, digits, spaces, _ or -.']);
+    $('profile-new').value = 'Ground attack';
+    p.mark(true, 'Unsaved changes.');
+    await p.saveAs();
+    expect($('profile-status').textContent).toBe('Save or discard unsaved settings first.');
+    p.mark(false, '');
+    await p.saveAs();
+    expect(api.calls.at(-1)[1]).toBe('/api/profiles/Ground%20attack');
+    expect([$('profile-new').value, $('profile-name').textContent, $('profile-status').textContent]).toEqual(['', 'Dogfight', 'Saved as Ground attack.']);
+    api.put = vi.fn(async () => { throw new Error('The profiles folder could not be created.'); });
+    $('profile-new').value = 'X';
+    await p.saveAs();
+    expect($('profile-status').textContent).toBe('Not saved: The profiles folder could not be created.');
+    // Delete asks first, then deletes; the settings stay.
+    $('profile-delete').click();
+    expect($('profile-delete').textContent).toBe('Delete Dogfight? Click again');
+    $('profile-delete').click();
+    await vi.waitFor(() => expect($('profile-status').textContent).toBe('Deleted Dogfight. The current settings are kept.'));
+    expect([$('profile-name').textContent, $('profile-delete').disabled, $('profile-delete').textContent]).toEqual(['Unsaved profile', true, 'Delete']);
+    p.renderProfiles({ profiles: ['Attack'], active: 'Attack' });
+    api.del = vi.fn(async () => { throw new Error('offline'); });
+    await p.deleteProfile();
+    await p.deleteProfile();
+    expect([$('profile-status').textContent, $('profile-name').textContent]).toEqual(['Not deleted: offline', 'Attack']);
+    p.renderProfiles({ profiles: [], active: null });
+    expect($('profiles-empty').hidden).toBe(false);
+  });
+
+  it('reports a profile list that cannot be read', async () => {
+    const api = fakeApi();
+    const original = api.get;
+    api.get = vi.fn(async (path) => { if (path === '/api/profiles') throw new Error('offline'); return original(path); });
+    await page(api);
+    expect([$('profile-status').textContent, $('profile-status').dataset.state]).toEqual(['Saved profiles could not be listed: offline', 'error']);
+  });
+
+  it('exports the saved settings and imports a checked profile file', async () => {
+    const api = fakeApi();
+    const p = await page(api);
+    const clicks = [];
+    vi.stubGlobal('URL', { createObjectURL: vi.fn(() => 'blob:x'), revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function record() { clicks.push(this.download); });
+    $('profile-export').click();
+    expect([clicks, $('profile-status').textContent, URL.revokeObjectURL.mock.calls[0][0]]).toEqual([['Cruise.json'], 'Exported Cruise.json.', 'blob:x']);
+    p.active = null;
+    p.exportProfile();
+    expect(clicks.at(-1)).toBe('tca-neo-bridge.json');
+    click.mockRestore();
+    vi.unstubAllGlobals();
+    // Import: the daemon validates and saves it; the page then shows it.
+    const file = (text) => ({ name: 'shared.json', text: async () => text });
+    const imported = { ...defaults(), camera_strength: 0.25 };
+    api.get = vi.fn(async (path) => (path === '/api/config' ? { config: imported } : {}));
+    await p.importFile(file(JSON.stringify(imported)));
+    expect(api.calls.at(-1)).toEqual(['PUT', '/api/config', imported]);
+    expect([p.saved.camera_strength, $('profile-status').textContent]).toEqual([0.25, 'Imported shared.json. Save it under a name to keep it as a profile.']);
+    await p.importFile(file('{nope'));
+    expect($('profile-status').textContent.startsWith('Not imported:')).toBe(true);
+    await p.importFile(undefined);
+    p.mark(true, 'Unsaved changes.');
+    await p.importFile(file('{}'));
+    expect($('profile-status').textContent).toBe('Save or discard unsaved settings first.');
+    // The file input hands its file over.
+    const spy = vi.spyOn(p, 'importFile').mockResolvedValue();
+    $('profile-import').dispatchEvent(new Event('change'));
+    expect(spy).toHaveBeenCalledWith(undefined);
+  });
+});
+
+group('next profile combo', () => {
+  it('records and clears the next-profile combo by pressing it', async () => {
+    const p = await page();
+    $('next-record').click();
+    p.live({ pressed: [], status: 'Emulating', links: LINKS });
+    expect(document.querySelector('[data-for=next]').textContent).toBe('Press and release the controls for the combo (up to 4), then choose Done.');
+    p.live({ pressed: ['s16', 'q6'], status: 'Emulating', links: LINKS });
+    $('next-record').click();
+    expect([p.config.combos.next_profile, $('dirty').textContent, $('next-combo').textContent]).toEqual([['s16', 'q6'], 'Unsaved: new next-profile combo.', 'S16+Q6']);
+    $('next-clear').click();
+    expect([p.config.combos.next_profile, $('dirty').textContent]).toEqual([[], 'Unsaved: next-profile combo off.']);
+  });
+});
+
+group('live tab', () => {
+  it('shows raw input next to what the NEO receives, the state, NEO buttons and POV', async () => {
+    const p = await page();
+    $('tab-mapping').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+    expect($('panel-live').hidden).toBe(false);
+    expect([$('live-empty').hidden, $('live-axes').children.length, $('live-pov-text').textContent]).toEqual([false, 0, 'POV centred']);
+    expect([...$('live-states').children].map((s) => [s.textContent, s.dataset.tone])).toEqual([
+      ['Throttle armed', 'ok'], ['Precision off', ''], ['Shift off', ''], ['Input live', 'ok'], ['Preview off', ''],
+    ]);
+    const axes = [16384, 49151, 0, 65535, 0, 32768, 32768];
+    p.live({ pressed: ['s1', 'hat-down'], status: 'Emulating', links: LINKS, paused: true, preview: true, monitor: monitor({ axes, armed: false, precision: true, shift: true, buttons: 0b101, pov: 2 }) });
+    const rows = [...$('live-axes').children].map((row) => [row.querySelector('.name').firstChild.textContent, row.querySelector('.name span').textContent, row.querySelector('.value').textContent]);
+    expect(rows).toEqual([['Roll', 'Stick X', '−0.50'], ['Pitch', 'Stick Y', '+0.50'], ['Yaw', 'Twist', ' 0.00'], ['Throttle', 'Left lever', '+1.00'], ['Camera X', 'Hat', '+1.00'], ['Camera Y', 'Hat', '−1.00']]);
+    expect([...$('live-states').children].map((s) => s.textContent)).toEqual(['Throttle waiting for centre', 'Precision on', 'Shift held', 'Input paused', 'Previewing unsaved']);
+    expect($('live-pressed').textContent).toBe('S1Hat down');
+    expect([...$('live-buttons').children].map((b) => b.dataset.on).slice(0, 3)).toEqual(['true', 'false', 'true']);
+    expect([$('live-pov').getAttribute('aria-label'), [...$('live-pov').children].findIndex((c) => c.dataset.on === 'true')]).toEqual(['POV right', 5]);
+    // Not rendered while another tab is shown; shown from the last data when the tab opens.
+    $('tab-settings').click();
+    p.live({ pressed: [], status: 'Emulating', links: LINKS, monitor: monitor({ pov: 8 }) });
+    expect($('live-pov-text').textContent).toBe('POV right');
+    $('tab-live').click();
+    expect($('live-pov-text').textContent).toBe('POV centred');
+  });
+
+  it('describes each source the way the profile reads them', () => {
+    const config = defaults();
+    const m = monitor({ levers: [0.8, 0.2], yaw: 0.3 });
+    const rows = (overrides, pressed = []) => app.liveRows(m, pressed, { ...config, ...overrides }).map(([name, source, raw]) => [name, source, Math.round(raw * 100) / 100]);
+    expect(rows({ throttle_lever: 'right' })[3]).toEqual(['Throttle', 'Right lever', -0.6]);
+    expect(rows({ yaw_source: 'lever_differential' }).slice(2, 4)).toEqual([['Yaw', 'Lever difference', 0.6], ['Throttle', 'Both levers', 0]]);
+    expect(rows({ yaw_source: 'off' })[2]).toEqual(['Yaw', 'Off', 0]);
+    expect(rows({ camera: { ...config.camera, lever: true } })[4]).toEqual(['Camera X', 'Hat or spare lever', -0.6]);
+    expect(rows({ camera: { ...config.camera, lever: true } }, ['hat-left'])[4]).toEqual(['Camera X', 'Hat or spare lever', -1]);
+    expect(rows({ camera: { ...config.camera, lever: true }, throttle_lever: 'right' })[4][2]).toBe(0.6);
+    expect(app.axisValue(32768)).toBeCloseTo(0, 4);
+  });
+});
+
+group('cheat sheet', () => {
+  it('prints the saved profile as a light page', async () => {
+    const p = await page();
+    const win = { print: vi.fn() };
+    p.print(win);
+    expect(win.print).toHaveBeenCalled();
+    const sheet = $('cheatsheet').textContent;
+    expect(sheet).toContain('Profile: Cruise');
+    expect(sheet).toContain('S6Flares——');
+    expect(sheet).toContain('Q3Autopilotpulse on change');
+    expect(sheet).toContain('HelpersLevers splitHigh-G');
+    expect(sheet).not.toContain('Shift (hold');
+    $('print').click(); // the button prints too (jsdom's print is a no-op)
+  });
+
+  it('covers every action, layer, helper and axis setting', () => {
+    const config = defaults();
+    Object.assign(config, {
+      hat: 'mapped', shift: 's16', yaw_source: 'lever_differential', split_high_g: { ...config.split_high_g, enabled: false },
+      long_press: { s2: { buttons: [3], pov: null } }, double_tap: { s3: { buttons: [], pov: 'left' } },
+      shifted: { buttons: { s1: [9] }, pov: {} }, precision: { source: 's4', scale: 0.5 },
+      combos: { pause: ['s5', 'q6'], next_profile: ['s15'] }, throttle: { ...config.throttle, mode: 'detents' },
+      camera: { ...config.camera, full_after_hold: true },
+    });
+    config.buttons['hat-up'] = [10];
+    config.buttons.s16 = [4]; // the shift control's own mapping is not printed
+    config.buttons.s13 = [13];
+    config.axes.roll.curve = 0.2;
+    config.axes.yaw.curve = -0.3;
+    const html = app.cheatSheet(config, null, '21 Oct 2026');
+    document.body.innerHTML = html;
+    const text = document.body.textContent;
+    expect(text).toContain('Profile: Unsaved profile');
+    expect(text).toContain('Shift (hold S16)');
+    expect(text).toContain('S1Gun——Radar');
+    expect(text).toContain('S2—Weapon select—same');
+    expect(text).toContain('S3——POV leftsame');
+    expect(text).toContain('Hat upGear');
+    expect(text).toContain('S13NEO 13');
+    expect(text).not.toContain('S16Target select');
+    expect(text).toContain('StickRoll / pitch · curve 20%');
+    expect(text).toContain('Lever differenceYaw · curve -30%');
+    expect(text).toContain('Both leversThrottle · detents');
+    expect(text).toContain('HatMapped as buttons (see above)');
+    expect(text).toContain('Hold S4Precision aim · 50%Hold S16Shift layerS5 + Q6Pause / resume inputS15Next profile');
+    const plain = defaults();
+    plain.split_high_g.enabled = false;
+    plain.yaw_source = 'off';
+    plain.camera.full_after_hold = true;
+    plain.throttle_lever = 'right';
+    document.body.innerHTML = app.cheatSheet(plain, 'A & B', '1 Jan');
+    expect(document.body.textContent).toContain('None set.');
+    expect(document.body.textContent).toContain('TwistYaw off');
+    expect(document.body.textContent).toContain('Right leverThrottle');
+    expect(document.body.textContent).toContain('HatCamera · full after 500 ms hold');
+    expect(app.cheatSheet(plain, '<x>', 'd')).toContain('&lt;x&gt;');
   });
 });
 

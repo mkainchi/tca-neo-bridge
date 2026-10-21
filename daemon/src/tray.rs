@@ -1,5 +1,5 @@
 //! Notification-area icon and menu: Start/Stop emulation, Pause/Resume input, Configure…, Install/Reinstall driver…, Quit.
-use crate::driver::DriverManager;
+use crate::driver::{DriverManager, Notice};
 use crate::emulation::Controller;
 use crate::ffi::{self, HANDLE, HWND, MSG, NOTIFYICONDATAW, PCWSTR, POINT, WNDCLASSEXW};
 use crate::http::Server;
@@ -21,6 +21,8 @@ pub const ID_CONFIGURE: usize = 3;
 pub const ID_QUIT: usize = 4;
 pub const ID_DRIVER: usize = 5;
 pub const ID_PAUSE: usize = 6;
+/// Saved profiles in the Profile submenu: this plus their index in name order.
+pub const ID_PROFILE_BASE: usize = 100;
 const NIM_ADD: u32 = 0;
 const NIM_MODIFY: u32 = 1;
 const NIM_DELETE: u32 = 2;
@@ -29,6 +31,8 @@ const NIF_INFO: u32 = 0x10;
 const MF_STRING: u32 = 0;
 const MF_GRAYED: u32 = 1;
 const MF_SEPARATOR: u32 = 0x800;
+const MF_CHECKED: u32 = 0x8;
+const MF_POPUP: u32 = 0x10;
 const TPM_RETURNCMD_RIGHT: u32 = 0x100 | 0x8;
 
 #[derive(Clone, Copy)]
@@ -202,7 +206,7 @@ impl Tray {
     pub fn refresh(&mut self) {
         let status = self.controller.shared.status();
         let mut data = self.data(&status);
-        if let Some(notice) = self.driver.take_notice() {
+        if let Some(notice) = self.driver.take_notice().or_else(|| self.controller.shared.take_notice()) {
             data.uFlags |= NIF_INFO;
             data.dwInfoFlags = if notice.error { 3 } else { 1 }; // NIIF_ERROR / NIIF_INFO
             ffi::fill(&mut data.szInfoTitle, notice.title);
@@ -248,6 +252,7 @@ impl Tray {
                 self.refresh();
             }
             ID_CONFIGURE => self.configure(),
+            id if id >= ID_PROFILE_BASE => self.switch_profile(id - ID_PROFILE_BASE),
             ID_DRIVER if !self.controller.shared.status().running() => self.driver.install(self.hwnd),
             ID_QUIT if !matches!(self.controller.shared.status(), Status::Starting | Status::Stopping) => {
                 self.quit();
@@ -256,6 +261,24 @@ impl Tray {
             _ => {}
         }
         false
+    }
+
+    /// Activate the profile chosen in the submenu (by its position in name order) and say how it went.
+    fn switch_profile(&mut self, index: usize) {
+        let shared = &self.controller.shared;
+        let name = crate::profiles::list(&shared.profiles_dir()).get(index).cloned().ok_or_else(|| "That profile no longer exists.".to_string());
+        shared.notice(match name.and_then(|name| shared.activate(&name).map(|_| name)) {
+            Ok(name) => Notice { title: "Profile switched", text: format!("Now flying with {name}."), error: false },
+            Err(error) => Notice { title: "Profile not switched", text: error, error: true },
+        });
+        self.refresh();
+    }
+
+    /// What the tray menu shows, read while the tray state is borrowed.
+    pub fn menu_state(&self) -> MenuState {
+        let shared = &self.controller.shared;
+        let dir = shared.profiles_dir();
+        MenuState { status: shared.status(), driver: self.driver.menu(), paused: shared.paused(), profiles: crate::profiles::list(&dir), active: crate::profiles::active(&dir) }
     }
 
     pub fn handle(&mut self, message: u32, wparam: usize, lparam: isize) -> Action {
@@ -289,12 +312,31 @@ impl Drop for Tray {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct MenuState {
+    pub status: Status,
+    /// Driver (installed, installing).
+    pub driver: (Option<bool>, bool),
+    pub paused: bool,
+    pub profiles: Vec<String>,
+    pub active: Option<String>,
+}
+
 /// Build and track the popup menu (modal; runs with the tray state unborrowed). Returns the chosen command.
-pub fn show_menu(api: UiApi, hwnd: HWND, status: &Status, driver: (Option<bool>, bool), paused: bool) -> usize {
-    // SAFETY: menu handle is created and destroyed here; label buffers outlive AppendMenuW.
+pub fn show_menu(api: UiApi, hwnd: HWND, state: &MenuState) -> usize {
+    // SAFETY: menu handles are created here and destroyed with the root menu; label buffers outlive AppendMenuW.
     unsafe {
         let menu = (api.create_menu)();
-        for (id, label, enabled) in menu_items(status, driver, paused) {
+        for (id, label, enabled) in menu_items(&state.status, state.driver, state.paused) {
+            // Saved profiles get a submenu just before Configure…; the active one is checked.
+            if id == Some(ID_CONFIGURE) && !state.profiles.is_empty() {
+                let profiles = (api.create_menu)();
+                for (index, name) in state.profiles.iter().enumerate() {
+                    let checked = if state.active.as_deref() == Some(name.as_str()) { MF_CHECKED } else { MF_STRING };
+                    (api.append_menu)(profiles, checked, ID_PROFILE_BASE + index, ffi::wide(name).as_ptr());
+                }
+                (api.append_menu)(menu, MF_POPUP, profiles as usize, ffi::wide("Profile").as_ptr());
+            }
             let text = ffi::wide(label);
             let flags = match id {
                 None => MF_SEPARATOR,
@@ -324,12 +366,12 @@ pub unsafe extern "system" fn wndproc(hwnd: HWND, message: u32, wparam: usize, l
     // Shell calls made while handling a message (Shell_NotifyIconW, ShellExecuteW) can deliver messages
     // re-entrantly. Those see the tray borrowed: they get default handling, and status refreshes are re-queued.
     let action = TRAY.with(|tray| {
-        tray.try_borrow_mut().ok().map(|mut t| t.as_mut().map(|t| (t.handle(message, wparam, lparam), t.api, (t.controller.shared.status(), t.driver.menu(), t.controller.shared.paused()))))
+        tray.try_borrow_mut().ok().map(|mut t| t.as_mut().map(|t| (t.handle(message, wparam, lparam), t.api, t.menu_state())))
     });
     match action {
         Some(Some((Action::Done(result), _, _))) => result,
-        Some(Some((Action::Menu, api, (status, driver, paused)))) => {
-            let chosen = show_menu(api, hwnd, &status, driver, paused);
+        Some(Some((Action::Menu, api, state))) => {
+            let chosen = show_menu(api, hwnd, &state);
             let destroy = TRAY.with(|tray| tray.try_borrow_mut().ok().is_some_and(|mut t| t.as_mut().is_some_and(|t| t.command(chosen))));
             if destroy {
                 (api.destroy_window)(hwnd);

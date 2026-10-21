@@ -138,6 +138,9 @@ impl Default for Precision {
 #[serde(deny_unknown_fields)]
 pub struct Combos {
     pub pause: Vec<String>,
+    /// Switches to the next saved profile, in name order.
+    #[serde(default)]
+    pub next_profile: Vec<String>,
 }
 
 /// How a source drives its NEO targets: held while pressed, a short press on switch-on, a short press on every
@@ -387,10 +390,12 @@ pub fn validate(config: &Config) -> Result<(), String> {
     if !within(config.precision.scale, 0.1, 1.0) {
         return Err("Precision scale must be between 10 and 100%.".into());
     }
-    if config.combos.pause.len() > 4 {
-        return Err("A pause combo has at most 4 controls.".into());
+    for combo in [&config.combos.pause, &config.combos.next_profile] {
+        if combo.len() > 4 {
+            return Err("A combo has at most 4 controls.".into());
+        }
+        combo.iter().try_for_each(|key| known(key))?;
     }
-    config.combos.pause.iter().try_for_each(|key| known(key))?;
     config.behaviours.keys().try_for_each(|key| known(key))?;
     let timing = &config.timing;
     if !(20..=1000).contains(&timing.pulse_ms) {

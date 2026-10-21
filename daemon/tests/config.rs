@@ -88,7 +88,7 @@ fn validation_rules() {
         (Box::new(|c| c.throttle.boost = 1.1), "Throttle detents"),
         (Box::new(|c| c.precision.source = Some("s40".into())), "Unknown TCA control s40"),
         (Box::new(|c| c.precision.scale = 0.05), "Precision scale"),
-        (Box::new(|c| c.combos.pause = ["s1", "s2", "s3", "s4", "s5"].map(String::from).to_vec()), "at most 4"),
+        (Box::new(|c| c.combos.pause = ["s1", "s2", "s3", "s4", "s5"].map(String::from).to_vec()), "A combo has at most 4"),
         (Box::new(|c| c.combos.pause = vec!["q99".into()]), "Unknown TCA control q99"),
         (Box::new(|c| { c.behaviours.insert("x".into(), config::Mode::Toggle); }), "Unknown TCA control x"),
         (Box::new(|c| c.timing.pulse_ms = 10), "Pulse length"),

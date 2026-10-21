@@ -1,7 +1,9 @@
 //! Emulation session: HidHide isolation → TCA readers → report pipe → virtual NEO, torn down in reverse.
 use crate::device::{DeviceApi, PipeServer, SoftwareDevice};
+use crate::driver::Notice;
 use crate::hidhide::Hiding;
 use crate::neo::{self, Event, Mapper};
+use crate::profiles;
 use crate::shared::{Links, Shared, Status};
 use crate::tca::{self, HidApi, Reader};
 use crate::validation;
@@ -68,6 +70,16 @@ pub struct Emulation {
     thread: Option<JoinHandle<()>>,
 }
 
+/// The next-profile combo: activate the saved profile after the active one, and say which (or why not).
+fn next_profile(shared: &Shared) -> Notice {
+    let dir = shared.profiles_dir();
+    let next = profiles::next(&dir, profiles::active(&dir).as_deref()).ok_or_else(|| "No saved profiles yet: save one on the configuration page.".to_string());
+    match next.and_then(|name| shared.activate(&name).map(|_| name)) {
+        Ok(name) => Notice { title: "Profile switched", text: format!("Now flying with {name}."), error: false },
+        Err(error) => Notice { title: "Profile not switched", text: error, error: true },
+    }
+}
+
 fn run_loop(resources: &Resources, shared: &Shared, period: Duration, stop: &AtomicBool, notify: &Notify) -> Result<(), String> {
     let started = Instant::now();
     let (mut generation, config) = shared.active();
@@ -97,6 +109,7 @@ fn run_loop(resources: &Resources, shared: &Shared, period: Duration, stop: &Ato
                 for event in mapper.take_events() {
                     match event {
                         Event::TogglePause => shared.set_paused(!shared.paused()),
+                        Event::NextProfile => shared.notice(next_profile(shared)),
                     }
                     notify();
                 }

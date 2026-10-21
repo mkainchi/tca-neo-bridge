@@ -10,6 +10,7 @@ pub mod http;
 pub mod labels;
 pub mod neo;
 pub mod process;
+pub mod profiles;
 pub mod protocol;
 pub mod shared;
 pub mod tca;

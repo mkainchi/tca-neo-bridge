@@ -1,7 +1,10 @@
 //! State shared by the tray, the emulation loop and the configuration page.
 use crate::config::{self, Config};
+use crate::driver::Notice;
+use crate::profiles;
 use crate::neo::Monitor;
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, RwLock};
@@ -60,6 +63,8 @@ pub struct Shared {
     pub levers: Mutex<Option<[f64; 2]>>,
     pub status: Mutex<Status>,
     pub links: Mutex<Option<Links>>,
+    /// Tray balloons waiting to be shown (profile switches from the TCA, for example).
+    pub notices: Mutex<VecDeque<Notice>>,
     /// Private diagnostics (status changes, panics). Never contains device paths or serials.
     pub log: Option<PathBuf>,
 }
@@ -83,6 +88,7 @@ impl Shared {
             levers: Mutex::new(None),
             status: Mutex::new(Status::Idle),
             links: Mutex::new(None),
+            notices: Mutex::new(VecDeque::new()),
             log: None,
         }
     }
@@ -90,6 +96,27 @@ impl Shared {
     pub fn with_log(mut self, path: PathBuf) -> Self {
         self.log = Some(path);
         self
+    }
+
+    /// Named profile snapshots live next to the active profile.
+    pub fn profiles_dir(&self) -> PathBuf {
+        self.config_path.with_file_name("profiles")
+    }
+
+    /// Make a saved profile the active one: it replaces config.json (ending any preview) and is remembered.
+    pub fn activate(&self, name: &str) -> Result<Config, String> {
+        let profile = profiles::load(&self.profiles_dir(), name)?;
+        self.save(profile.clone())?;
+        profiles::set_active(&self.profiles_dir(), Some(name))?;
+        Ok(profile)
+    }
+
+    pub fn notice(&self, notice: Notice) {
+        self.notices.lock().unwrap().push_back(notice);
+    }
+
+    pub fn take_notice(&self) -> Option<Notice> {
+        self.notices.lock().unwrap().pop_front()
     }
 
     /// Identify-mode recordings live next to the profile.

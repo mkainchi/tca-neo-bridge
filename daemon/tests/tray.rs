@@ -23,6 +23,7 @@ struct Ui {
     shell_present: bool,
     icon_size: i32,
     menu: Vec<(u32, String)>,
+    tracked: bool,
     opened: Vec<String>,
     posted: Vec<u32>,
     quits: usize,
@@ -97,8 +98,13 @@ unsafe extern "system" fn post_message(_: HWND, message: u32, _: usize, _: isize
 unsafe extern "system" fn post_quit(_: i32) {
     ui().quits += 1;
 }
+/// A new menu after the previous one was tracked starts a fresh recording; submenus add to the current one.
 unsafe extern "system" fn create_menu() -> HANDLE {
-    ui().menu.clear();
+    let mut u = ui();
+    if u.tracked {
+        u.menu.clear();
+        u.tracked = false;
+    }
     5
 }
 unsafe extern "system" fn append_menu(_: HANDLE, flags: u32, _: usize, text: PCWSTR) -> ffi::BOOL {
@@ -109,7 +115,9 @@ unsafe extern "system" fn track_menu(_: HANDLE, _: u32, x: i32, y: i32, _: i32, 
     assert_eq!((x, y), (10, 20));
     // A status message arriving while the modal menu runs must not hit the borrowed tray.
     tray::wndproc(42, WM_STATUS, 0, 0);
-    ui().chosen.pop_front().unwrap_or(0)
+    let mut u = ui();
+    u.tracked = true;
+    u.chosen.pop_front().unwrap_or(0)
 }
 unsafe extern "system" fn destroy_menu(_: HANDLE) -> ffi::BOOL {
     1
@@ -533,6 +541,35 @@ fn menu_commands_errors_balloons_and_busy_quit() {
     tray::TRAY.with(|t| t.borrow_mut().take());
     // Without a tray, the real default procedure handles messages.
     assert_eq!(send(0x0400, 0, 0), 0);
+}
+
+#[test]
+fn profile_submenu_lists_saved_profiles_and_switches_with_a_balloon() {
+    let _g = reset();
+    let shared = installed_tray(Source::Validation);
+    // No saved profiles: no submenu.
+    send(WM_TRAY, 0, lparam(tray::WM_RBUTTONUP));
+    assert!(!ui().menu.iter().any(|m| m.1 == "Profile"));
+    let dir = shared.profiles_dir();
+    let mut attack = neo_daemon::config::defaults();
+    attack.axes.roll.curve = 0.4;
+    neo_daemon::profiles::save(&dir, "Attack", &attack).unwrap();
+    neo_daemon::profiles::save(&dir, "Cruise", &neo_daemon::config::defaults()).unwrap();
+    neo_daemon::profiles::set_active(&dir, Some("Cruise")).unwrap();
+    // The submenu sits before Configure…, with the active profile checked; choosing one activates it.
+    ui().chosen = [(tray::ID_PROFILE_BASE) as i32].into();
+    send(WM_TRAY, 0, lparam(tray::WM_RBUTTONUP));
+    let menu = ui().menu.clone();
+    let at = menu.iter().position(|m| m.1 == "Profile").unwrap();
+    assert_eq!((menu[at].0, &menu[at + 1].1), (0x10, &"Configure\u{2026}".to_string()));
+    assert!(menu.contains(&(0, "Attack".into())) && menu.contains(&(0x8, "Cruise".into())));
+    assert_eq!((shared.config().1, neo_daemon::profiles::active(&dir)), (attack, Some("Attack".into())));
+    let shown = ui().icons.last().unwrap().clone();
+    assert!(shown.1 & 0x10 != 0 && shown.3 == "Now flying with Attack.");
+    // A profile deleted while the menu was open.
+    send(WM_COMMAND, tray::ID_PROFILE_BASE + 5, 0);
+    assert_eq!(ui().icons.last().unwrap().3, "That profile no longer exists.");
+    tray::TRAY.with(|t| t.borrow_mut().take());
 }
 
 #[test]

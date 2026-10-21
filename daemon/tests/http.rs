@@ -109,6 +109,53 @@ fn saving_validates_persists_and_hot_reloads() {
 }
 
 #[test]
+fn profiles_are_saved_switched_and_deleted_by_name() {
+    let shared = shared("profiles");
+    let call = |method: &str, path: &str| http::handle(&request(method, path, "t", ""), &shared, 8000, "t");
+    assert_eq!(json(&call("GET", "/api/profiles").body), serde_json::json!({"profiles": [], "active": null}));
+    let mut attack = config::defaults();
+    attack.axes.yaw.curve = 0.5;
+    shared.save(attack.clone()).unwrap();
+    let saved = json(&call("PUT", "/api/profiles/Ground%20attack").body);
+    assert_eq!((saved["profiles"].clone(), saved["active"].clone()), (serde_json::json!(["Ground attack"]), "Ground attack".into()));
+    shared.save(config::defaults()).unwrap();
+    call("PUT", "/api/profiles/Cruise");
+    let switched = call("POST", "/api/profiles/Ground%20attack/activate");
+    assert_eq!(switched.status, 200);
+    let switched = json(&switched.body);
+    assert_eq!((switched["active"].clone(), switched["config"]["axes"]["yaw"]["curve"].clone(), switched["running"].clone()), ("Ground attack".into(), 0.5.into(), false.into()));
+    assert_eq!(shared.config().1, attack);
+    // Deleting the active profile clears it; deleting another keeps it.
+    call("POST", "/api/profiles/Cruise/activate");
+    let deleted = json(&call("DELETE", "/api/profiles/Ground%20attack").body);
+    assert_eq!((deleted["profiles"].clone(), deleted["active"].clone()), (serde_json::json!(["Cruise"]), "Cruise".into()));
+    assert_eq!(json(&call("DELETE", "/api/profiles/Cruise").body)["active"], serde_json::Value::Null);
+    // Errors and unknown routes.
+    for (method, path, status, message) in [
+        ("PUT", "/api/profiles/..%2Fevil", 400, "Profile names"),
+        ("POST", "/api/profiles/Missing/activate", 400, "no profile named Missing"),
+        ("DELETE", "/api/profiles/Missing", 400, "no profile named Missing"),
+        ("PUT", "/api/profiles/%ZZ", 400, "Unreadable profile name"),
+        ("GET", "/api/profiles/Cruise", 404, "Unknown request"),
+        ("POST", "/api/profiles/Cruise/rename", 404, "Unknown request"),
+    ] {
+        let response = call(method, path);
+        assert_eq!(response.status, status, "{method} {path}");
+        assert!(json(&response.body)["error"].as_str().unwrap().contains(message), "{method} {path}");
+    }
+}
+
+#[test]
+fn percent_decoding() {
+    assert_eq!(http::decode("Ground%20attack"), Some("Ground attack".into()));
+    assert_eq!(http::decode("plain"), Some("plain".into()));
+    assert_eq!(http::decode("%e2%9c%88"), Some("✈".into()));
+    for bad in ["%", "%2", "%zz", "%ff", "%e2%9c", "%aé"] {
+        assert_eq!(http::decode(bad), None, "{bad}");
+    }
+}
+
+#[test]
 fn previews_run_unsaved_settings_until_cleared_or_saved() {
     let shared = shared("preview");
     let call = |method: &str, path: &str, body: &str| http::handle(&request(method, path, "t", body), &shared, 8000, "t");

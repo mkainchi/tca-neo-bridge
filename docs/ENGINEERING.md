@@ -153,6 +153,7 @@ The project was built by its maintainer with an AI coding assistant (Claude Code
 - In-game verification with ACE COMBAT 8 (native profile, flight, camera, weapons, High-G, restart and disconnect recovery).
 - The SDK startup crash in about 1 of 10 launches is outside this project's control.
 - Latching quadrant switches (ENG 1/2, the mode selector) used to hold their NEO button while latched. Profile version 2 pulses them by default (per-source *Behaviour*); profiles migrated from version 1 keep holding until changed.
+- Named profiles, the next-profile combo, the tray Profile submenu, the Live tab and the printed cheat sheet are covered by unit, HTTP and page tests (profile names are restricted so they cannot leave the profiles folder), but still need in-game verification in ACE COMBAT 8.
 - Long press, double tap, Repeat, the shift layer, the camera ramp and spare-lever camera, and lever-difference yaw (later version 2 settings, absent fields default) are timed with the report clock and covered by timeline tests, but still need in-game verification in ACE COMBAT 8.
 - Axis curves, throttle detents, safe start, precision aiming, the pause combo and *Try in game* (profile version 2) are covered by unit tests and the shared shape vectors (`daemon/tests/data/axis-shape-vectors.json`, checked by both the daemon and page tests), but still need in-game verification in ACE COMBAT 8.
 - Creating the virtual device needs administrator rights (`SwDeviceCreate`).

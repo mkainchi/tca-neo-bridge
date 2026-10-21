@@ -97,6 +97,9 @@ export function diff(before, after) {
 }
 
 export const AXES = ['roll', 'pitch', 'yaw'];
+/** Button combos: [page id prefix, profile field, name in messages]. */
+const COMBOS = [['pause', 'pause', 'pause'], ['next', 'next_profile', 'next-profile']];
+const TABS = ['tab-mapping', 'tab-settings', 'tab-live'];
 const AXIS_NAMES = { roll: 'Roll', pitch: 'Pitch', yaw: 'Yaw' };
 
 /** One axis value in -1..1 through deadzone, saturation, curve and anti-deadzone (same as neo::shape). */
@@ -132,6 +135,82 @@ export function curvePath(t) {
     const x = i / 60 - 1;
     return `${i ? 'L' : 'M'}${plot(x).toFixed(1)} ${(240 - plot(shape(x, t))).toFixed(1)}`;
   }).join(' ');
+}
+
+const POV_NAMES = ['up', 'up-right', 'right', 'down-right', 'down', 'down-left', 'left', 'up-left'];
+/** POV 0..7 to its cell in a 3 × 3 grid read left to right, top to bottom. */
+const POV_CELLS = [1, 2, 5, 8, 7, 6, 3, 0];
+
+/** A NEO axis value (0..65535, centre 32768) as -1..1. */
+export function axisValue(raw) {
+  return (raw / 65535) * 2 - 1;
+}
+
+/**
+ * Live tab rows from the daemon's monitor: [name, source, raw -1..1, sent -1..1]. The throttle reads as the game
+ * does (+1 boost), the camera from the hat (and the spare lever).
+ */
+export function liveRows(monitor, pressed, config) {
+  const right = config.throttle_lever === 'right';
+  const differential = config.yaw_source === 'lever_differential';
+  const travel = differential ? (monitor.levers[0] + monitor.levers[1]) / 2 : monitor.levers[right ? 1 : 0];
+  const hat = (on, off) => (pressed.includes(`hat-${on}`) ? 1 : 0) - (pressed.includes(`hat-${off}`) ? 1 : 0);
+  const spare = 2 * monitor.levers[right ? 0 : 1] - 1;
+  const cameraX = config.camera.lever && !hat('right', 'left') ? spare : hat('right', 'left');
+  const yaw = { twist: ['Twist', monitor.yaw], off: ['Off', 0], lever_differential: ['Lever difference', monitor.levers[0] - monitor.levers[1]] }[config.yaw_source];
+  return [
+    ['Roll', 'Stick X', monitor.roll, axisValue(monitor.axes[0])],
+    ['Pitch', 'Stick Y', monitor.pitch, axisValue(monitor.axes[1])],
+    ['Yaw', yaw[0], yaw[1], axisValue(monitor.axes[5])],
+    ['Throttle', differential ? 'Both levers' : `${right ? 'Right' : 'Left'} lever`, 2 * travel - 1, -axisValue(monitor.axes[2])],
+    ['Camera X', config.camera.lever ? 'Hat or spare lever' : 'Hat', cameraX, axisValue(monitor.axes[3])],
+    ['Camera Y', 'Hat', hat('down', 'up'), axisValue(monitor.axes[4])],
+  ];
+}
+
+const escape = (text) => String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const actionName = (mapping) => {
+  const parts = mapping.buttons.map((n) => NEO_ACTIONS[n] ?? `NEO ${n}`);
+  if (mapping.pov) parts.push(`POV ${mapping.pov}`);
+  return parts.join(', ');
+};
+
+/** The printable cheat sheet of a saved profile, as HTML (every value escaped). */
+export function cheatSheet(config, profile, date) {
+  const keys = [...sources(), ...(config.hat === 'mapped' ? HAT_SOURCES : [])];
+  const cell = (text) => (text ? `<td>${escape(text)}</td>` : '<td class="x">—</td>');
+  const rows = keys.map((key) => {
+    const press = actionName(current(config, key));
+    const long = actionName(current(config, key, 'long'));
+    const double = actionName(current(config, key, 'double'));
+    const shifted = actionName(current(config, key, 'press', 'shift'));
+    if (key === config.shift || !(press || long || double || shifted)) return '';
+    const mode = config.behaviours?.[key];
+    const tag = mode && mode !== 'hold' && press ? `<span class="tag">${escape(MODES[mode].label.toLowerCase())}</span>` : '';
+    const shift = config.shift ? (shifted ? `<td>${escape(shifted)}</td>` : '<td class="x">same</td>') : '';
+    return `<tr><td class="k">${escape(short(key))}</td>${press ? `<td>${escape(press)}${tag}</td>` : '<td class="x">—</td>'}${cell(long)}${cell(double)}${shift}</tr>`;
+  }).join('');
+  const lever = config.throttle_lever === 'right' ? 'Right lever' : 'Left lever';
+  const curve = (axis) => (config.axes[axis].curve ? ` · curve ${Math.round(config.axes[axis].curve * 100)}%` : '');
+  const axes = [
+    ['Stick', `Roll / pitch${curve('roll')}`],
+    [{ twist: 'Twist', off: 'Twist', lever_differential: 'Lever difference' }[config.yaw_source], config.yaw_source === 'off' ? 'Yaw off' : `Yaw${curve('yaw')}`],
+    [config.yaw_source === 'lever_differential' ? 'Both levers' : lever, config.throttle.mode === 'detents' ? 'Throttle · detents: idle brakes, CL cruises, boost from the last detent' : 'Throttle'],
+    ['Hat', config.hat === 'mapped' ? 'Mapped as buttons (see above)' : `Camera${config.camera.full_after_hold ? ` · full after ${config.timing.long_ms} ms hold` : ''}`],
+  ];
+  const combo = (list) => list.map(short).join(' + ');
+  const helpers = [
+    config.precision.source && [`Hold ${short(config.precision.source)}`, `Precision aim · ${Math.round(config.precision.scale * 100)}%`],
+    config.shift && [`Hold ${short(config.shift)}`, 'Shift layer'],
+    config.combos.pause.length && [combo(config.combos.pause), 'Pause / resume input'],
+    config.combos.next_profile.length && [combo(config.combos.next_profile), 'Next profile'],
+    config.split_high_g.enabled && ['Levers split', 'High-G'],
+  ].filter(Boolean);
+  const table = (pairs) => `<table><tbody>${pairs.map(([k, v]) => `<tr><td class="k">${escape(k)}</td><td>${escape(v)}</td></tr>`).join('')}</tbody></table>`;
+  return `<div class="sheet-head"><div><h1>TCA → ACE COMBAT 8</h1><p>Profile: ${escape(profile ?? 'Unsaved profile')}</p></div><p class="meta">TCA-NEO bridge<br>Printed ${escape(date)}</p></div>`
+    + `<h2>Buttons</h2><table><thead><tr><th>TCA control</th><th>Press</th><th>Long press</th><th>Double tap</th>${config.shift ? `<th>Shift (hold ${escape(short(config.shift))})</th>` : ''}</tr></thead><tbody>${rows}</tbody></table>`
+    + `<div class="cols"><div><h2>Axes</h2>${table(axes)}</div><div><h2>Helpers</h2>${helpers.length ? table(helpers) : '<p>None set.</p>'}</div></div>`
+    + `<p class="foot">Long press: ${config.timing.long_ms} ms · double tap: ${config.timing.double_ms} ms · repeat every ${config.timing.repeat_ms} ms. Generated from the saved profile; reprint after changes.</p>`;
 }
 
 /** Delay that smoothing adds at the 10 ms report period, in whole milliseconds. */
@@ -207,7 +286,12 @@ export function client(fetchImpl, token) {
     if (!response.ok) throw new Error(data.error);
     return data;
   };
-  return { get: (path) => call('GET', path), put: (path, value) => call('PUT', path, JSON.stringify(value)), del: (path) => call('DELETE', path) };
+  return {
+    get: (path) => call('GET', path),
+    put: (path, value) => call('PUT', path, JSON.stringify(value)),
+    post: (path) => call('POST', path),
+    del: (path) => call('DELETE', path),
+  };
 }
 
 const SELECTABLE = new Set(sources());
@@ -268,6 +352,198 @@ export class Page {
       this.renderLabels();
     } catch (error) {
       this.note(`Earlier corrections could not be loaded: ${error.message}`);
+    }
+    try {
+      this.renderProfiles(await this.api.get('/api/profiles'));
+    } catch (error) {
+      this.profileNote(`Saved profiles could not be listed: ${error.message}`, true);
+    }
+  }
+
+  /** Open or close the profile menu. */
+  menu(open) {
+    this.$('profile-menu').hidden = !open;
+    this.$('profile-picker').setAttribute('aria-expanded', String(open));
+    if (open) this.$('profile-new').focus();
+  }
+
+  profileNote(text, error = false) {
+    this.$('profile-status').textContent = text;
+    this.$('profile-status').dataset.state = error ? 'error' : 'ok';
+  }
+
+  /** {profiles, active} from the daemon: the picker, the list (active marked) and the actions. */
+  renderProfiles({ profiles, active }) {
+    this.profiles = profiles;
+    this.active = active;
+    this.$('profile-name').textContent = active ?? 'Unsaved profile';
+    this.$('profiles-empty').hidden = profiles.length > 0;
+    this.$('profile-list').replaceChildren(...profiles.map((name) => {
+      const item = this.doc.createElement('li');
+      const button = this.doc.createElement('button');
+      button.type = 'button';
+      button.setAttribute('aria-current', String(name === active));
+      button.innerHTML = '<span></span><span class="tag"></span>';
+      button.firstChild.textContent = name;
+      button.lastChild.textContent = name === active ? 'active' : '';
+      button.addEventListener('click', () => this.activate(name));
+      item.append(button);
+      return item;
+    }));
+    const deleting = this.$('profile-delete');
+    deleting.disabled = !active;
+    deleting.textContent = this.confirmDelete ? `Delete ${active}? Click again` : 'Delete';
+  }
+
+  /** Profile switches replace the saved settings, so unsaved edits must be saved or discarded first. */
+  unsaved() {
+    if (!this.dirty) return false;
+    this.profileNote('Save or discard unsaved settings first.', true);
+    return true;
+  }
+
+  /** Make the daemon's answer the page's state: the saved profile, the settings shown, the profile list. */
+  adopt(result, text) {
+    this.saved = structuredClone(result.config);
+    this.previewing = false;
+    this.showSettings(structuredClone(result.config));
+    this.mark(false, text);
+    this.renderProfiles(result);
+    this.render();
+    this.profileNote(text);
+  }
+
+  async activate(name) {
+    if (this.unsaved()) return;
+    try {
+      const result = await this.api.post(`/api/profiles/${encodeURIComponent(name)}/activate`);
+      this.adopt(result, `Switched to ${name}.${result.running ? ' Applied to the running emulation.' : ''}`);
+    } catch (error) {
+      this.profileNote(`Not switched: ${error.message}`, true);
+    }
+  }
+
+  /** Save the saved settings under a new name (or replace a profile of that name), and make it active. */
+  async saveAs() {
+    const field = this.$('profile-new');
+    const name = field.value.trim();
+    const valid = /^[A-Za-z0-9_-]([A-Za-z0-9 _-]{0,38}[A-Za-z0-9_-])?$/.test(name);
+    field.setAttribute('aria-invalid', String(!valid));
+    if (!valid) return this.profileNote('Use 1 to 40 letters, digits, spaces, _ or -.', true);
+    if (this.unsaved()) return undefined;
+    try {
+      const result = await this.api.put(`/api/profiles/${encodeURIComponent(name)}`, {});
+      field.value = '';
+      this.renderProfiles(result);
+      return this.profileNote(`Saved as ${name}.`);
+    } catch (error) {
+      return this.profileNote(`Not saved: ${error.message}`, true);
+    }
+  }
+
+  /** Delete the active profile; the first click asks, the second deletes. The settings themselves stay. */
+  async deleteProfile() {
+    const name = this.active;
+    if (!this.confirmDelete) {
+      this.confirmDelete = true;
+      return this.renderProfiles({ profiles: this.profiles, active: name });
+    }
+    this.confirmDelete = false;
+    try {
+      this.renderProfiles(await this.api.del(`/api/profiles/${encodeURIComponent(name)}`));
+      return this.profileNote(`Deleted ${name}. The current settings are kept.`);
+    } catch (error) {
+      this.renderProfiles({ profiles: this.profiles, active: name });
+      return this.profileNote(`Not deleted: ${error.message}`, true);
+    }
+  }
+
+  /** Fill the cheat sheet from the saved profile, then print it (print styles show only the sheet). */
+  print(win = globalThis.window) {
+    const date = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    this.$('cheatsheet').innerHTML = cheatSheet(this.saved, this.active, date);
+    win.print();
+  }
+
+  /** The Live tab: raw TCA input next to what the NEO receives, the bridge state, NEO buttons and POV. */
+  renderLive(data) {
+    const monitor = data.monitor;
+    this.$('live-empty').hidden = Boolean(monitor);
+    const rows = monitor ? liveRows(monitor, data.pressed, this.saved) : [];
+    this.$('live-axes').replaceChildren(...rows.map(([name, source, raw, sent]) => {
+      const row = this.doc.createElement('div');
+      row.className = 'live-axis';
+      row.innerHTML = '<div class="name"><span></span></div><div class="pair"><div class="track raw"><i></i><span></span></div><div class="track out"><i></i><span></span></div></div><div class="value"></div>';
+      row.firstChild.prepend(name);
+      row.firstChild.lastChild.textContent = source;
+      row.querySelectorAll('.track span').forEach((bar, i) => {
+        const value = [raw, sent][i];
+        bar.style.setProperty('--from', `${50 + Math.min(value, 0) * 50}%`);
+        bar.style.setProperty('--size', `${Math.abs(value) * 50}%`);
+      });
+      row.lastChild.textContent = signed(sent);
+      return row;
+    }));
+    const states = [
+      [monitor?.armed ?? true, 'Throttle armed', 'Throttle waiting for centre', 'ok', 'warn'],
+      [monitor?.precision, 'Precision on', 'Precision off', 'warn', ''],
+      [monitor?.shift, 'Shift held', 'Shift off', 'warn', ''],
+      [data.paused, 'Input paused', 'Input live', 'warn', 'ok'],
+      [data.preview, 'Previewing unsaved', 'Preview off', 'warn', ''],
+    ];
+    this.$('live-states').replaceChildren(...states.map(([on, yes, no, toneOn, toneOff]) => {
+      const item = this.doc.createElement('li');
+      item.textContent = on ? yes : no;
+      item.dataset.tone = on ? toneOn : toneOff;
+      return item;
+    }));
+    this.$('live-pressed').replaceChildren(...data.pressed.map((key) => {
+      const chip = this.doc.createElement('span');
+      chip.className = 'chip static';
+      chip.textContent = short(key);
+      chip.title = label(key);
+      return chip;
+    }));
+    const buttons = monitor?.buttons ?? 0;
+    this.$('live-buttons').replaceChildren(...Array.from({ length: 15 }, (_, i) => {
+      const item = this.doc.createElement('li');
+      item.dataset.on = String(Boolean(buttons & (1 << i)));
+      item.innerHTML = '<b></b><span></span>';
+      item.firstChild.textContent = String(i + 1);
+      item.lastChild.textContent = NEO_ACTIONS[i + 1] ?? '—';
+      return item;
+    }));
+    const pov = monitor?.pov ?? 8;
+    const name = pov < 8 ? `POV ${POV_NAMES[pov]}` : 'POV centred';
+    this.$('live-pov').querySelectorAll('span').forEach((cell, index) => { cell.dataset.on = String(index === POV_CELLS[pov]); });
+    this.$('live-pov').setAttribute('aria-label', name);
+    this.$('live-pov-text').textContent = name;
+  }
+
+  /** The saved settings as a JSON file to keep or share. */
+  exportProfile() {
+    const blob = new Blob([`${JSON.stringify(this.saved, null, 2)}\n`], { type: 'application/json' });
+    const link = this.doc.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${this.active ?? 'tca-neo-bridge'}.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    this.profileNote(`Exported ${link.download}.`);
+  }
+
+  /** A shared JSON profile: the daemon checks and upgrades it before it becomes the saved settings. */
+  async importFile(file) {
+    if (!file) return;
+    if (this.unsaved()) return;
+    try {
+      const profile = JSON.parse(await file.text());
+      await this.api.put('/api/config', profile);
+      const data = await this.api.get('/api/config');
+      this.adopt({ config: data.config, profiles: this.profiles, active: this.active }, `Imported ${file.name}. Save it under a name to keep it as a profile.`);
+    } catch (error) {
+      this.profileNote(`Not imported: ${error.message}`, true);
+    } finally {
+      this.$('profile-import').value = '';
     }
   }
 
@@ -365,7 +641,8 @@ export class Page {
     for (const tab of this.doc.querySelectorAll('[role=tab]')) {
       tab.addEventListener('click', () => this.tab(tab.id));
       tab.addEventListener('keydown', (event) => {
-        if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') this.tab(tab.id === 'tab-mapping' ? 'tab-settings' : 'tab-mapping', true);
+        const step = { ArrowRight: 1, ArrowLeft: TABS.length - 1 }[event.key];
+        if (step) this.tab(TABS[(TABS.indexOf(tab.id) + step) % TABS.length], true);
       });
     }
     for (const radio of this.doc.querySelectorAll('input[name=behaviour]')) {
@@ -403,16 +680,33 @@ export class Page {
         this.changed(`Unsaved: ${text} off.`);
       });
     }
-    this.$('pause-record').addEventListener('click', () => {
-      if (this.capture?.kind !== 'pause') return this.startCapture('pause');
-      this.config.combos.pause = this.capture.keys;
-      this.capture = null;
-      return this.changed(this.config.combos.pause.length ? 'Unsaved: new pause combo.' : 'Unsaved: pause combo off.');
+    for (const [kind, field, text] of COMBOS) {
+      this.$(`${kind}-record`).addEventListener('click', () => {
+        if (this.capture?.kind !== kind) return this.startCapture(kind);
+        this.config.combos[field] = this.capture.keys;
+        this.capture = null;
+        return this.changed(this.config.combos[field].length ? `Unsaved: new ${text} combo.` : `Unsaved: ${text} combo off.`);
+      });
+      this.$(`${kind}-clear`).addEventListener('click', () => {
+        this.config.combos[field] = [];
+        this.changed(`Unsaved: ${text} combo off.`);
+      });
+    }
+    this.$('profile-picker').addEventListener('click', () => this.menu(this.$('profile-menu').hidden));
+    this.doc.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !this.$('profile-menu').hidden) {
+        this.menu(false);
+        this.$('profile-picker').focus();
+      }
     });
-    this.$('pause-clear').addEventListener('click', () => {
-      this.config.combos.pause = [];
-      this.changed('Unsaved: pause combo off.');
+    this.doc.addEventListener('click', (event) => {
+      if (!this.$('profile-menu').hidden && !event.target.closest?.('.profile-bar')) this.menu(false);
     });
+    this.$('save-as').addEventListener('submit', (event) => { event.preventDefault(); return this.saveAs(); });
+    this.$('profile-import').addEventListener('change', (event) => this.importFile(event.target.files[0]));
+    this.$('profile-export').addEventListener('click', () => this.exportProfile());
+    this.$('profile-delete').addEventListener('click', () => this.deleteProfile());
+    this.$('print').addEventListener('click', () => this.print());
   }
 
   tab(id, focus = false) {
@@ -424,7 +718,8 @@ export class Page {
       if (active && focus) tab.focus();
     }
     // A preview belongs to the settings tab: leaving it ends the preview, keeping the draft.
-    if (id === 'tab-mapping' && this.previewing) {
+    if (id === 'tab-live') this.renderLive(this.lastLive ?? { pressed: [], monitor: null });
+    if (id !== 'tab-settings' && this.previewing) {
       this.setPreview(false).then(() => this.mark(true, 'Unsaved changes · preview ended when you left this tab.'));
     }
   }
@@ -1087,28 +1382,30 @@ export class Page {
       this.$(`${kind}-clear`).disabled = !key;
       this.$(`${kind}-pick`).textContent = capturing === kind ? 'Cancel' : 'Press a control…';
     }
-    this.$('pause-record').textContent = capturing === 'pause' ? 'Done' : 'Record combo…';
-    const keys = capturing === 'pause' ? this.capture.keys : this.config.combos.pause;
-    const combo = this.$('pause-combo');
-    // Rebuilt only when the combo changes: this runs on every live poll.
-    if (combo.dataset.keys === keys.join()) return this.renderCapture(capturing);
-    combo.dataset.keys = keys.join();
-    combo.replaceChildren(...(keys.length ? keys : [null]).flatMap((key, index) => {
-      const chipItem = this.doc.createElement('span');
-      chipItem.className = key ? 'chip static' : 'chip static off';
-      chipItem.textContent = key ? short(key) : 'Off';
-      if (key) chipItem.title = label(key);
-      if (!index) return [chipItem];
-      const plus = this.doc.createElement('span');
-      plus.className = 'plus';
-      plus.textContent = '+';
-      return [plus, chipItem];
-    }));
-    return this.renderCapture(capturing);
+    for (const [kind, field] of COMBOS) {
+      this.$(`${kind}-record`).textContent = capturing === kind ? 'Done' : 'Record combo…';
+      this.$(`${kind}-clear`).disabled = !this.config.combos[field].length;
+      const keys = capturing === kind ? this.capture.keys : this.config.combos[field];
+      const combo = this.$(`${kind}-combo`);
+      // Rebuilt only when the combo changes: this runs on every live poll.
+      if (combo.dataset.keys === keys.join()) continue;
+      combo.dataset.keys = keys.join();
+      combo.replaceChildren(...(keys.length ? keys : [null]).flatMap((key, index) => {
+        const chipItem = this.doc.createElement('span');
+        chipItem.className = key ? 'chip static' : 'chip static off';
+        chipItem.textContent = key ? short(key) : 'Off';
+        if (key) chipItem.title = label(key);
+        if (!index) return [chipItem];
+        const plus = this.doc.createElement('span');
+        plus.className = 'plus';
+        plus.textContent = '+';
+        return [plus, chipItem];
+      }));
+    }
+    this.renderCapture(capturing);
   }
 
   renderCapture(capturing) {
-    this.$('pause-clear').disabled = !this.config.combos.pause.length;
     // The prompt sits in the card being captured for.
     for (const well of this.doc.querySelectorAll('.capture')) {
       well.hidden = well.dataset.for !== capturing;
@@ -1116,6 +1413,7 @@ export class Page {
         precision: 'Press the TCA control to hold for precision aiming.',
         shift: 'Press the TCA control to hold for the shift layer. Its own mapping is not sent while it is the shift control.',
         pause: 'Press and release the controls for the combo (up to 4), then choose Done.',
+        next: 'Press and release the controls for the combo (up to 4), then choose Done.',
       }[well.dataset.for];
     }
   }
@@ -1162,6 +1460,8 @@ export class Page {
     this.$('live-input-text').textContent = data.pressed.length ? `Now sending: ${data.pressed.map(label).join(', ')}` : data.links ? 'Nothing pressed' : 'Start emulation to see presses.';
     this.$('live-input').dataset.active = String(data.pressed.length > 0);
     this.levers(data.levers);
+    this.lastLive = data;
+    if (!this.$('panel-live').hidden) this.renderLive(data);
     const pressed = data.pressed.filter((key) => !this.held.has(key));
     const fresh = pressed.filter((key) => SELECTABLE.has(key));
     this.held = new Set(data.pressed);
@@ -1170,7 +1470,7 @@ export class Page {
       this.setSingle(kind, fresh[0]);
       this.capture = null;
       this.changed(`Unsaved: hold ${label(fresh[0])} for ${kind === 'precision' ? 'precision aiming' : 'the shift layer'}.`);
-    } else if (kind === 'pause') {
+    } else if (kind === 'pause' || kind === 'next') {
       this.capture.keys = [...new Set([...this.capture.keys, ...fresh])].slice(0, 4);
     }
     const picked = pressed.filter((key) => this.selectable(key));
