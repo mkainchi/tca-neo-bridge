@@ -320,3 +320,40 @@ fn interrupted_session_journal_is_recovered_or_rejected() {
     cli.lock().unwrap().fail = Some("--dev-unhide".into());
     assert_eq!(hiding(&cli, &dir).err().unwrap(), hidhide::ERROR);
 }
+
+#[test]
+fn a_reconnected_controller_on_a_new_port_is_hidden_and_journaled() {
+    let dir = temp("rehide");
+    let cli = Arc::new(Mutex::new(Cli::default()));
+    let mut h = hiding(&cli, &dir).unwrap();
+    assert_eq!(h.rehide(&thrustmaster).unwrap_err(), hidhide::ERROR); // not started: nothing to add to
+    h.start(&thrustmaster).unwrap();
+    // The quadrant comes back as a new device instance (another USB port).
+    const MOVED: &str = r"HID\VID_044F&PID_0407\8&NEW";
+    cli.lock().unwrap().gaming = gaming(&[(STICK, true, true), (MOVED, true, true)]);
+    h.rehide(&thrustmaster).unwrap();
+    assert!(cli.lock().unwrap().hidden.contains(MOVED));
+    let journal: Journal = serde_json::from_str(&std::fs::read_to_string(dir.join("hidhide-session.json")).unwrap()).unwrap();
+    assert!(journal.devices.contains(&MOVED.to_string()));
+    h.rehide(&thrustmaster).unwrap(); // nothing new the second time
+    h.close().unwrap();
+    assert!(cli.lock().unwrap().hidden.is_empty());
+    // Failures surface the isolation error.
+    for failing in ["--dev-gaming", "--dev-list", "--dev-hide"] {
+        let dir = temp("rehide-fail");
+        let cli = Arc::new(Mutex::new(Cli::default()));
+        let mut h = hiding(&cli, &dir).unwrap();
+        h.start(&thrustmaster).unwrap();
+        cli.lock().unwrap().gaming = gaming(&[(STICK, true, true), (MOVED, true, true)]);
+        cli.lock().unwrap().fail = Some(failing.into());
+        assert_eq!(h.rehide(&thrustmaster).unwrap_err(), hidhide::ERROR, "{failing}");
+        cli.lock().unwrap().fail = None;
+        h.close().unwrap();
+    }
+    let dir = temp("rehide-journal");
+    let cli = Arc::new(Mutex::new(Cli::default()));
+    let mut h = hiding(&cli, &dir).unwrap();
+    h.start(&thrustmaster).unwrap();
+    std::fs::create_dir_all(dir.join("hidhide-session.tmp")).unwrap(); // the journal cannot be written
+    assert_eq!(h.rehide(&thrustmaster).unwrap_err(), hidhide::ERROR);
+}

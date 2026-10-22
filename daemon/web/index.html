@@ -12,185 +12,376 @@
   <header class="top">
     <div class="brand">
       <span class="mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="24" height="24"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 12h9M5 9.5V5h14v4.5M5 14.5V19h14v-4.5"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 12h9M5 9.5V5h14v4.5M5 14.5V19h14v-4.5"/></svg>
       </span>
-      <div>
-        <h1>Any-TM-HOTAS bridge <span class="badge">Experimental</span></h1>
-        <p class="sub">Thrustmaster HOTAS → virtual T.Flight Hotas NEO</p>
-      </div>
+      <h1>Any-TM-HOTAS bridge</h1><span class="badge">Experimental</span>
     </div>
     <ul class="pills" aria-label="Bridge status">
+      <li id="pill-preview" class="pill preview" hidden><span class="dot"></span><span>Previewing unsaved</span></li>
+      <li id="pill-paused" class="pill preview" hidden><span class="dot"></span><span>Input paused</span></li>
       <li id="pill-status" class="pill" data-state="off"><span class="dot"></span><span id="daemon-status" role="status" aria-live="polite">Loading…</span></li>
-      <li id="pill-inputs" class="pill" data-state="off"><span class="dot"></span><span>Controllers: not open</span></li>
-      <li id="pill-hidhide" class="pill" data-state="off"><span class="dot"></span><span>HidHide: off</span></li>
+      <li id="pill-inputs" class="pill wide" data-state="off"><span class="dot"></span><span>Controllers: not open</span></li>
+      <li id="pill-hidhide" class="pill wide" data-state="off"><span class="dot"></span><span>HidHide: off</span></li>
       <li id="pill-neo" class="pill" data-state="off"><span class="dot"></span><span>Virtual NEO: absent</span></li>
     </ul>
-  </header>
-
-  <nav class="bar" aria-label="Configuration">
-    <div class="tabs" role="tablist" aria-label="Configuration sections">
-      <button id="tab-mapping" class="tab" role="tab" type="button" aria-selected="true" aria-controls="panel-mapping">Mapping</button>
-      <button id="tab-settings" class="tab" role="tab" type="button" aria-selected="false" aria-controls="panel-settings" tabindex="-1">Axes and settings</button>
-    </div>
-    <p class="mono path">Profile · <span id="profile-path">config.json</span> · <span id="setup-name">no controllers</span> · changes apply immediately</p>
-  </nav>
-
-  <main>
-  <section id="panel-mapping" role="tabpanel" aria-labelledby="tab-mapping" class="mapping">
-    <div class="row-link">
-      <section class="panel tca" aria-labelledby="tca-heading">
-        <div class="panel-head">
-          <h2 id="tca-heading">Your controllers</h2>
-        </div>
-        <p class="help">Click a control, or press it during emulation. Its NEO mapping lights up.</p>
-        <p id="sources-empty" class="empty" hidden>No controller found. Connect your HOTAS, then reopen Configure from the tray icon, or tick it under Axes and settings.</p>
-        <div id="sources" class="stack"></div>
-      </section>
-
-      <section class="panel neo" aria-labelledby="neo-heading">
-        <div class="panel-head">
-          <h2 id="neo-heading"><svg class="arrow" viewBox="0 0 18 12" width="18" height="12" aria-hidden="true"><path d="M1 6h15M11 1l5 5-5 5"/></svg>T.Flight Hotas NEO</h2>
-          <span class="badge">Virtual · AC8 native</span>
-        </div>
-        <p id="neo-context" class="context mono" data-mode="none"><span class="dot"></span><span id="neo-context-text">Select a control to light up its NEO targets</span></p>
-        <div class="plate grow"><div id="neo-spots" class="spots">
-          <img src="device/neo.svg" alt="T.Flight Hotas NEO, numbered buttons 1 to 16, POV hat and axes" width="606" height="726">
-        </div></div>
-        <ul class="legend" aria-label="Legend">
-          <li><span class="swatch kept"></span>Kept</li>
-          <li><span class="swatch added"></span>Added</li>
-          <li><span class="swatch removed"></span>Removed</li>
-          <li><span class="swatch selected"></span>Selected</li>
-        </ul>
-      </section>
-
-      <aside class="panel link" aria-labelledby="link-heading">
-        <div class="panel-head">
-          <h2 id="link-heading">Selected control</h2>
-        </div>
-        <div class="readout">
-          <span id="selected-kind" class="cap">Selection</span>
-          <span id="selected-name" class="selected-name">Nothing selected</span>
-        </div>
-        <dl id="compare" class="compare" hidden>
-          <dt id="mapped-now-label" class="cap">Mapped now</dt><dd id="mapped-now" class="mono">—</dd>
-          <dt id="mapped-new-label" class="cap">New mapping</dt><dd id="mapped-new" class="mono strong">—</dd>
-        </dl>
-        <ul id="diff" class="diff mono" aria-label="Changes"></ul>
-        <p id="link-help" class="help">Select a control, then click NEO buttons or a POV arrow to build its mapping. With nothing selected, clicking a NEO button shows what feeds it.</p>
+    <div class="profile-bar">
+      <span class="sr" id="profile-label">Profile</span>
+      <button id="profile-picker" class="picker mono" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="profile-menu" aria-describedby="profile-label"><span id="profile-name">Unsaved profile</span><svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5"/></svg></button>
+      <button id="print" class="btn quiet" type="button">Print cheat sheet</button>
+      <div id="profile-menu" class="menu" hidden>
+        <p class="cap" id="profiles-heading">Switch profile</p>
+        <ul id="profile-list" class="profile-list" aria-labelledby="profiles-heading"></ul>
+        <p id="profiles-empty" class="help">No saved profiles yet. Save the current one under a name.</p>
+        <form id="save-as" class="save-as" novalidate>
+          <label for="profile-new" class="sr">New profile name</label>
+          <input id="profile-new" class="text mono" type="text" maxlength="40" placeholder="Name, e.g. Dogfight" autocomplete="off" aria-describedby="profile-status">
+          <button class="btn primary" type="submit">Save as</button>
+        </form>
         <div class="actions">
-          <button id="record" class="btn primary" type="button" disabled>Record mapping</button>
-          <button id="revert" class="btn" type="button" disabled>Undo changes</button>
-          <button id="deselect" class="btn" type="button" disabled>Deselect</button>
+          <label class="btn quiet file"><input id="profile-import" type="file" accept=".json,application/json"><span>Import…</span></label>
+          <button id="profile-export" class="btn quiet" type="button">Export</button>
+          <button id="profile-delete" class="btn quiet hazard" type="button">Delete</button>
         </div>
-        <p id="link-status" class="mono note" role="status" aria-live="polite"></p>
-        <div class="block">
-          <h3 class="cap">Live input</h3>
-          <p id="live-input" class="well mono" data-active="false"><span class="dot"></span><span id="live-input-text">Start emulation to see presses.</span></p>
-        </div>
-        <div class="block">
-          <div class="block-head">
-            <h3 class="cap">Recorded corrections</h3>
-            <span id="recorded-count" class="count mono">0</span>
-          </div>
-          <p id="recorded-empty" class="empty">No corrections yet. Each recorded mapping is logged here and in <span class="mono">label-map.json</span>.</p>
-          <ol id="recorded" class="recorded" aria-label="Recorded corrections, newest first"></ol>
-        </div>
-      </aside>
+        <p id="profile-status" class="mono note" role="status" aria-live="polite"></p>
+        <p class="path mono">Saved settings · <span id="profile-path">config.json</span></p>
+      </div>
     </div>
+  </header>
+  <section id="warnings" class="warnings" aria-label="Launch warnings" hidden></section>
 
-    <div class="row-detail">
-      <div class="stack">
-        <section class="panel" aria-labelledby="other-heading">
-          <div class="panel-head"><h2 id="other-heading">Hats and other inputs</h2></div>
-          <div class="hat-head">
-            <div>
-              <p class="label">Camera hat drives</p>
-              <p id="hat-hint" class="help">Pans the camera through the NEO mini-stick (Rx/Ry).</p>
-            </div>
-            <fieldset class="seg">
-              <legend class="sr">Camera hat mode</legend>
-              <label><input type="radio" name="hat" value="camera" checked><span>Camera (NEO mini-stick)</span></label>
-              <label><input type="radio" name="hat" value="mapped"><span>Mapped controls</span></label>
+  <div class="body">
+    <nav class="nav" aria-label="Sections">
+      <button id="nav-mapping" type="button" data-page="mapping" aria-current="page" title="Mapping"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M3 4h4v4H3zM9 4h8M9 7h5M3 12h4v4H3zM9 12h8M9 15h5"/></svg><span>Mapping</span></button>
+      <div class="sep" aria-hidden="true"></div>
+      <button id="nav-axes" type="button" data-page="axes" title="Flight axes"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M10 2v16M2 10h16M5 15C8 15 9 12 10 10S12 5 15 5"/></svg><span>Flight axes</span></button>
+      <button id="nav-throttle" type="button" data-page="throttle" title="Throttle"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 17V9l3-6 3 6v8M5 17h10M8.5 11h3"/></svg><span>Throttle</span></button>
+      <button id="nav-camera" type="button" data-page="camera" title="Camera &amp; head"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M2 10s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5zM10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5"/></svg><span>Camera &amp; head</span></button>
+      <button id="nav-helpers" type="button" data-page="helpers" title="Buttons &amp; helpers"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h12M7 3v4M13 8v4M9 13v4"/></svg><span>Buttons &amp; helpers</span></button>
+      <button id="nav-controllers" type="button" data-page="controllers" title="Controllers"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M6 7h8a4 4 0 0 1 4 4v1a3 3 0 0 1-5 2l-1-1H8l-1 1a3 3 0 0 1-5-2v-1a4 4 0 0 1 4-4zM6 9.5v3M4.5 11h3M13 10.5h.01M15 12h.01"/></svg><span>Controllers</span></button>
+      <div class="sep" aria-hidden="true"></div>
+      <button id="nav-live" type="button" data-page="live" title="Live"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M2 10h3l2-5 3 10 2-6 2 3h4"/></svg><span>Live</span></button>
+      <p id="rail-live" class="liveflag" data-live="false"><span class="dot"></span><span id="rail-live-text">Idle</span></p>
+    </nav>
+
+    <main class="main">
+    <section id="page-mapping" class="page" aria-labelledby="mapping-title">
+      <div class="pagehead">
+        <h2 id="mapping-title">Mapping</h2>
+        <p class="help">Press a control to select it; its NEO targets light up as you press.</p>
+        <fieldset class="seg amber" aria-label="Mapping layer">
+          <label><input type="radio" name="layer" value="normal" checked><span>Normal</span></label>
+          <label><input type="radio" name="layer" value="shift"><span id="layer-shift">Shift</span></label>
+        </fieldset>
+      </div>
+      <div class="content map-grid">
+        <section class="panel tca" aria-labelledby="tca-heading">
+          <div class="panel-head">
+            <h3 id="tca-heading">Your controllers</h3>
+            <span id="setup-name" class="cap">No controllers</span>
+          </div>
+          <p id="sources-empty" class="empty" hidden>No controller found. Connect your HOTAS, or tick it on the Controllers page, then reopen Configure from the tray icon.</p>
+          <div id="sources" class="sources"></div>
+        </section>
+
+        <section class="panel neo" aria-labelledby="neo-heading">
+          <div class="panel-head">
+            <h3 id="neo-heading"><svg class="arrow" viewBox="0 0 18 12" width="18" height="12" aria-hidden="true"><path d="M1 6h15M11 1l5 5-5 5"/></svg>T.Flight Hotas NEO</h3>
+            <ul class="legend" aria-label="Legend">
+              <li><span class="swatch kept"></span>Kept</li>
+              <li><span class="swatch added"></span>Added</li>
+              <li><span class="swatch removed"></span>Removed</li>
+              <li><span class="swatch selected"></span>Selected</li>
+            </ul>
+          </div>
+          <p id="neo-context" class="context mono" data-mode="none"><span class="dot"></span><span id="neo-context-text">Select a control to light up its NEO targets</span></p>
+          <div class="room grow"><div class="plate"><div id="neo-spots" class="spots">
+            <img src="device/neo.svg" alt="T.Flight Hotas NEO, numbered buttons 1 to 16, POV hat and axes" width="606" height="726">
+          </div></div></div>
+          <p id="live-input" class="well mono" data-active="false"><span class="dot"></span><span id="live-input-text">Start emulation to see presses.</span></p>
+          <div class="chip-row">
+            <label class="cap" id="hat-label" for="camera-device">Camera hat</label>
+            <select id="camera-device" class="sel" aria-describedby="hat-hint"></select>
+            <fieldset class="seg" aria-labelledby="hat-label" aria-describedby="hat-hint">
+              <label><input type="radio" name="hat" value="camera" checked><span>Camera</span></label>
+              <label><input type="radio" name="hat" value="mapped"><span>Mapped</span></label>
             </fieldset>
           </div>
-          <div class="chip-row"><label class="cap" for="camera-device">Camera hat</label><select id="camera-device" class="sel"></select></div>
-          <div id="hat-rows" class="stack"></div>
-          <div id="quadrant-rows" class="stack" hidden>
-            <div class="chip-row"><span class="cap">Detent states</span><div id="extra-detents" class="chips"></div></div>
-            <div class="chip-row"><span class="cap">Add-on inputs</span><div id="extra-addons" class="chips"></div></div>
+          <p id="hat-hint" class="sr">Pans the camera through the NEO mini-stick (Rx/Ry).</p>
+          <div id="hat-rows" class="rows"></div>
+          <div id="quadrant-rows" class="rows" hidden>
+            <div class="chip-row"><span class="cap">Detents</span><div id="extra-detents" class="chips end"></div></div>
+            <div class="chip-row"><span class="cap">Add-ons</span><div id="extra-addons" class="chips end"></div></div>
           </div>
         </section>
 
-        <section class="panel" aria-labelledby="axes-heading">
-          <div class="panel-head"><h2 id="axes-heading">NEO axes</h2></div>
-          <dl id="axes" class="axes"></dl>
+        <aside class="panel link" aria-labelledby="link-heading">
+          <div class="subtabs" role="tablist" aria-label="Mapping details">
+            <button id="side-sel" type="button" role="tab" aria-selected="true" aria-controls="side-sel-panel"><span id="link-heading">Selected control</span></button>
+            <button id="side-neo" type="button" role="tab" aria-selected="false" aria-controls="side-neo-panel" tabindex="-1">NEO buttons</button>
+            <button id="side-log" type="button" role="tab" aria-selected="false" aria-controls="side-log-panel" tabindex="-1">Log · <span id="recorded-count" class="mono">0</span></button>
+          </div>
+          <div id="side-sel-panel" class="side" role="tabpanel" aria-labelledby="side-sel">
+            <p id="layer-note" class="layer-note" hidden></p>
+            <div class="readout">
+              <span id="selected-kind" class="cap">Selection</span>
+              <span id="selected-name" class="selected-name">Nothing selected</span>
+            </div>
+            <div id="slots" class="block" hidden>
+              <h4 class="cap sr" id="slots-label">Action to edit</h4>
+              <fieldset class="slots" aria-labelledby="slots-label">
+                <label><input type="radio" name="slot" value="press" checked><b>Press</b><span data-slot="press">Nothing</span></label>
+                <label><input type="radio" name="slot" value="long"><b>Long press</b><span data-slot="long">Nothing</span></label>
+                <label><input type="radio" name="slot" value="double"><b>Double tap</b><span data-slot="double">Nothing</span></label>
+              </fieldset>
+              <p id="slot-help" class="help"></p>
+            </div>
+            <dl id="compare" class="compare" hidden>
+              <dt id="mapped-now-label" class="cap">Mapped now</dt><dd id="mapped-now" class="mono">—</dd>
+              <dt id="mapped-new-label" class="cap">New mapping</dt><dd id="mapped-new" class="mono strong">—</dd>
+            </dl>
+            <ul id="diff" class="diff mono" aria-label="Changes"></ul>
+            <div id="behaviour" class="block" hidden>
+              <h4 class="cap" id="behaviour-label">Behaviour</h4>
+              <fieldset class="seg modes" aria-labelledby="behaviour-label">
+                <label><input type="radio" name="behaviour" value="hold"><b>Hold</b><span>While held</span></label>
+                <label><input type="radio" name="behaviour" value="pulse"><b>Pulse</b><span>On switch-on</span></label>
+                <label><input type="radio" name="behaviour" value="pulse_change"><b>On change</b><span>On and off</span></label>
+                <label><input type="radio" name="behaviour" value="toggle"><b>Toggle</b><span>Each press flips</span></label>
+                <label><input type="radio" name="behaviour" value="repeat"><b>Repeat</b><span>While held</span></label>
+              </fieldset>
+              <div class="timeline" role="img" id="timeline" aria-label="What the game receives">
+                <div class="track"><span class="mono">Control</span><div class="lane"><span class="in"></span></div></div>
+                <div class="track"><span class="mono">NEO</span><div id="timeline-out" class="lane"></div></div>
+              </div>
+              <p id="behaviour-help" class="help"></p>
+            </div>
+            <div id="gestures" class="block" hidden>
+              <h4 class="cap">What the game receives</h4>
+              <div class="timeline" role="img" aria-label="A tap sends the press after the double-tap window; a hold sends the long press; two quick taps send the double tap">
+                <div class="track wide"><span class="mono">Tap</span><div class="lane"><span class="g tap-in"></span><span class="g tap-out"></span></div></div>
+                <div class="track wide"><span class="mono">Hold</span><div class="lane"><span class="g hold-in"></span><span class="g hold-out alt"></span></div></div>
+                <div class="track wide"><span class="mono">Double tap</span><div class="lane"><span class="g dbl-in1"></span><span class="g dbl-in2"></span><span class="g dbl-out alt"></span></div></div>
+              </div>
+              <p id="gesture-help" class="help"></p>
+            </div>
+            <p id="link-help" class="help">Select a control, then click NEO buttons or a POV arrow to build its mapping. With nothing selected, clicking a NEO button shows what feeds it.</p>
+            <div class="actions end">
+              <button id="record" class="btn primary sm" type="button" disabled>Record mapping</button>
+              <button id="revert" class="btn sm" type="button" disabled>Undo changes</button>
+              <button id="deselect" class="btn sm" type="button" disabled>Deselect</button>
+            </div>
+            <p id="link-status" class="mono note" role="status" aria-live="polite"></p>
+          </div>
+          <div id="side-neo-panel" class="side" role="tabpanel" aria-labelledby="side-neo" hidden>
+            <div class="grid" role="group" aria-label="NEO buttons · ACE COMBAT 8">
+              <div class="nrow head" aria-hidden="true"><span class="cap">NEO</span><span class="cap">Action</span><span class="cap">Fed by</span></div>
+              <div id="neo-rows"></div>
+              <div class="nrow inert"><span class="nnum">16</span><span>On the hardware, not in the NEO report</span><span class="mono">—</span></div>
+            </div>
+            <h4 class="cap">NEO axes</h4>
+            <dl id="axes" class="axes"></dl>
+          </div>
+          <div id="side-log-panel" class="side" role="tabpanel" aria-labelledby="side-log" hidden>
+            <p id="recorded-empty" class="empty">No corrections yet. Each recorded mapping is logged here and in <span class="mono">label-map.json</span>.</p>
+            <ol id="recorded" class="recorded" aria-label="Recorded corrections, newest first"></ol>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <form id="profile" class="settings" novalidate>
+    <section id="page-axes" class="page" aria-labelledby="axes-title" hidden>
+      <div class="pagehead">
+        <h2 id="axes-title">Flight axes</h2>
+        <p class="help">Move the stick: the dot and every meter follow it through your unsaved settings.</p>
+        <fieldset class="seg" aria-label="Axis to tune">
+          <label><input type="radio" name="axis" value="roll" checked><span>Roll</span></label>
+          <label><input type="radio" name="axis" value="pitch"><span>Pitch</span></label>
+          <label><input type="radio" name="axis" value="yaw"><span>Yaw</span></label>
+        </fieldset>
+      </div>
+      <div class="content axes-grid">
+        <section class="panel" aria-labelledby="curve-heading">
+          <div class="panel-head"><h3 id="curve-heading"><span id="curve-name">Roll</span> response</h3><span class="livechip" data-livechip><span class="dot"></span><span>Idle</span></span></div>
+          <div class="room grow square">
+            <svg id="curve" viewBox="0 0 240 240" role="img" aria-label="Roll response curve: stick input against NEO output">
+              <rect id="curve-band" x="120" y="10" width="0" height="220" class="band"></rect>
+              <path d="M10 120H230M120 10V230" class="axis-line"></path>
+              <path d="M65 10V230M175 10V230M10 65H230M10 175H230" class="grid-line"></path>
+              <path d="M10 230L230 10" class="identity"></path>
+              <path id="curve-path" d="" class="curve"></path>
+              <line id="curve-drop" x1="120" y1="230" x2="120" y2="120" class="drop"></line>
+              <circle id="curve-dot" cx="120" cy="120" r="6" class="dot-mark"></circle>
+              <text x="18" y="28" class="graph-text">NEO OUT</text>
+              <text x="222" y="220" class="graph-text" text-anchor="end">STICK IN</text>
+            </svg>
+          </div>
+          <div class="readouts">
+            <div class="read"><span id="read-input-label" class="cap">Roll · test</span><b id="read-input" class="mono">+0.00</b></div>
+            <div class="read out"><span class="cap">NEO output</span><b id="read-output" class="mono">+0.00</b></div>
+          </div>
+          <div id="test-input-wrap" class="field">
+            <p class="idlenote">Start emulation to see your device. Meanwhile, drag the test input.</p>
+            <input id="test-input" class="rng" type="range" min="-100" max="100" step="1" value="40" aria-label="Test stick input, percent">
+          </div>
+        </section>
+
+        <section class="panel sliders" aria-labelledby="tune-heading">
+          <div class="panel-head">
+            <h3 id="tune-heading"><span id="tune-name">Roll</span> settings</h3>
+            <div class="actions">
+              <button id="copy-axis" class="btn quiet" type="button">Copy roll to pitch</button>
+              <button id="reset-axis" class="btn quiet" type="button">Reset roll</button>
+            </div>
+          </div>
+          <div class="field">
+            <div class="field-head">
+              <label for="tune-deadzone"><span class="label">Deadzone</span><span class="help">Stick travel ignored around centre.</span></label>
+              <span class="unit"><input id="tune-deadzone" class="num short" type="number" min="0" max="50" step="1" inputmode="numeric" aria-describedby="tune-deadzone-error"><span class="mono">%</span></span>
+            </div>
+            <input id="tune-deadzone-range" class="rng warn" type="range" min="0" max="50" step="1" aria-label="Deadzone, percent">
+            <p id="tune-deadzone-error" class="error" role="alert"></p>
+          </div>
+          <div class="field">
+            <div class="field-head">
+              <label for="tune-saturation"><span class="label">Full deflection at</span><span class="help">Stick travel that already gives 100% output.</span></label>
+              <span class="unit"><input id="tune-saturation" class="num short" type="number" min="50" max="100" step="1" inputmode="numeric" aria-describedby="tune-saturation-error"><span class="mono">%</span></span>
+            </div>
+            <input id="tune-saturation-range" class="rng" type="range" min="50" max="100" step="1" aria-label="Full deflection at, percent">
+            <p id="tune-saturation-error" class="error" role="alert"></p>
+          </div>
+          <div class="field">
+            <div class="field-head">
+              <label for="tune-anti"><span class="label">Anti-deadzone</span><span class="help">Smallest output past the deadzone, to beat the game’s own.</span></label>
+              <span class="unit"><input id="tune-anti" class="num short" type="number" min="0" max="50" step="1" inputmode="numeric" aria-describedby="tune-anti-error"><span class="mono">%</span></span>
+            </div>
+            <input id="tune-anti-range" class="rng" type="range" min="0" max="50" step="1" aria-label="Anti-deadzone, percent">
+            <p id="tune-anti-error" class="error" role="alert"></p>
+          </div>
+          <div class="field">
+            <div class="field-head">
+              <label for="tune-curve"><span class="label">Curve</span><span class="help">Positive softens the centre for fine aim; negative sharpens it.</span></label>
+              <span class="unit"><input id="tune-curve" class="num short" type="number" min="-100" max="100" step="1" inputmode="numeric" aria-describedby="tune-curve-error"><span class="mono">%</span></span>
+            </div>
+            <input id="tune-curve-range" class="rng" type="range" min="-100" max="100" step="1" aria-label="Curve, percent">
+            <p id="tune-curve-error" class="error" role="alert"></p>
+          </div>
+          <div class="field">
+            <div class="field-head">
+              <label for="tune-smoothing"><span class="label">Smoothing</span><span class="help">Filters jitter. More smoothing adds delay.</span></label>
+              <span class="unit"><input id="tune-smoothing" class="num short" type="number" min="0" max="90" step="5" inputmode="numeric" aria-describedby="tune-smoothing-error tune-lag"><span class="mono">%</span></span>
+            </div>
+            <input id="tune-smoothing-range" class="rng" type="range" min="0" max="90" step="5" aria-label="Smoothing, percent">
+            <p id="tune-smoothing-error" class="error" role="alert"></p>
+          </div>
+          <p id="tune-lag" class="lag">No added delay</p>
+        </section>
+
+        <section class="panel" aria-labelledby="all-axes-heading">
+          <div class="panel-head"><h3 id="all-axes-heading">All axes</h3><span class="livechip" data-livechip><span class="dot"></span><span>Idle</span></span></div>
+          <div class="strip" aria-label="Every flight axis through its current settings">
+            <div class="mini" data-axis="roll"><span class="cap split"><span>Roll</span><span class="mono" data-out>0.00</span></span><div class="minibar raw" aria-hidden="true"><i></i><span></span></div><div class="minibar" aria-hidden="true"><i></i><span></span></div></div>
+            <div class="mini" data-axis="pitch"><span class="cap split"><span>Pitch</span><span class="mono" data-out>0.00</span></span><div class="minibar raw" aria-hidden="true"><i></i><span></span></div><div class="minibar" aria-hidden="true"><i></i><span></span></div></div>
+            <div class="mini" data-axis="yaw"><span class="cap split"><span>Yaw</span><span class="mono" data-out>0.00</span></span><div class="minibar raw" aria-hidden="true"><i></i><span></span></div><div class="minibar" aria-hidden="true"><i></i><span></span></div></div>
+          </div>
+          <ul class="zones" aria-hidden="true"><li><span class="raw-key"></span>Raw input</li><li><span class="out-key"></span>Sent to NEO</li></ul>
+          <div class="field divided">
+            <p class="cap" id="yaw-heading">Yaw source · NEO Rz</p>
+            <fieldset class="seg" aria-labelledby="yaw-heading">
+              <label><input type="radio" name="yaw-source" value="twist"><span>Twist</span></label>
+              <label><input type="radio" name="yaw-source" value="off"><span>Off</span></label>
+              <label><input type="radio" name="yaw-source" value="lever_differential"><span>Lever diff.</span></label>
+            </fieldset>
+            <p id="yaw-help" class="help"></p>
+          </div>
+          <fieldset class="field divided">
+            <legend class="cap">Axis sources</legend>
+            <div id="bindings" class="bindings"></div>
+            <p id="detect-hint" class="help" role="status" aria-live="polite">Pick the axis of your HOTAS for each NEO axis, or press Detect and move it. Check every direction in the game: untested controllers may need Invert.</p>
+          </fieldset>
         </section>
       </div>
+    </section>
 
-      <section class="panel table" aria-labelledby="table-heading">
-        <div class="panel-head"><h2 id="table-heading">NEO buttons · ACE COMBAT 8</h2></div>
-        <div class="grid" role="group" aria-labelledby="table-heading">
-          <div class="nrow head" aria-hidden="true"><span class="cap">NEO</span><span class="cap">Action</span><span class="cap">Fed by</span></div>
-          <div id="neo-rows"></div>
-          <div class="nrow inert"><span class="nnum">16</span><span>On the hardware, not in the NEO report</span><span class="mono">—</span></div>
-        </div>
-      </section>
-    </div>
-  </section>
-
-  <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" class="settings" hidden>
-    <form id="profile" novalidate>
-      <div class="row-settings">
-        <section class="panel" aria-labelledby="flight-heading">
-          <div class="panel-head">
-            <h2 id="flight-heading">Flight axes</h2>
-            <span class="cap">Roll · pitch · yaw · throttle · camera</span>
+    <section id="page-throttle" class="page" aria-labelledby="throttle-title" hidden>
+      <div class="pagehead">
+        <h2 id="throttle-title">Throttle</h2>
+        <p class="help">Move the levers: the needle, zone and NEO throttle follow them live.</p>
+        <fieldset class="seg" aria-label="Throttle response">
+          <label><input type="radio" name="throttle-mode" value="linear"><span>Linear</span></label>
+          <label><input type="radio" name="throttle-mode" value="detents"><span>Detents</span></label>
+        </fieldset>
+      </div>
+      <div class="content throttle-grid">
+        <section class="panel" aria-labelledby="throttle-heading">
+          <div class="panel-head"><h3 id="throttle-heading"><span id="throttle-source">Left lever · test</span> → NEO throttle</h3><span id="throttle-zone" class="state">Cruise</span></div>
+          <p id="throttle-help" class="help"></p>
+          <div id="throttle-rail" class="rail detent-rail" aria-hidden="true">
+            <span class="zone brake"></span><span class="zone ramp low"></span><span class="zone cruise"></span><span class="zone ramp high"></span><span class="zone boost"></span>
+            <span id="throttle-needle" class="needle"></span>
           </div>
-
+          <div class="marks" aria-hidden="true"><span data-mark="idle">Idle</span><span data-mark="cruise">CL · cruise</span><span data-mark="boost">Boost</span></div>
+          <div id="test-lever-wrap" class="field">
+            <p class="idlenote">Start emulation to see your levers. Meanwhile, drag the test lever.</p>
+            <input id="test-lever" class="rng" type="range" min="0" max="100" step="1" value="50" aria-label="Test lever travel, percent">
+          </div>
           <div class="field">
-            <div class="field-head">
-              <label for="deadzone"><span class="label">Stick deadzone</span><span class="help">Applied to roll, pitch and yaw. 0 to 0.99.</span></label>
-              <input id="deadzone" class="num" name="deadzone" type="number" min="0" max="0.99" step="0.01" inputmode="decimal" aria-describedby="deadzone-error">
-            </div>
-            <input id="deadzone-range" class="rng" type="range" min="0" max="30" step="1" aria-label="Stick deadzone, percent">
-            <div class="rail" aria-hidden="true"><span class="tick q1"></span><span class="tick q2"></span><span class="tick q3"></span><span id="deadzone-band" class="hatch"></span></div>
-            <p class="scale mono" aria-hidden="true"><span>−100%</span><span id="deadzone-text">Ignored band ±0%</span><span>+100%</span></p>
-            <p id="deadzone-error" class="error" role="alert"></p>
+            <div class="field-head"><span class="cap">NEO throttle (Z)</span><span id="throttle-out" class="mono value">+0.00 · cruise</span></div>
+            <div class="outbar" aria-hidden="true"><i></i><span id="throttle-bar"></span></div>
           </div>
-
-          <div class="field">
-            <div class="field-head">
-              <label for="camera"><span class="label">Camera strength</span><span class="help">How far the camera hat moves the NEO mini-stick. 0 to 1.</span></label>
-              <input id="camera" class="num" name="camera" type="number" min="0" max="1" step="0.05" inputmode="decimal" aria-describedby="camera-error">
+          <div id="detents" class="detents">
+            <div class="card">
+              <label for="detent-idle" class="label">Idle (brake below)</label>
+              <span class="unit"><input id="detent-idle" class="num short" type="number" min="0" max="100" step="1" inputmode="numeric" aria-describedby="detent-error"><span class="mono">%</span></span>
+              <button class="btn quiet" type="button" data-capture="idle">Capture</button>
             </div>
-            <input id="camera-range" class="rng" type="range" min="0" max="100" step="5" aria-label="Camera strength, percent">
-            <p id="camera-error" class="error" role="alert"></p>
+            <div class="card">
+              <label for="detent-cruise" class="label">CL (cruise centre)</label>
+              <span class="unit"><input id="detent-cruise" class="num short" type="number" min="0" max="100" step="1" inputmode="numeric" aria-describedby="detent-error"><span class="mono">%</span></span>
+              <button class="btn quiet" type="button" data-capture="cruise">Capture</button>
+            </div>
+            <div class="card">
+              <label for="detent-boost" class="label">Boost from</label>
+              <span class="unit"><input id="detent-boost" class="num short" type="number" min="0" max="100" step="1" inputmode="numeric" aria-describedby="detent-error"><span class="mono">%</span></span>
+              <button class="btn quiet" type="button" data-capture="boost">Capture</button>
+            </div>
+            <div class="card">
+              <label for="detent-band" class="label">Cruise band ±</label>
+              <span class="unit"><input id="detent-band" class="num short" type="number" min="0" max="20" step="1" inputmode="numeric" aria-describedby="detent-error"><span class="mono">%</span></span>
+            </div>
           </div>
-
-          <fieldset class="field">
-            <legend class="label">Axis sources</legend>
-            <p class="help">Pick the axis of your HOTAS for each NEO axis, or press Detect and move it during emulation. Check every direction in the game: untested controllers may need Invert.</p>
-            <div id="bindings" class="bindings"></div>
-            <div class="binding">
-              <span class="label">Throttle</span>
-              <select id="throttle-add" class="sel" aria-label="Add a throttle axis"></select>
-              <button id="detect-throttle" class="btn quiet" type="button" data-detect="throttle">Detect</button>
-            </div>
-            <ul id="throttle-list" class="throttles" aria-label="Throttle axes; the last one moved takes over"></ul>
-            <p id="detect-hint" class="help" role="status" aria-live="polite"></p>
-          </fieldset>
+          <p id="detent-error" class="error" role="alert"></p>
+          <ul id="detent-legend" class="zones">
+            <li aria-hidden="true"><span class="hatch key"></span>Brake</li>
+            <li aria-hidden="true"><span class="cruise-key"></span>Cruise band</li>
+            <li aria-hidden="true"><span class="zone-key"></span>Boost</li>
+            <li id="capture-hint">Put the lever in a detent, then Capture.</li>
+          </ul>
+          <div class="field divided push">
+            <div class="field-head"><p class="label" id="throttle-axes-label">Throttle axes</p><p class="help">The last one moved takes over.</p></div>
+            <ul id="throttle-list" class="throttles" aria-labelledby="throttle-axes-label"></ul>
+            <div class="binding"><select id="throttle-add" class="sel" aria-label="Add a throttle axis"></select><button class="btn quiet" type="button" data-detect="throttle">Detect</button></div>
+          </div>
         </section>
 
         <section class="panel" aria-labelledby="split-heading">
-          <div class="panel-head">
-            <h2 id="split-heading">High-G from split levers</h2>
-            <span class="badge">Holds NEO 5</span>
-          </div>
+          <div class="panel-head"><h3 id="split-heading">High-G from split levers</h3><span id="lever-state" class="state">Not split</span></div>
           <label class="tog wide"><input type="checkbox" id="split-enabled"><span>Hold NEO 5 (High-G) while one lever is forward and the other back</span></label>
           <div class="binding"><label class="label" for="lever-0">First lever</label><select id="lever-0" class="sel"></select><button class="btn quiet" type="button" data-detect="lever-0">Detect</button></div>
           <div class="binding"><label class="label" for="lever-1">Second lever</label><select id="lever-1" class="sel"></select><button class="btn quiet" type="button" data-detect="lever-1">Detect</button></div>
           <label class="tog"><input type="checkbox" id="split-reverse"><span>Forward is the high raw value (most non-TCA throttles)</span></label>
+          <div class="well levers">
+            <p id="lever-live" class="help">Lever positions appear here during emulation.</p>
+            <div id="lever-rails" class="lever-rails" hidden>
+              <div class="lever"><span id="lever-name-0">First lever</span><div class="rail tall" aria-hidden="true"><span class="hatch back"></span><span class="zone-f"></span><span id="needle-0" class="needle"></span></div><span id="value-0" class="mono value">0%</span></div>
+              <div class="lever"><span id="lever-name-1">Second lever</span><div class="rail tall" aria-hidden="true"><span class="hatch back"></span><span class="zone-f"></span><span id="needle-1" class="needle"></span></div><span id="value-1" class="mono value">0%</span></div>
+            </div>
+            <ul class="zones" aria-hidden="true">
+              <li><span class="hatch key"></span>Back zone</li>
+              <li><span class="zone-key"></span>Forward zone</li>
+              <li>Full stop reads 0%</li>
+            </ul>
+          </div>
           <div class="thresholds">
             <div class="card">
               <div class="field-head">
@@ -209,70 +400,291 @@
               <p id="split-back-error" class="error" role="alert"></p>
             </div>
           </div>
+          <p class="help">Move both levers: the rails follow them against the thresholds above, even before you save. Either lever can be the forward one; while split, the throttle follows it.</p>
+        </section>
+      </div>
+    </section>
 
-          <div class="well levers">
-            <div class="block-head">
-              <h3 class="cap">Live lever positions</h3>
-              <span id="lever-state" class="state">Not split</span>
+    <section id="page-camera" class="page" aria-labelledby="camera-title" hidden>
+      <div class="pagehead">
+        <h2 id="camera-title">Camera &amp; head</h2>
+        <p class="help">Press the hat or move your head: the hold and camera output show live.</p>
+      </div>
+      <div class="content two-grid">
+        <section class="panel" aria-labelledby="camera-heading">
+          <div class="panel-head"><h3 id="camera-heading">Camera · hat → NEO mini-stick</h3><span id="hat-state" class="state">Hat released</span></div>
+          <div class="pair-grid">
+            <div class="field">
+              <div class="field-head">
+                <label for="camera"><span class="label">Strength</span><span class="help">How far the hat moves the mini-stick.</span></label>
+                <span class="unit"><input id="camera" class="num short" type="number" min="0" max="100" step="5" inputmode="numeric" aria-describedby="camera-error"><span class="mono">%</span></span>
+              </div>
+              <input id="camera-range" class="rng" type="range" min="0" max="100" step="5" aria-label="Camera strength, percent">
+              <p id="camera-error" class="error" role="alert"></p>
             </div>
-            <p id="lever-live" class="help">Lever positions appear here during emulation.</p>
-            <div id="lever-rails" class="lever-rails" hidden>
-              <div class="lever"><span id="lever-name-0">First lever</span><div class="rail tall" aria-hidden="true"><span class="hatch back"></span><span class="zone-f"></span><span id="needle-0" class="needle"></span></div><span id="value-0" class="mono value">0%</span></div>
-              <div class="lever"><span id="lever-name-1">Second lever</span><div class="rail tall" aria-hidden="true"><span class="hatch back"></span><span class="zone-f"></span><span id="needle-1" class="needle"></span></div><span id="value-1" class="mono value">0%</span></div>
+            <div class="field">
+              <div class="field-head">
+                <label for="camera-ramp"><span class="label">Ramp</span><span class="help">Time to full strength. 0 is instant.</span></label>
+                <span class="unit"><input id="camera-ramp" class="num short" type="number" min="0" max="2000" step="50" inputmode="numeric" aria-describedby="camera-ramp-error"><span class="mono">ms</span></span>
+              </div>
+              <input id="camera-ramp-range" class="rng" type="range" min="0" max="2000" step="50" aria-label="Camera ramp, milliseconds">
+              <p id="camera-ramp-error" class="error" role="alert"></p>
             </div>
-            <ul class="zones" aria-hidden="true">
-              <li><span class="hatch key"></span>Back zone</li>
-              <li><span class="zone-key"></span>Forward zone</li>
-              <li>Full stop reads 0%</li>
-            </ul>
           </div>
-          <p class="help">Either lever can be the forward one. While split, the throttle follows it, with that lever's inversion.</p>
+          <div class="ramp">
+            <svg id="ramp" viewBox="0 0 300 100" preserveAspectRatio="none" role="img" aria-label="Camera output while the hat is held">
+              <rect id="ramp-hold" x="10" y="8" width="0" height="80" class="hold"></rect>
+              <line x1="10" y1="88" x2="290" y2="88" class="baseline"></line>
+              <line id="ramp-long" x1="103" y1="8" x2="103" y2="88" class="marker"></line>
+              <text id="ramp-long-text" x="107" y="82">LONG PRESS</text>
+              <path id="ramp-path" d="" class="curve"></path>
+              <line id="ramp-now" x1="10" y1="8" x2="10" y2="88" class="now"></line>
+            </svg>
+          </div>
+          <label class="tog wide"><input type="checkbox" id="camera-full"><span>Full strength after a long press: hold the hat to look all the way round</span></label>
+          <div class="field-head">
+            <p class="cap" id="camera-source-label">Source</p>
+            <fieldset class="seg" aria-labelledby="camera-source-label" aria-describedby="camera-source-help">
+              <label><input type="radio" name="camera-source" value="hat"><span>Hat</span></label>
+              <label><input type="radio" name="camera-source" value="lever"><span>Hat + a lever</span></label>
+            </fieldset>
+          </div>
+          <div id="camera-lever-row" class="binding" hidden><label class="label" for="camera-lever">Camera lever</label><select id="camera-lever" class="sel"></select><label class="tog"><input type="checkbox" id="camera-lever-invert"><span>Invert</span></label><button class="btn quiet" type="button" data-detect="camera">Detect</button></div>
+          <p id="camera-source-help" class="help"></p>
+          <div class="pair-grid">
+            <div class="field"><div class="field-head"><span class="cap">Camera X</span><span id="cam-x-text" class="mono value out">0.00</span></div><div class="outbar thin" aria-hidden="true"><i></i><span id="cam-x"></span></div></div>
+            <div class="field"><div class="field-head"><span class="cap">Camera Y</span><span id="cam-y-text" class="mono value out">0.00</span></div><div class="outbar thin" aria-hidden="true"><i></i><span id="cam-y"></span></div></div>
+          </div>
         </section>
 
-        <section class="panel" aria-labelledby="devices-heading">
-          <div class="panel-head">
-            <h2 id="devices-heading">Controllers</h2>
-            <span class="cap">Hidden from the game while emulating</span>
+        <section class="panel" aria-labelledby="head-heading">
+          <div class="panel-head"><h3 id="head-heading">Head tracking · OpenTrack</h3><p id="head-status" class="state head-status" data-state="off"><span class="dot"></span><span id="head-status-text">Off</span></p></div>
+          <label class="tog wide"><input type="checkbox" id="head-enabled"><span>Look around with your head: OpenTrack moves the NEO camera</span></label>
+          <div class="head-view">
+            <svg id="head-view" viewBox="0 0 180 180" role="img" aria-label="Head direction and camera output">
+              <path d="M90 10V170M10 90H170" class="axis-line"></path>
+              <rect id="head-band" x="90" y="90" width="0" height="0" class="band"></rect>
+              <circle id="head-dot" cx="90" cy="90" r="7" class="dot-mark"></circle>
+            </svg>
+            <div class="stacked">
+              <div class="readouts">
+                <div class="read"><span class="cap">Head yaw</span><b id="head-yaw-read" class="mono">—</b></div>
+                <div class="read"><span class="cap">Head pitch</span><b id="head-pitch-read" class="mono">—</b></div>
+              </div>
+              <div class="read out"><span class="cap">Camera X / Y</span><b id="head-camera-read" class="mono">—</b></div>
+              <div class="togs two">
+                <label class="tog"><input type="checkbox" id="head-invert-yaw"><span>Invert L / R</span></label>
+                <label class="tog"><input type="checkbox" id="head-invert-pitch"><span>Invert U / D</span></label>
+              </div>
+            </div>
           </div>
+          <div class="head-grid">
+            <div class="card">
+              <label for="head-port" class="label">UDP port</label>
+              <span class="unit"><input id="head-port" class="num" type="number" min="1024" max="65535" step="1" inputmode="numeric" aria-describedby="head-error"></span>
+            </div>
+            <div class="card">
+              <label for="head-yaw" class="label">Full look L / R</label>
+              <span class="unit"><input id="head-yaw" class="num short" type="number" min="5" max="180" step="1" inputmode="numeric" aria-describedby="head-error"><span class="mono">°</span></span>
+            </div>
+            <div class="card">
+              <label for="head-pitch" class="label">Full look U / D</label>
+              <span class="unit"><input id="head-pitch" class="num short" type="number" min="5" max="90" step="1" inputmode="numeric" aria-describedby="head-error"><span class="mono">°</span></span>
+            </div>
+            <div class="card">
+              <label for="head-timeout" class="label" title="Fall back to the hat after this long without OpenTrack data">Hat back after</label>
+              <span class="unit"><input id="head-timeout" class="num" type="number" min="100" max="5000" step="50" inputmode="numeric" aria-describedby="head-error"><span class="mono">ms</span></span>
+            </div>
+            <div class="card">
+              <label for="head-deadzone" class="label">Deadzone</label>
+              <span class="unit"><input id="head-deadzone" class="num short" type="number" min="0" max="50" step="1" inputmode="numeric" aria-describedby="head-error"><span class="mono">%</span></span>
+            </div>
+            <div class="card">
+              <label for="head-curve" class="label">Curve</label>
+              <span class="unit"><input id="head-curve" class="num short" type="number" min="-100" max="100" step="1" inputmode="numeric" aria-describedby="head-error"><span class="mono">%</span></span>
+            </div>
+          </div>
+          <p id="head-error" class="error" role="alert"></p>
+          <p class="help">OpenTrack output: <b>UDP over network</b>, remote IP <span class="mono">127.0.0.1</span>, port <span id="head-port-step" class="mono">4242</span>. The hat wins while pressed. The port and on/off apply when emulation starts.</p>
+        </section>
+      </div>
+    </section>
+
+    <section id="page-helpers" class="page" aria-labelledby="helpers-title" hidden>
+      <div class="pagehead">
+        <h2 id="helpers-title">Buttons &amp; helpers</h2>
+        <p class="help">Hold a helper or tap a button: states and the press timeline update as you do.</p>
+      </div>
+      <div class="content helpers-grid">
+        <section class="panel" aria-labelledby="precision-heading">
+          <div class="panel-head"><h3 id="precision-heading">Precision aiming</h3><span id="precision-state" class="state">Precision off</span></div>
+          <div class="chip-row">
+            <span class="cap">Hold</span>
+            <span id="precision-source" class="chip static">Off</span>
+            <button id="precision-pick" class="btn quiet" type="button">Press a control…</button>
+            <button id="precision-clear" class="btn quiet" type="button">Clear</button>
+          </div>
+          <p class="well capture" data-for="precision" role="status" hidden><span class="dot"></span><span></span></p>
+          <div class="field">
+            <div class="field-head">
+              <label for="precision-scale" class="label">Stick scale while held</label>
+              <span class="unit"><input id="precision-scale" class="num short" type="number" min="10" max="100" step="5" inputmode="numeric" aria-describedby="precision-scale-error"><span class="mono">%</span></span>
+            </div>
+            <input id="precision-scale-range" class="rng" type="range" min="10" max="100" step="5" aria-label="Stick scale while held, percent">
+            <p id="precision-scale-error" class="error" role="alert"></p>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="shift-heading">
+          <div class="panel-head"><h3 id="shift-heading">Shift layer</h3><span id="shift-state" class="state">Shift off</span></div>
+          <div class="chip-row">
+            <span class="cap">Hold</span>
+            <span id="shift-source" class="chip static">Off</span>
+            <button id="shift-pick" class="btn quiet" type="button">Press a control…</button>
+            <button id="shift-clear" class="btn quiet" type="button">Clear</button>
+          </div>
+          <p class="well capture" data-for="shift" role="status" hidden><span class="dot"></span><span></span></p>
+          <p class="help">While held, other controls use their Shift mappings (Mapping › Shift). Its own mapping is not sent.</p>
+        </section>
+
+        <section class="panel" aria-labelledby="combos-heading">
+          <div class="panel-head"><h3 id="combos-heading">Combos</h3><span id="combo-state" class="state">No combo held</span></div>
+          <div class="chip-row">
+            <span class="cap" title="Release every control and send a neutral NEO; press again to resume. Also in the tray menu.">Pause input</span>
+            <span id="pause-combo" class="chips"></span>
+            <button id="pause-record" class="btn quiet" type="button">Record combo…</button>
+            <button id="pause-clear" class="btn quiet" type="button">Clear</button>
+          </div>
+          <p class="well capture" data-for="pause" role="status" hidden><span class="dot"></span><span></span></p>
+          <div class="chip-row">
+            <span class="cap" title="Switch to the next saved profile, in name order. Also in the tray menu.">Next profile</span>
+            <span id="next-combo" class="chips"></span>
+            <button id="next-record" class="btn quiet" type="button">Record combo…</button>
+            <button id="next-clear" class="btn quiet" type="button">Clear</button>
+          </div>
+          <p class="well capture" data-for="next" role="status" hidden><span class="dot"></span><span></span></p>
+        </section>
+
+        <section class="panel" aria-labelledby="safe-heading">
+          <div class="panel-head"><h3 id="safe-heading">Safe start</h3><span id="safe-state" class="state">Throttle armed</span></div>
+          <label class="tog wide"><input type="checkbox" id="safe-start"><span>Hold the throttle at centre until the active lever or slider reaches it</span></label>
+          <p class="help">Shows armed once your throttle has passed centre this session.</p>
+        </section>
+
+        <section class="panel span" aria-labelledby="timing-heading">
+          <div class="panel-head"><h3 id="timing-heading">Timing · your presses</h3><span class="livechip" data-livechip><span class="dot"></span><span>Idle</span></span></div>
+          <div class="timings">
+            <div class="card">
+              <label for="timing-long" class="label">Long press</label>
+              <span class="unit"><input id="timing-long" class="num short" type="number" min="200" max="2000" step="50" inputmode="numeric" aria-describedby="timing-error"><span class="mono">ms</span></span>
+            </div>
+            <div class="card">
+              <label for="timing-double" class="label">Double tap window</label>
+              <span class="unit"><input id="timing-double" class="num short" type="number" min="100" max="1000" step="10" inputmode="numeric" aria-describedby="timing-error"><span class="mono">ms</span></span>
+            </div>
+            <div class="card">
+              <label for="timing-repeat" class="label">Repeat every</label>
+              <span class="unit"><input id="timing-repeat" class="num short" type="number" min="30" max="1000" step="10" inputmode="numeric" aria-describedby="timing-error"><span class="mono">ms</span></span>
+            </div>
+            <div class="card">
+              <label for="timing-pulse" class="label">Pulse length</label>
+              <span class="unit"><input id="timing-pulse" class="num short" type="number" min="20" max="1000" step="10" inputmode="numeric" aria-describedby="timing-error"><span class="mono">ms</span></span>
+            </div>
+          </div>
+          <p id="timing-error" class="error" role="alert"></p>
+          <div class="timeline" id="presses" role="img" aria-label="Your last presses against the timing thresholds">
+            <div class="track wide"><span id="press-key" class="mono">Pressed</span><div id="press-in" class="lane tall"></div></div>
+            <div class="track wide"><span class="mono">Reads as</span><div id="press-out" class="lane tall"></div></div>
+          </div>
+          <p id="press-text" class="lag">Press a control: the last 3 seconds are drawn against the long-press and double-tap times.</p>
+        </section>
+      </div>
+    </section>
+
+    <section id="page-controllers" class="page" aria-labelledby="controllers-title" hidden>
+      <div class="pagehead">
+        <h2 id="controllers-title">Controllers</h2>
+        <p class="help">Each set of controllers keeps its own mapping; the settings on the other pages are shared.</p>
+      </div>
+      <div class="content two-grid">
+        <section class="panel" aria-labelledby="devices-heading">
+          <div class="panel-head"><h3 id="devices-heading">Controllers taking part</h3><span class="cap">Hidden from the game while emulating</span></div>
           <label class="tog wide"><input type="checkbox" id="devices-auto"><span>Automatic: every Thrustmaster joystick that is connected</span></label>
           <div id="device-list" class="togs"></div>
-          <p class="help">Each set of controllers keeps its own mapping. Untick a controller to leave it visible to the game; tick another vendor's controller to use it too.</p>
+          <p class="help">Untick a controller to leave it visible to the game; tick another vendor's controller to use it too. Changes apply when you save and start emulation again.</p>
+        </section>
+        <section class="panel" aria-labelledby="set-heading">
+          <div class="panel-head"><h3 id="set-heading">This set</h3></div>
+          <dl id="set-info" class="axes"></dl>
+          <p class="help">Reporting a new controller? Run <span class="mono">neo-daemon.exe --probe</span> and attach the <span class="mono">probe.txt</span> it opens.</p>
         </section>
       </div>
+    </section>
+    </form>
 
-      <div class="panel save-area">
-        <p id="dirty" class="mono" role="status" aria-live="polite" data-state="saved"></p>
-        <div class="actions">
-          <button id="reset" class="btn hazard" type="button">Reset everything to defaults</button>
-          <button id="save" class="btn primary" type="submit">Save settings</button>
+    <section id="page-live" class="page" aria-labelledby="live-title" hidden>
+      <div class="pagehead">
+        <h2 id="live-title">Live</h2>
+        <p class="help">Everything your controllers send and what the NEO receives, right now.</p>
+      </div>
+      <div class="content live-grid">
+        <section class="panel" aria-labelledby="live-axes-heading">
+          <div class="panel-head">
+            <h3 id="live-axes-heading">Axes · raw → NEO</h3>
+            <ul class="zones" aria-hidden="true"><li><span class="raw-key"></span>Raw input</li><li><span class="out-key"></span>Sent to NEO</li></ul>
+          </div>
+          <p id="live-empty" class="empty">Start emulation to see your controllers and what the NEO receives.</p>
+          <div id="live-axes" class="live-axes"></div>
+        </section>
+        <div class="stack">
+          <section class="panel" aria-labelledby="live-state-heading">
+            <div class="panel-head"><h3 id="live-state-heading">State</h3></div>
+            <ul id="live-states" class="states" aria-label="Bridge state"></ul>
+            <div class="pressed"><span class="cap">Pressed</span><div id="live-pressed" class="chips"></div></div>
+          </section>
+          <section class="panel" aria-labelledby="live-neo-heading">
+            <div class="panel-head"><h3 id="live-neo-heading">NEO buttons and POV</h3></div>
+            <ul id="live-buttons" class="neo-grid" aria-label="NEO buttons"></ul>
+            <div class="pov-row">
+              <div id="live-pov" class="pov" role="img" aria-label="POV centred"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+              <p id="live-pov-text" class="help">POV centred</p>
+            </div>
+          </section>
         </div>
       </div>
-    </form>
-  </section>
-  </main>
+    </section>
+    </main>
+  </div>
+
+  <footer class="foot">
+    <p id="dirty" class="mono" role="status" aria-live="polite" data-state="saved"></p>
+    <div id="foot-actions" class="actions" hidden>
+      <label class="tog amber"><input type="checkbox" id="try-live" form="profile"><span>Try in game</span></label>
+      <button id="discard" class="btn" type="button">Discard</button>
+      <button id="reset" class="btn hazard" type="button">Reset to defaults</button>
+      <button id="save" class="btn primary" type="submit" form="profile">Save settings</button>
+    </div>
+  </footer>
 
   <template id="tpl-tca-stick">
-    <figure data-device="tca-stick">
-      <figcaption class="cap split"><span class="device-name">TCA Sidestick</span><span id="hand-caption" class="accent-ink">Right-hand setup</span></figcaption>
-      <fieldset class="seg">
-        <legend class="sr">Sidestick base setup</legend>
-        <label><input type="radio" name="hand" value="left"><span aria-hidden="true">L</span><span class="sr">Left-hand setup</span></label>
-        <label><input type="radio" name="hand" value="right" checked><span aria-hidden="true">R</span><span class="sr">Right-hand setup</span></label>
-      </fieldset>
-      <div class="plate"><div id="stick-spots" class="spots">
+    <figure class="fig stick" data-device="tca-stick">
+      <figcaption class="cap split"><span class="device-name">Sidestick</span><span><span id="hand-caption" class="accent-ink">Right-hand setup</span>
+        <span class="seg mini-seg" role="radiogroup" aria-label="Sidestick base setup"><label><input type="radio" name="hand" value="left"><span aria-hidden="true">L</span><span class="sr">Left-hand setup</span></label><label><input type="radio" name="hand" value="right" checked><span aria-hidden="true">R</span><span class="sr">Right-hand setup</span></label></span></span></figcaption>
+      <div class="room"><div class="plate"><div id="stick-spots" class="spots">
         <img id="stick-img" src="device/sidestick-right.svg" alt="TCA Sidestick, top view, right-hand setup, numbered controls 1 to 17" width="390" height="340">
-      </div></div>
+      </div></div></div>
+    </figure>
+  </template>
+  <template id="tpl-tca-quadrant">
+    <figure class="fig quad" data-device="tca-quadrant">
+      <figcaption class="cap split"><span class="device-name">Quadrant · Eng 1&amp;2</span><span class="wide">7 · 8 = mode selector</span></figcaption>
+      <div class="room"><div class="plate"><div id="quad-spots" class="spots">
+        <img src="device/quadrant.svg" alt="TCA Quadrant Eng 1 and 2, numbered controls 1 to 8" width="533" height="364">
+      </div></div></div>
     </figure>
   </template>
 
-  <template id="tpl-tca-quadrant">
-    <figure data-device="tca-quadrant">
-      <figcaption class="cap split"><span class="device-name">Quadrant Eng 1&amp;2</span><span>7 · 8 = mode selector</span></figcaption>
-      <div class="plate"><div id="quad-spots" class="spots">
-        <img src="device/quadrant.svg" alt="TCA Quadrant Eng 1 and 2, numbered controls 1 to 8" width="533" height="364">
-      </div></div>
-    </figure>
-  </template>
+  <section id="cheatsheet" class="cheatsheet" aria-label="Printable cheat sheet" hidden></section>
 </div>
 </body>
 </html>

@@ -1,10 +1,15 @@
 //! State shared by the tray, the emulation loop and the configuration page.
 use crate::config::{self, Config};
+use crate::driver::Notice;
 use crate::hid::{self, HidApi};
 use crate::models::DeviceInfo;
+use crate::neo::Monitor;
+use crate::profiles;
 use std::collections::BTreeMap;
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, RwLock};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,8 +52,15 @@ pub struct Links {
 
 pub struct Shared {
     pub config_path: PathBuf,
-    /// Generation counter lets the emulation loop hot-reload without locking every frame.
+    /// Generation counter lets the emulation loop hot-reload without locking every frame. It also changes when a
+    /// preview starts or ends.
     pub config: RwLock<(u64, Config)>,
+    /// Unsaved settings the running emulation uses instead of the saved profile ("Try in game"); never persisted.
+    pub preview: Mutex<Option<Config>>,
+    /// Pause input: the emulation sends a neutral NEO while set.
+    pub paused: AtomicBool,
+    /// Latest raw inputs and NEO axes while emulating from the controllers.
+    pub monitor: Mutex<Option<Monitor>>,
     pub pressed: Mutex<Vec<String>>,
     /// Latest travel of the split High-G levers while emulating.
     pub levers: Mutex<Option<[f64; 2]>>,
@@ -60,6 +72,10 @@ pub struct Shared {
     pub hid: Option<HidApi>,
     pub status: Mutex<Status>,
     pub links: Mutex<Option<Links>>,
+    /// Launch-order warnings from the last start (Steam running, Steam Input on).
+    pub warnings: Mutex<Vec<String>>,
+    /// Tray balloons waiting to be shown (profile switches from a combo, for example).
+    pub notices: Mutex<VecDeque<Notice>>,
     /// Private diagnostics (status changes, panics). Never contains device paths or serials.
     pub log: Option<PathBuf>,
 }
@@ -76,6 +92,9 @@ impl Shared {
         Self {
             config_path,
             config: RwLock::new((0, config)),
+            preview: Mutex::new(None),
+            paused: AtomicBool::new(false),
+            monitor: Mutex::new(None),
             pressed: Mutex::new(Vec::new()),
             levers: Mutex::new(None),
             axes: Mutex::new(BTreeMap::new()),
@@ -83,6 +102,8 @@ impl Shared {
             hid: None,
             status: Mutex::new(Status::Idle),
             links: Mutex::new(None),
+            notices: Mutex::new(VecDeque::new()),
+            warnings: Mutex::new(Vec::new()),
             log: None,
         }
     }
@@ -105,6 +126,27 @@ impl Shared {
         self
     }
 
+    /// Named profile snapshots live next to the active profile.
+    pub fn profiles_dir(&self) -> PathBuf {
+        self.config_path.with_file_name("profiles")
+    }
+
+    /// Make a saved profile the active one: it replaces config.json (ending any preview) and is remembered.
+    pub fn activate(&self, name: &str) -> Result<Config, String> {
+        let profile = profiles::load(&self.profiles_dir(), name)?;
+        self.save(profile.clone())?;
+        profiles::set_active(&self.profiles_dir(), Some(name))?;
+        Ok(profile)
+    }
+
+    pub fn notice(&self, notice: Notice) {
+        self.notices.lock().unwrap().push_back(notice);
+    }
+
+    pub fn take_notice(&self) -> Option<Notice> {
+        self.notices.lock().unwrap().pop_front()
+    }
+
     /// Identify-mode recordings live next to the profile.
     pub fn labels_path(&self) -> PathBuf {
         self.config_path.with_file_name("label-map.json")
@@ -118,12 +160,43 @@ impl Shared {
         self.config.read().unwrap().0
     }
 
-    /// Validate, persist, then publish to the running emulation.
+    /// What the emulation runs: the preview while one is set, else the saved profile.
+    pub fn active(&self) -> (u64, Config) {
+        let (generation, saved) = self.config();
+        (generation, self.preview.lock().unwrap().clone().unwrap_or(saved))
+    }
+
+    fn bump(&self) {
+        self.config.write().unwrap().0 += 1;
+    }
+
+    /// Validate, persist, then publish to the running emulation; a save ends any preview.
     pub fn save(&self, config: Config) -> Result<(), String> {
         config::save(&self.config_path, &config)?;
+        *self.preview.lock().unwrap() = None;
         let mut guard = self.config.write().unwrap();
         *guard = (guard.0 + 1, config);
         Ok(())
+    }
+
+    /// Start (validated, not saved) or end a preview.
+    pub fn set_preview(&self, preview: Option<Config>) -> Result<(), String> {
+        preview.as_ref().map_or(Ok(()), config::validate)?;
+        *self.preview.lock().unwrap() = preview;
+        self.bump();
+        Ok(())
+    }
+
+    pub fn previewing(&self) -> bool {
+        self.preview.lock().unwrap().is_some()
+    }
+
+    pub fn paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
+    }
+
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::SeqCst);
     }
 
     pub fn status(&self) -> Status {
