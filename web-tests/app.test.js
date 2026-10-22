@@ -392,7 +392,7 @@ group('live input', () => {
     p.live({ pressed: ['s5', 's2'], status: 'Emulating' });
     expect(p.selected).toBe('q1');
     p.busy = false;
-    $('tab-settings').click();
+    $('nav-axes').click();
     p.live({ pressed: ['s3'], status: 'Emulating' });
     expect(p.selected).toBe('q1');
   });
@@ -436,7 +436,14 @@ group('split-lever High-G', () => {
     p.live({ pressed: [], levers: [0.5, 0.5], status: 'Emulating' });
     expect($('value-left').dataset.zone).toBe('middle');
     expect($('lever-state').textContent).toBe('Not split');
-    p.saved.split_high_g.enabled = false;
+    // The rails follow the draft thresholds before they are saved.
+    p.live({ pressed: [], levers: [0.6, 0.04], status: 'Emulating' });
+    expect($('lever-state').textContent).toBe('Not split');
+    $('split-forward').value = '50';
+    fire($('split-forward'));
+    expect($('lever-state').textContent).toBe('High-G active · NEO 5 held');
+    expect($('lever-rails').style.getPropertyValue('--fw')).toBe('50%');
+    p.config.split_high_g.enabled = false;
     p.live({ pressed: [], levers: null, status: 'Idle' });
     expect($('lever-live').textContent).toBe('Lever positions appear here during emulation.');
     expect($('lever-state').textContent).toBe('Rule off');
@@ -467,19 +474,39 @@ group('split-lever High-G', () => {
 });
 
 group('tabs and settings', () => {
-  it('switches tabs by click and arrow keys', async () => {
+  it('shows one rail page at a time, with the save bar on the settings pages', async () => {
+    const p = await page();
+    expect($('foot-actions').hidden).toBe(true);
+    for (const name of app.PAGES) {
+      $(`nav-${name}`).click();
+      expect(app.PAGES.filter((other) => !$(`page-${other}`).hidden)).toEqual([name]);
+      expect($(`nav-${name}`).getAttribute('aria-current')).toBe('page');
+      expect(document.querySelectorAll('[aria-current=page]')).toHaveLength(1);
+      expect($('foot-actions').hidden).toBe(name === 'mapping' || name === 'live');
+    }
+    expect(p.page).toBe('live');
+    // Typing outside the settings form is not a settings edit.
+    fire($('profile-new'));
+    expect(p.dirty).toBe(false);
+  });
+
+  it('switches the mapping side panel by click and arrow keys, and back to the selection on a pick', async () => {
     await page();
-    $('tab-settings').click();
-    expect($('panel-settings').hidden).toBe(false);
-    expect($('panel-mapping').hidden).toBe(true);
-    expect($('tab-settings').tabIndex).toBe(0);
-    $('tab-settings').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
-    expect($('panel-mapping').hidden).toBe(false);
-    expect(document.activeElement).toBe($('tab-mapping'));
-    $('tab-mapping').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
-    expect(document.activeElement).toBe($('tab-settings'));
-    $('tab-settings').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
-    expect($('panel-settings').hidden).toBe(false);
+    $('side-neo').click();
+    expect($('side-neo-panel').hidden).toBe(false);
+    expect($('side-sel-panel').hidden).toBe(true);
+    expect($('side-neo').tabIndex).toBe(0);
+    $('side-neo').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    expect($('side-log-panel').hidden).toBe(false);
+    expect(document.activeElement).toBe($('side-log'));
+    $('side-log').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    expect(document.activeElement).toBe($('side-sel'));
+    $('side-sel').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+    expect(document.activeElement).toBe($('side-log'));
+    $('side-log').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect($('side-log-panel').hidden).toBe(false);
+    tca('s2').click();
+    expect($('side-sel-panel').hidden).toBe(false);
   });
 
   it('edits, validates, saves and resets settings', async () => {
@@ -591,7 +618,9 @@ group('shared maths', () => {
 group('flight axes preview', () => {
   it('draws the selected axis from the draft and previews test or live input', async () => {
     const p = await page();
-    $('tab-settings').click();
+    $('nav-axes').click();
+    expect($('test-input-wrap').hidden).toBe(false);
+    expect($('rail-live-text').textContent).toBe('Idle');
     expect($('curve-path').getAttribute('d')).toBe(app.curvePath(p.config.axes.roll));
     expect($('curve-band').getAttribute('width')).toBe('8.8');
     expect($('read-input-label').textContent).toBe('Roll · test');
@@ -623,19 +652,19 @@ group('flight axes preview', () => {
     fire($('tune-curve'));
     $('copy-axis').click();
     expect(p.config.axes.pitch.curve).toBe(0.25);
-    // Live input: the strip and graph follow the raw stick through the draft.
-    choose('preview-source', 'live', 'input');
-    expect($('read-input-label').textContent).toBe('Roll · no input yet');
+    // Live input is the default: once the device reports, the strip and graph follow it and the test input hides.
     p.live({ pressed: [], status: 'Emulating', links: LINKS, monitor: monitor() });
     expect($('read-input-label').textContent).toBe('Roll · live');
     expect($('read-input').textContent).toBe('+0.50');
+    expect($('test-input-wrap').hidden).toBe(true);
+    expect([$('rail-live').dataset.live, $('rail-live-text').textContent]).toEqual(['true', 'Live input']);
+    expect([...document.querySelectorAll('[data-livechip]')].map((chip) => chip.textContent)).toEqual(['Live input', 'Live input', 'Live input']);
     expect(document.querySelector('[data-axis=pitch] [data-out]').textContent).toBe(app.signed(app.shape(-0.25, p.config.axes.pitch)));
-    const bar = document.querySelector('[data-axis=pitch] .minibar span');
-    expect(bar.style.getPropertyValue('--from')).not.toBe('50%');
-    // Dragging the test input switches back to it.
-    fire($('test-input'));
-    expect(radio('preview-source', 'test').checked).toBe(true);
-    expect($('read-input-label').textContent).toBe('Roll · test');
+    const [raw, out] = document.querySelectorAll('[data-axis=pitch] .minibar span');
+    expect([raw.style.getPropertyValue('--size'), out.style.getPropertyValue('--from')]).toEqual(['12.5%', `${50 + app.shape(-0.25, p.config.axes.pitch) * 50}%`]);
+    // Without device input it falls back to the test input.
+    p.live({ pressed: [], status: 'Idle' });
+    expect([$('read-input-label').textContent, $('test-input-wrap').hidden, $('curve-name').textContent]).toEqual(['Roll · test', false, 'Roll']);
   });
 });
 
@@ -664,9 +693,7 @@ group('throttle', () => {
     expect($('capture-hint').textContent).toBe('Start emulation to capture the lever in its detents.');
     p.live({ pressed: [], status: 'Emulating', links: LINKS, monitor: monitor() });
     expect($('capture-hint').textContent).toBe('Put the left lever in a detent, then Capture.');
-    expect($('throttle-source').textContent).toBe('Left lever · test');
-    choose('preview-source', 'live', 'input');
-    expect($('throttle-source').textContent).toBe('Left lever · live');
+    expect([$('throttle-source').textContent, $('test-lever-wrap').hidden]).toEqual(['Left lever · live', true]);
     expect($('throttle-needle').style.getPropertyValue('left')).toBe('80%');
     document.querySelector('[data-capture=boost]').click();
     expect([p.config.throttle.boost, $('detent-boost').value]).toEqual([0.8, '80']);
@@ -736,7 +763,7 @@ group('try in game', () => {
   it('previews the draft, coalesces drags, and ends with save, discard or leaving the tab', async () => {
     const api = fakeApi();
     const p = await page(api);
-    $('tab-settings').click();
+    $('nav-axes').click();
     $('try-live').checked = true;
     fire($('try-live'));
     await vi.waitFor(() => expect($('dirty').textContent).toBe('Unsaved changes · running in game now.'));
@@ -769,15 +796,17 @@ group('try in game', () => {
     expect(p.previewing).toBe(true);
     p.live({ pressed: [], status: 'Idle', preview: false });
     expect([p.previewing, $('dirty').textContent]).toEqual([false, 'Unsaved changes · the preview ended with emulation.']);
-    // Leaving the tab ends a preview but keeps the draft.
+    // Moving between settings pages keeps a preview; leaving them ends it but keeps the draft.
     await p.setPreview(true);
-    $('tab-mapping').click();
-    await vi.waitFor(() => expect($('dirty').textContent).toBe('Unsaved changes · preview ended when you left this tab.'));
+    $('nav-camera').click();
+    expect(p.previewing).toBe(true);
+    $('nav-mapping').click();
+    await vi.waitFor(() => expect($('dirty').textContent).toBe('Unsaved changes · preview ended when you left the settings.'));
     expect(api.calls.at(-1)).toEqual(['DELETE', '/api/preview']);
     expect(p.config.axes.roll.deadzone).toBe(0.3);
-    $('tab-mapping').click(); // no preview: nothing to end
+    $('nav-mapping').click(); // no preview: nothing to end
     // Saving ends it too.
-    $('tab-settings').click();
+    $('nav-axes').click();
     await p.setPreview(true);
     await p.save();
     expect([p.previewing, $('try-live').checked]).toEqual([false, false]);
@@ -907,7 +936,7 @@ group('gestures and layers', () => {
     const p = await page(api);
     tca('s1').click();
     expect(radio('layer', 'shift').disabled).toBe(true);
-    expect(radio('layer', 'shift').parentElement.title).toBe('Choose a shift control under Control helpers on the Axes and settings tab');
+    expect(radio('layer', 'shift').parentElement.title).toBe('Choose a shift control on the Buttons & helpers page');
     expect($('layer-note').hidden).toBe(true);
     p.saved.shift = 's16';
     choose('layer', 'shift');
@@ -951,7 +980,7 @@ group('gestures and layers', () => {
 group('camera, yaw and timing', () => {
   it('previews the camera ramp and explains the camera and yaw sources', async () => {
     const p = await page();
-    $('tab-settings').click();
+    $('nav-camera').click();
     expect($('camera-source-help').textContent).toBe('Only the hat moves the camera.');
     expect($('ramp').getAttribute('aria-label')).toBe('Camera output while the hat is held: 100% at once.');
     expect($('ramp-long').style.getPropertyValue('display')).toBe('none');
@@ -971,6 +1000,29 @@ group('camera, yaw and timing', () => {
       expect($('yaw-help').textContent.startsWith(help)).toBe(true);
     }
     expect($('dirty').textContent).toBe('Unsaved changes.');
+  });
+
+  it('draws the hat hold on the ramp as it happens, with the camera output', async () => {
+    const p = await page();
+    let now = 1000;
+    p.clock = () => now;
+    expect([$('hat-state').textContent, $('ramp-now').style.getPropertyValue('display'), $('cam-x-text').textContent]).toEqual(['Hat released', 'none', ' 0.00']);
+    const axes = [32768, 32768, 32768, 65535, 0, 32768, 32768];
+    p.live({ pressed: ['hat-right'], status: 'Emulating', links: LINKS, monitor: monitor({ axes }) });
+    now = 1750;
+    p.live({ pressed: ['hat-right', 'hat-up'], status: 'Emulating', links: LINKS, monitor: monitor({ axes }) });
+    expect([$('hat-state').textContent, $('hat-state').dataset.tone]).toEqual(['Hat held · 750 ms', 'ok']);
+    expect([$('ramp-now').getAttribute('x1'), $('ramp-hold').getAttribute('width'), $('ramp-now').style.getPropertyValue('display')]).toEqual(['150.0', '140.0', '']);
+    expect([$('cam-x-text').textContent, $('cam-y-text').textContent, $('cam-x').style.getPropertyValue('--size')]).toEqual(['+1.00', '−1.00', '50%']);
+    now = 9000; // past the graph: pinned to its end
+    p.live({ pressed: ['hat-up'], status: 'Emulating', links: LINKS, monitor: monitor({ axes }) });
+    expect($('ramp-now').getAttribute('x1')).toBe('290.0');
+    p.live({ pressed: [], status: 'Emulating', links: LINKS, monitor: monitor() });
+    expect([$('hat-state').textContent, $('ramp-hold').getAttribute('width')]).toEqual(['Hat released', '0.0']);
+    // A mapped hat does not drive the camera.
+    p.saved.hat = 'mapped';
+    p.live({ pressed: ['hat-up'], status: 'Emulating', links: LINKS, monitor: monitor() });
+    expect([p.hatSince, $('hat-state').textContent, $('hat-state').dataset.tone]).toEqual([null, 'Hat mapped as buttons', '']);
   });
 
   it('turns the other lever features off when one needs the levers', async () => {
@@ -1167,8 +1219,8 @@ group('next profile combo', () => {
 group('live tab', () => {
   it('shows raw input next to what the NEO receives, the state, NEO buttons and POV', async () => {
     const p = await page();
-    $('tab-mapping').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
-    expect($('panel-live').hidden).toBe(false);
+    $('nav-live').click();
+    expect($('page-live').hidden).toBe(false);
     expect([$('live-empty').hidden, $('live-axes').children.length, $('live-pov-text').textContent]).toEqual([false, 0, 'POV centred']);
     expect([...$('live-states').children].map((s) => [s.textContent, s.dataset.tone])).toEqual([
       ['Throttle armed', 'ok'], ['Precision off', ''], ['Shift off', ''], ['Input live', 'ok'], ['Preview off', ''],
@@ -1181,11 +1233,11 @@ group('live tab', () => {
     expect($('live-pressed').textContent).toBe('S1Hat down');
     expect([...$('live-buttons').children].map((b) => b.dataset.on).slice(0, 3)).toEqual(['true', 'false', 'true']);
     expect([$('live-pov').getAttribute('aria-label'), [...$('live-pov').children].findIndex((c) => c.dataset.on === 'true')]).toEqual(['POV right', 5]);
-    // Not rendered while another tab is shown; shown from the last data when the tab opens.
-    $('tab-settings').click();
+    // Not rendered while another page is shown; shown from the last data when the page opens.
+    $('nav-axes').click();
     p.live({ pressed: [], status: 'Emulating', links: LINKS, monitor: monitor({ pov: 8 }) });
     expect($('live-pov-text').textContent).toBe('POV right');
-    $('tab-live').click();
+    $('nav-live').click();
     expect($('live-pov-text').textContent).toBe('POV centred');
   });
 
@@ -1268,7 +1320,7 @@ group('reliability', () => {
     const original = api.get;
     api.get = vi.fn(async (path) => (path === '/api/config' ? { ...(await original(path)), warnings: ['Steam was already running.'] } : original(path)));
     const p = await page(api);
-    expect([$('warnings').hidden, $('warnings').textContent]).toEqual([false, 'Steam was already running.']);
+    expect([$('warnings').hidden, $('warnings').querySelector('.warning').textContent]).toEqual([false, 'Steam was already running.']);
     expect($('warnings').querySelector('[role=alert] svg')).not.toBeNull();
     const first = $('warnings').firstChild;
     p.live({ pressed: [], status: 'Emulating', links: LINKS, warnings: ['Steam was already running.'] });
@@ -1276,6 +1328,72 @@ group('reliability', () => {
     p.live({ pressed: [], status: 'Emulating', links: { ...LINKS, tca: false } });
     expect([$('warnings').hidden, $('pill-tca').textContent, $('pill-tca').dataset.state]).toEqual([true, 'TCA: reconnecting…', 'busy']);
     expect(app.pills('Idle', null).tca).toEqual(['off', 'TCA: not open']);
+    // Dismissed warnings stay hidden until they change.
+    p.live({ pressed: [], status: 'Emulating', links: LINKS, warnings: ['Steam was already running.'] });
+    $('warnings').querySelector('.x').click();
+    p.live({ pressed: [], status: 'Emulating', links: LINKS, warnings: ['Steam was already running.'] });
+    expect($('warnings').hidden).toBe(true);
+    p.live({ pressed: [], status: 'Emulating', links: LINKS, warnings: ['Restart the game.'] });
+    expect($('warnings').hidden).toBe(false);
+  });
+});
+
+group('helper states and press timeline', () => {
+  it('shows precision, shift, safe start and combo progress from the device', async () => {
+    const p = await page();
+    const states = () => ['precision-state', 'shift-state', 'safe-state', 'combo-state'].map((id) => [$(id).textContent, $(id).dataset.tone]);
+    expect(states()).toEqual([['Precision off', ''], ['Shift off', ''], ['Starts with emulation', ''], ['No combo held', '']]);
+    Object.assign(p.config, { precision: { source: 's4', scale: 0.4 }, shift: 's16', combos: { pause: ['s5', 'q6'], next_profile: ['s1'] } });
+    p.live({ pressed: ['s5'], status: 'Emulating', links: LINKS, monitor: monitor({ armed: false }) });
+    expect(states()).toEqual([['Ready', ''], ['Ready', ''], ['Waiting for centre', 'warn'], ['pause 1/2', 'warn']]);
+    expect([...$('pause-combo').querySelectorAll('.held')].map((chip) => chip.textContent)).toEqual(['S5']);
+    p.live({ pressed: ['s5', 'q6', 's4', 's16'], status: 'Emulating', links: LINKS, monitor: monitor({ precision: true, shift: true }) });
+    expect(states()).toEqual([['Precision held · 40%', 'accent'], ['Shift held', 'warn'], ['Throttle armed', 'ok'], ['Pause combo held', 'ok']]);
+    p.live({ pressed: ['s1'], status: 'Emulating', links: LINKS, monitor: monitor() });
+    expect($('combo-state').textContent).toBe('Next-profile combo held');
+    p.config.safe_start = false;
+    p.renderSettings();
+    expect($('safe-state').textContent).toBe('Off');
+  });
+
+  it('reads presses as taps, long presses and double taps', () => {
+    const timing = { long_ms: 500, double_ms: 250, pulse_ms: 80 };
+    const press = (start, end) => ({ start, end });
+    expect(app.gestures([press(0, 100)], timing, 1000)).toEqual([{ kind: 'tap', from: 100, to: 180 }]);
+    expect(app.gestures([press(0, 100), press(300, 380)], timing, 1000)).toEqual([{ kind: 'double', from: 300, to: 380 }]);
+    expect(app.gestures([press(0, 100), press(400, 450)], timing, 1000).map((read) => read.kind)).toEqual(['tap', 'tap']);
+    expect(app.gestures([press(0, 700), press(800, 850)], timing, 1000).map((read) => read.kind)).toEqual(['long', 'tap']);
+    expect(app.gestures([press(0, null)], timing, 300)).toEqual([]);
+    expect(app.gestures([press(0, null)], timing, 900)).toEqual([{ kind: 'long', from: 500, to: 900 }]);
+  });
+
+  it('draws the latest control’s presses against the timing draft', async () => {
+    const p = await page();
+    let now = 10000;
+    p.clock = () => now;
+    const step = (ms, pressed) => { now += ms; p.live({ pressed, status: 'Emulating', links: LINKS, monitor: monitor() }); };
+    expect([$('press-key').textContent, $('press-in').children.length]).toEqual(['Pressed', 0]);
+    step(0, ['s2']);
+    step(200, ['s2']);
+    expect($('press-text').textContent).toBe('S2 · holding 200 ms…');
+    step(100, []);
+    expect($('press-text').textContent).toBe('S2 · tap: 300 ms');
+    expect([...$('press-out').children].map((read) => read.className)).toEqual(['out']);
+    step(100, ['s2']);
+    step(100, []);
+    expect($('press-text').textContent).toBe('S2 · double tap: second tap within 250 ms');
+    expect([...$('press-out').children].map((read) => read.className)).toEqual(['out alt']);
+    step(500, ['s3']);
+    step(700, ['s3']);
+    expect($('press-text').textContent).toBe('S3 · long press: held 700 ms (long press from 500 ms)');
+    expect([$('press-key').textContent, $('presses').getAttribute('aria-label')]).toEqual(['S3', $('press-text').textContent]);
+    const [held, mark] = $('press-in').children;
+    expect(mark.className).toBe('mk');
+    expect([parseFloat(held.style.getPropertyValue('width')), parseFloat(mark.style.getPropertyValue('left'))].map((value) => Math.round(value * 100) / 100)).toEqual([23.33, 93.33]);
+    // Old presses leave the timeline.
+    step(100, []);
+    step(4000, []);
+    expect(p.presses).toEqual([]);
   });
 });
 

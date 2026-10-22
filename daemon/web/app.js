@@ -99,7 +99,12 @@ export function diff(before, after) {
 export const AXES = ['roll', 'pitch', 'yaw'];
 /** Button combos: [page id prefix, profile field, name in messages]. */
 const COMBOS = [['pause', 'pause', 'pause'], ['next', 'next_profile', 'next-profile']];
-const TABS = ['tab-mapping', 'tab-settings', 'tab-live'];
+/** Rail pages; the settings pages edit the draft and show the save bar. */
+export const PAGES = ['mapping', 'axes', 'throttle', 'camera', 'helpers', 'live'];
+const SETTINGS_PAGES = ['axes', 'throttle', 'camera', 'helpers'];
+const SIDE_TABS = ['side-sel', 'side-neo', 'side-log'];
+/** The press timeline spans this many milliseconds. */
+export const PRESS_SPAN = 3000;
 const HEAD_TOGGLES = [['head-enabled', 'enabled'], ['head-invert-yaw', 'invert_yaw'], ['head-invert-pitch', 'invert_pitch']];
 const WARNING_ICON = '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M10 3 18 17H2Z"/><path d="M10 8v4M10 14.5v.5"/></svg>';
 
@@ -241,6 +246,33 @@ export function rampPath(camera, strength, longMs) {
   return points.join(' ');
 }
 
+/**
+ * How the presses of one control read against the timing: [{kind, from, to}] in the presses' own clock, where kind
+ * is 'tap' (a short press at release), 'long' (held from the long-press time) or 'double' (a short press on the
+ * second tap). A press still held below the long-press time reads as nothing yet.
+ */
+export function gestures(presses, timing, now) {
+  const out = [];
+  let tap = null;
+  for (const { start, end } of presses) {
+    const until = end ?? now;
+    if (until - start >= timing.long_ms) {
+      out.push({ kind: 'long', from: start + timing.long_ms, to: until });
+      tap = null;
+    } else if (end !== null) {
+      if (tap && start - tap.end <= timing.double_ms) {
+        out.splice(out.indexOf(tap.read), 1, { kind: 'double', from: start, to: start + timing.pulse_ms });
+        tap = null;
+      } else {
+        const read = { kind: 'tap', from: end, to: end + timing.pulse_ms };
+        out.push(read);
+        tap = { end, read };
+      }
+    }
+  }
+  return out;
+}
+
 /** "+0.40", "−0.40", " 0.00". */
 export function signed(value) {
   const text = Math.abs(value).toFixed(2);
@@ -311,6 +343,16 @@ const HELP = {
 };
 const error = (id) => Page.FIELDS[id]?.[4] ?? `${id}-error`;
 const percent = (value) => `${Math.round(value * 1000) / 1000}%`;
+/** A centred bar for a value in -1..1. */
+const bars = (bar, value) => {
+  bar.style.setProperty('--from', `${50 + Math.min(value, 0) * 50}%`);
+  bar.style.setProperty('--size', `${Math.abs(value) * 50}%`);
+};
+/** A state chip's text and tone (ok, warn, accent or none). */
+const tone = (chip, text, value = '') => {
+  chip.textContent = text;
+  chip.dataset.tone = value;
+};
 
 export class Page {
   constructor(doc, api) {
@@ -329,9 +371,12 @@ export class Page {
     this.dirty = false;
     this.slot = 'press';        // action being mapped: press, long or double
     this.layer = 'normal';      // mapping layer being edited: normal or shift
-    this.axis = 'roll';         // flight axis shown on the settings tab
-    this.source = 'test';       // preview input: the test scrubber or the live stick
-    this.testInput = 0.4;
+    this.axis = 'roll';         // flight axis shown on the Flight axes page
+    this.page = 'mapping';      // rail page shown
+    this.testInput = 0.4;       // test controls: the previews use them only without live input
+    this.presses = [];          // recent presses for the timing timeline: {key, start, end}
+    this.hatSince = null;       // when the hat was pressed, while it is held
+    this.clock = () => Date.now();
     this.testLever = 0.5;
     this.monitor = null;        // raw inputs from the running emulation
     this.capture = null;        // {kind: 'precision' | 'pause', keys} while picking controls by pressing them
@@ -485,11 +530,7 @@ export class Page {
       row.innerHTML = '<div class="name"><span></span></div><div class="pair"><div class="track raw"><i></i><span></span></div><div class="track out"><i></i><span></span></div></div><div class="value"></div>';
       row.firstChild.prepend(name);
       row.firstChild.lastChild.textContent = source;
-      row.querySelectorAll('.track span').forEach((bar, i) => {
-        const value = [raw, sent][i];
-        bar.style.setProperty('--from', `${50 + Math.min(value, 0) * 50}%`);
-        bar.style.setProperty('--size', `${Math.abs(value) * 50}%`);
-      });
+      row.querySelectorAll('.track span').forEach((bar, i) => bars(bar, [raw, sent][i]));
       row.lastChild.textContent = signed(sent);
       return row;
     }));
@@ -647,17 +688,19 @@ export class Page {
       });
     }
     this.$('deselect').addEventListener('click', () => { this.selected = null; this.proposal = null; this.reverse = null; this.render(); });
+    for (const button of this.doc.querySelectorAll('[data-page]')) button.addEventListener('click', () => this.show(button.dataset.page));
     for (const tab of this.doc.querySelectorAll('[role=tab]')) {
-      tab.addEventListener('click', () => this.tab(tab.id));
+      tab.addEventListener('click', () => this.side(tab.id));
       tab.addEventListener('keydown', (event) => {
-        const step = { ArrowRight: 1, ArrowLeft: TABS.length - 1 }[event.key];
-        if (step) this.tab(TABS[(TABS.indexOf(tab.id) + step) % TABS.length], true);
+        const step = { ArrowRight: 1, ArrowLeft: SIDE_TABS.length - 1 }[event.key];
+        if (step) this.side(SIDE_TABS[(SIDE_TABS.indexOf(tab.id) + step) % SIDE_TABS.length], true);
       });
     }
     for (const radio of this.doc.querySelectorAll('input[name=behaviour]')) {
       radio.addEventListener('change', () => { this.proposal.mode = radio.value; this.render(); });
     }
-    this.$('profile').addEventListener('input', (event) => this.edit(event.target));
+    // Settings fields belong to the profile form, including Try in game in the footer outside it.
+    this.doc.addEventListener('input', (event) => { if (event.target.form === this.$('profile')) this.edit(event.target); });
     this.$('profile').addEventListener('submit', (event) => { event.preventDefault(); return this.save(); });
     this.$('reset').addEventListener('click', () => {
       this.showSettings(structuredClone(this.defaults));
@@ -718,7 +761,24 @@ export class Page {
     this.$('print').addEventListener('click', () => this.print());
   }
 
-  tab(id, focus = false) {
+  /** Show one rail page. Settings pages share the draft and the save bar. */
+  show(name) {
+    this.page = name;
+    for (const page of PAGES) {
+      this.$(`page-${page}`).hidden = page !== name;
+      if (page === name) this.$(`nav-${page}`).setAttribute('aria-current', 'page'); else this.$(`nav-${page}`).removeAttribute('aria-current');
+    }
+    const settings = SETTINGS_PAGES.includes(name);
+    this.$('foot-actions').hidden = !settings;
+    if (name === 'live') this.renderLive(this.lastLive ?? { pressed: [], monitor: null });
+    // A preview belongs to the settings pages: leaving them ends it, keeping the draft.
+    if (!settings && this.previewing) {
+      this.setPreview(false).then(() => this.mark(true, 'Unsaved changes · preview ended when you left the settings.'));
+    }
+  }
+
+  /** The mapping page's side panel: the selected control, the NEO buttons table or the correction log. */
+  side(id, focus = false) {
     for (const tab of this.doc.querySelectorAll('[role=tab]')) {
       const active = tab.id === id;
       tab.setAttribute('aria-selected', String(active));
@@ -726,17 +786,13 @@ export class Page {
       this.$(tab.getAttribute('aria-controls')).hidden = !active;
       if (active && focus) tab.focus();
     }
-    // A preview belongs to the settings tab: leaving it ends the preview, keeping the draft.
-    if (id === 'tab-live') this.renderLive(this.lastLive ?? { pressed: [], monitor: null });
-    if (id !== 'tab-settings' && this.previewing) {
-      this.setPreview(false).then(() => this.mark(true, 'Unsaved changes · preview ended when you left this tab.'));
-    }
   }
 
   select(key) {
     this.selected = key;
     this.proposal = this.mapping(key);
     this.reverse = null;
+    this.side('side-sel');
     this.render();
   }
 
@@ -901,7 +957,7 @@ export class Page {
     for (const input of this.doc.querySelectorAll('input[name=layer]')) input.checked = input.value === this.layer;
     const option = this.doc.querySelector('input[name=layer][value=shift]');
     option.disabled = !shift;
-    option.parentElement.title = shift ? '' : 'Choose a shift control under Control helpers on the Axes and settings tab';
+    option.parentElement.title = shift ? '' : 'Choose a shift control on the Buttons & helpers page';
     this.$('layer-shift').textContent = shift ? `Shift · ${short(shift)}` : 'Shift';
     const note = this.$('layer-note');
     note.hidden = this.layer !== 'shift';
@@ -1113,16 +1169,9 @@ export class Page {
       this.axis = target.value;
       return this.fill();
     }
-    if (name === 'preview-source') {
-      this.source = target.value;
-      return this.renderSettings();
-    }
     if (name === 'test-input' || name === 'test-lever') {
-      // Dragging a test control previews it instead of the live stick.
       if (name === 'test-input') this.testInput = Number(target.value) / 100;
       else this.testLever = Number(target.value) / 100;
-      this.source = 'test';
-      this.doc.querySelector('input[name=preview-source][value=test]').checked = true;
       return this.renderSettings();
     }
     if (name === 'try-live') return this.setPreview(target.checked);
@@ -1214,7 +1263,6 @@ export class Page {
       this.previewing = false;
       this.mark(false, result.running ? 'Saved. Applied to the running emulation.' : 'Saved.');
       this.render();
-      this.levers(this.lastLevers);
     } catch (error) {
       this.$('dirty').textContent = `Not saved: ${error.message}`;
       this.$('dirty').dataset.state = 'error';
@@ -1278,19 +1326,32 @@ export class Page {
     this.renderSettings();
   }
 
-  /** Lever travel shown on the throttle card: the live lever while emulating and selected, else the test lever. */
+  /** Lever travel shown on the throttle page: the live lever while emulating, else the test lever. */
   lever() {
     const index = this.config.throttle_lever === 'right' ? 1 : 0;
-    return this.source === 'live' && this.monitor ? this.monitor.levers[index] : this.testLever;
+    return this.monitor ? this.monitor.levers[index] : this.testLever;
   }
 
-  /** Previews from the unsaved draft: curve, readouts, live strip, throttle bands and output, helpers. */
+  /**
+   * Previews from the unsaved draft: curve, readouts, live strip, throttle, camera, helpers. Live input is the
+   * default: while emulating every preview follows the device, and the test controls appear only without it.
+   */
   renderSettings() {
-    const live = this.source === 'live';
+    const live = Boolean(this.monitor);
     const tuning = this.config.axes[this.axis];
-    const input = (axis) => (live ? (this.monitor ? this.monitor[axis] : 0) : axis === this.axis ? this.testInput : 0);
+    const input = (axis) => (live ? this.monitor[axis] : axis === this.axis ? this.testInput : 0);
     const name = AXIS_NAMES[this.axis];
     for (const radio of this.doc.querySelectorAll('input[name=axis]')) radio.checked = radio.value === this.axis;
+    for (const chip of this.doc.querySelectorAll('[data-livechip]')) {
+      chip.dataset.live = String(live);
+      chip.lastElementChild.textContent = live ? 'Live input' : 'Idle';
+    }
+    this.$('rail-live').dataset.live = String(live);
+    this.$('rail-live-text').textContent = live ? 'Live input' : 'Idle';
+    this.$('test-input-wrap').hidden = live;
+    this.$('test-lever-wrap').hidden = live;
+    this.$('curve-name').textContent = name;
+    this.$('tune-name').textContent = name;
     this.$('curve').setAttribute('aria-label', `${name} response curve: stick input against NEO output`);
     this.$('curve-band').setAttribute('x', plot(-tuning.deadzone).toFixed(1));
     this.$('curve-band').setAttribute('width', (220 * tuning.deadzone).toFixed(1));
@@ -1299,7 +1360,7 @@ export class Page {
     for (const [attribute, value] of [['x1', plot(x)], ['x2', plot(x)], ['y2', 240 - plot(y)]]) this.$('curve-drop').setAttribute(attribute, value.toFixed(1));
     this.$('curve-dot').setAttribute('cx', plot(x).toFixed(1));
     this.$('curve-dot').setAttribute('cy', (240 - plot(y)).toFixed(1));
-    this.$('read-input-label').textContent = `${name} · ${live ? (this.monitor ? 'live' : 'no input yet') : 'test'}`;
+    this.$('read-input-label').textContent = `${name} · ${live ? 'live' : 'test'}`;
     this.$('read-input').textContent = signed(x);
     this.$('read-output').textContent = signed(y);
     this.$('copy-axis').textContent = `Copy ${name.toLowerCase()} to ${this.axis === 'yaw' ? 'roll and pitch' : this.axis === 'roll' ? 'pitch' : 'roll'}`;
@@ -1309,9 +1370,7 @@ export class Page {
       const out = shape(input(axis), this.config.axes[axis]);
       mini.dataset.selected = String(axis === this.axis);
       mini.querySelector('[data-out]').textContent = signed(out);
-      const bar = mini.querySelector('.minibar span');
-      bar.style.setProperty('--from', `${50 + Math.min(out, 0) * 50}%`);
-      bar.style.setProperty('--size', `${Math.abs(out) * 50}%`);
+      mini.querySelectorAll('.minibar span').forEach((bar, i) => bars(bar, [input(axis), out][i]));
     }
     const delay = lag(tuning.smoothing);
     this.$('tune-lag').textContent = delay ? `≈ ${delay} ms added delay` : 'No added delay';
@@ -1319,6 +1378,8 @@ export class Page {
     this.renderCamera();
     this.renderHead();
     this.renderHelpers();
+    this.renderPresses();
+    this.levers(this.lastLevers);
     this.$('try-live').checked = this.previewing;
     this.$('pill-preview').hidden = !this.previewing;
   }
@@ -1337,6 +1398,14 @@ export class Page {
       item.lastChild.textContent = text;
       return item;
     }));
+    // Dismissed until the warnings change.
+    const dismiss = this.doc.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'x';
+    dismiss.textContent = 'Dismiss';
+    dismiss.setAttribute('aria-label', 'Dismiss warnings');
+    dismiss.addEventListener('click', () => { banner.hidden = true; });
+    banner.append(dismiss);
   }
 
   /** Head tracking: whether samples arrive, and where the latest one puts the camera through the draft settings. */
@@ -1371,6 +1440,20 @@ export class Page {
     for (const [attribute, value] of [['x1', long], ['x2', long]]) this.$('ramp-long').setAttribute(attribute, value.toFixed(1));
     this.$('ramp-long-text').setAttribute('x', (long + 4).toFixed(1));
     for (const id of ['ramp-long', 'ramp-long-text']) this.$(id).style.setProperty('display', camera.full_after_hold ? '' : 'none');
+    // The current hat hold, drawn on the graph as it happens, and the camera output the NEO receives.
+    const holding = this.hatSince !== null;
+    const held = holding ? this.clock() - this.hatSince : 0;
+    const hold = rampX(held);
+    this.$('ramp-hold').setAttribute('width', (hold - 10).toFixed(1));
+    for (const attribute of ['x1', 'x2']) this.$('ramp-now').setAttribute(attribute, hold.toFixed(1));
+    this.$('ramp-now').style.setProperty('display', holding ? '' : 'none');
+    if (this.saved.hat === 'mapped') tone(this.$('hat-state'), 'Hat mapped as buttons');
+    else tone(this.$('hat-state'), holding ? `Hat held · ${held} ms` : 'Hat released', holding ? 'ok' : '');
+    for (const [id, index] of [['cam-x', 3], ['cam-y', 4]]) {
+      const value = this.monitor ? axisValue(this.monitor.axes[index]) : 0;
+      bars(this.$(id), value);
+      this.$(`${id}-text`).textContent = signed(value);
+    }
     this.$('ramp').setAttribute('aria-label', `Camera output while the hat is held: ${camera.ramp_ms ? `ramps to ${Math.round(strength * 100)}% over ${camera.ramp_ms} ms` : `${Math.round(strength * 100)}% at once`}${camera.full_after_hold ? `, full after ${timing.long_ms} ms` : ''}.`);
     const side = this.config.throttle_lever === 'right' ? 'left' : 'right';
     this.$('camera-source-help').textContent = camera.lever
@@ -1393,7 +1476,7 @@ export class Page {
     this.$('throttle-help').textContent = detents
       ? 'ACE COMBAT throttle: centre cruises, forward boosts, back brakes. The quadrant detents mark where each band starts.'
       : 'Lever travel maps straight to the NEO throttle. Mid-travel is cruise.';
-    this.$('throttle-source').textContent = `${side} lever · ${this.source === 'live' && this.monitor ? 'live' : 'test'}`;
+    this.$('throttle-source').textContent = `${side} lever · ${this.monitor ? 'live' : 'test'}`;
     const zoneLabel = this.$('throttle-zone');
     zoneLabel.textContent = text;
     if (area) zoneLabel.dataset.zone = area; else delete zoneLabel.dataset.zone;
@@ -1410,8 +1493,7 @@ export class Page {
     this.$('throttle-out').textContent = `${signed(out)} · ${out < 0 ? 'brake' : out > 0 ? 'boost' : 'cruise'}`;
     const bar = this.$('throttle-bar');
     bar.dataset.side = out < 0 ? 'brake' : 'boost';
-    bar.style.setProperty('--from', `${50 + Math.min(out, 0) * 50}%`);
-    bar.style.setProperty('--size', `${Math.abs(out) * 50}%`);
+    bars(bar, out);
     this.$('detents').hidden = !detents;
     this.$('detent-legend').hidden = !detents;
     for (const button of this.doc.querySelectorAll('[data-capture]')) button.disabled = !this.monitor;
@@ -1446,21 +1528,79 @@ export class Page {
       const keys = capturing === kind ? this.capture.keys : this.config.combos[field];
       const combo = this.$(`${kind}-combo`);
       // Rebuilt only when the combo changes: this runs on every live poll.
-      if (combo.dataset.keys === keys.join()) continue;
-      combo.dataset.keys = keys.join();
-      combo.replaceChildren(...(keys.length ? keys : [null]).flatMap((key, index) => {
-        const chipItem = this.doc.createElement('span');
-        chipItem.className = key ? 'chip static' : 'chip static off';
-        chipItem.textContent = key ? short(key) : 'Off';
-        if (key) chipItem.title = label(key);
-        if (!index) return [chipItem];
-        const plus = this.doc.createElement('span');
-        plus.className = 'plus';
-        plus.textContent = '+';
-        return [plus, chipItem];
-      }));
+      if (combo.dataset.keys !== keys.join()) {
+        combo.dataset.keys = keys.join();
+        combo.replaceChildren(...(keys.length ? keys : [null]).flatMap((key, index) => {
+          const chipItem = this.doc.createElement('span');
+          chipItem.className = key ? 'chip static' : 'chip static off';
+          chipItem.textContent = key ? short(key) : 'Off';
+          if (key) {
+            chipItem.title = label(key);
+            chipItem.dataset.key = key;
+          }
+          if (!index) return [chipItem];
+          const plus = this.doc.createElement('span');
+          plus.className = 'plus';
+          plus.textContent = '+';
+          return [plus, chipItem];
+        }));
+      }
+      for (const chip of combo.querySelectorAll('[data-key]')) chip.classList.toggle('held', this.held.has(chip.dataset.key));
     }
+    this.renderStates();
     this.renderCapture(capturing);
+  }
+
+  /** Helper states from the running emulation: precision and shift held, safe start armed, combo progress. */
+  renderStates() {
+    const monitor = this.monitor;
+    const { precision, shift, safe_start: safe, combos } = this.config;
+    if (!precision.source) tone(this.$('precision-state'), 'Precision off');
+    else tone(this.$('precision-state'), monitor?.precision ? `Precision held · ${Math.round(precision.scale * 100)}%` : 'Ready', monitor?.precision ? 'accent' : '');
+    if (!shift) tone(this.$('shift-state'), 'Shift off');
+    else tone(this.$('shift-state'), monitor?.shift ? 'Shift held' : 'Ready', monitor?.shift ? 'warn' : '');
+    if (!safe) tone(this.$('safe-state'), 'Off');
+    else if (!monitor) tone(this.$('safe-state'), 'Starts with emulation');
+    else tone(this.$('safe-state'), monitor.armed ? 'Throttle armed' : 'Waiting for centre', monitor.armed ? 'ok' : 'warn');
+    const progress = COMBOS.map(([, field, text]) => [text, combos[field], combos[field].filter((key) => this.held.has(key)).length]).filter(([, keys, held]) => keys.length && held);
+    const full = progress.find(([, keys, held]) => held === keys.length);
+    if (full) tone(this.$('combo-state'), `${full[0][0].toUpperCase()}${full[0].slice(1)} combo held`, 'ok');
+    else if (progress.length) tone(this.$('combo-state'), progress.map(([text, keys, held]) => `${text} ${held}/${keys.length}`).join(' · '), 'warn');
+    else tone(this.$('combo-state'), 'No combo held');
+  }
+
+  /** The last few seconds of presses of the latest control, and how they read against the timing draft. */
+  renderPresses() {
+    const now = this.clock();
+    const timing = this.config.timing;
+    const latest = this.presses.at(-1);
+    const mine = latest ? this.presses.filter((press) => press.key === latest.key) : [];
+    const at = (t) => Math.max(0, Math.min(100, ((t - now + PRESS_SPAN) / PRESS_SPAN) * 100));
+    const span = (className, from, to) => {
+      const item = this.doc.createElement('span');
+      item.className = className;
+      item.style.setProperty('left', `${at(from)}%`);
+      item.style.setProperty('width', `${at(to) - at(from)}%`);
+      return item;
+    };
+    const reads = gestures(mine, timing, now);
+    const mark = latest && latest.start + timing.long_ms <= now ? [span('mk', latest.start + timing.long_ms, latest.start + timing.long_ms)] : [];
+    this.$('press-in').replaceChildren(...mine.map((press) => span('in', press.start, press.end ?? now)), ...mark);
+    this.$('press-out').replaceChildren(...reads.map((read) => span(read.kind === 'tap' ? 'out' : 'out alt', read.from, Math.min(read.to, now))));
+    this.$('press-key').textContent = latest ? short(latest.key) : 'Pressed';
+    let text = 'Press a TCA control: the last 3 seconds are drawn against the long-press and double-tap times.';
+    if (latest) {
+      const held = (latest.end ?? now) - latest.start;
+      const kind = latest.end === null && held < timing.long_ms ? 'holding' : reads.at(-1).kind;
+      text = `${short(latest.key)} · ${{
+        holding: `holding ${held} ms…`,
+        long: `long press: held ${held} ms (long press from ${timing.long_ms} ms)`,
+        double: `double tap: second tap within ${timing.double_ms} ms`,
+        tap: `tap: ${held} ms`,
+      }[kind]}`;
+    }
+    this.$('press-text').textContent = text;
+    this.$('presses').setAttribute('aria-label', text);
   }
 
   renderCapture(capturing) {
@@ -1476,10 +1616,9 @@ export class Page {
     }
   }
 
-  /** Lever rails against the saved thresholds (what the running emulation uses). */
+  /** Lever rails against the draft thresholds, so they can be tuned before saving. */
   levers(levers) {
-    this.lastLevers = levers;
-    const rule = this.saved.split_high_g;
+    const rule = this.config.split_high_g;
     const rails = this.$('lever-rails');
     rails.hidden = !levers;
     rails.style.setProperty('--fw', `${Math.round(rule.forward * 100)}%`);
@@ -1518,12 +1657,19 @@ export class Page {
     }
     this.$('live-input-text').textContent = data.pressed.length ? `Now sending: ${data.pressed.map(label).join(', ')}` : data.links ? 'Nothing pressed' : 'Start emulation to see presses.';
     this.$('live-input').dataset.active = String(data.pressed.length > 0);
-    this.levers(data.levers);
+    this.lastLevers = data.levers;
     this.lastLive = data;
-    if (!this.$('panel-live').hidden) this.renderLive(data);
+    if (this.page === 'live') this.renderLive(data);
     const pressed = data.pressed.filter((key) => !this.held.has(key));
     const fresh = pressed.filter((key) => SELECTABLE.has(key));
     this.held = new Set(data.pressed);
+    // Press history for the timing timeline, and how long the hat has been held for the camera ramp.
+    const now = this.clock();
+    for (const entry of this.presses) if (entry.end === null && !this.held.has(entry.key)) entry.end = now;
+    this.presses.push(...pressed.map((key) => ({ key, start: now, end: null })));
+    this.presses = this.presses.filter((entry) => entry.end === null || entry.end >= now - PRESS_SPAN);
+    const hat = data.pressed.some((key) => key.startsWith('hat-')) && this.saved.hat !== 'mapped';
+    this.hatSince = hat ? this.hatSince ?? now : null;
     const kind = this.capture?.kind;
     if ((kind === 'precision' || kind === 'shift') && fresh.length) {
       this.setSingle(kind, fresh[0]);
@@ -1533,7 +1679,7 @@ export class Page {
       this.capture.keys = [...new Set([...this.capture.keys, ...fresh])].slice(0, 4);
     }
     const picked = pressed.filter((key) => this.selectable(key));
-    if (picked.length && !this.$('panel-mapping').hidden && !this.busy) this.select(picked[0]);
+    if (picked.length && this.page === 'mapping' && !this.busy) this.select(picked[0]);
     else this.render();
     this.renderSettings();
   }
@@ -1547,7 +1693,7 @@ export class Page {
   }
 }
 
-export async function start(win, interval = 250) {
+export async function start(win, interval = 100) {
   const page = new Page(win.document, client(win.fetch.bind(win), win.location.hash.slice(1)));
   try {
     await page.load();
