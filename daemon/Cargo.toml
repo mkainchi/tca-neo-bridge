@@ -1,6 +1,6 @@
 [package]
 name = "neo-daemon"
-version = "0.3.0-experimental.1"
+version = "0.3.0-experimental.2"
 edition = "2021"
 publish = false
 description = "Experimental tray daemon that presents a Thrustmaster HOTAS as a virtual T.Flight Hotas NEO"

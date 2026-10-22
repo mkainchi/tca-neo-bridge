@@ -50,7 +50,7 @@ On first start, a profile saved by the stable bridge is **copied** into this bri
 
 1. **Close Steam and the game.**
 2. Right-click the tray icon → **Start emulation**. The tooltip shows *Emulating*.
-3. Right-click → **Configure…** to check your axes and map your buttons (see below). Changes apply immediately.
+3. Right-click → **Configure…** to check your axes and map your buttons (see below). Mappings apply immediately; settings when you save them.
 4. Start Steam and ACE COMBAT 8. The game should list a T.Flight Hotas NEO and use its HOTAS controls.
 5. When you're done, choose **Stop emulation**, or **Quit**. Both release every control, remove the virtual NEO and restore HidHide's previous settings.
 
@@ -62,27 +62,46 @@ The icon's badge shows the emulation status: a gray hollow circle when idle, a g
 | --- | --- |
 | Start emulation / Stop emulation | Hide your controllers and create the virtual NEO, or undo both. |
 | Configure… | Opens the configuration page in your browser (local only). Double-clicking the icon does the same. |
+| Pause input / Resume input | While emulating, releases every control and sends a neutral NEO until resumed. A button combo can do the same (see *Buttons & helpers*). |
+| Profile ▸ | Appears once a profile is saved under a name. Choosing one makes it the active profile, even mid-flight; a balloon confirms it. |
 | Install driver… / Reinstall driver… | Installs the driver, or replaces it with a freshly signed copy. Available while not emulating. |
 | Quit | Stops emulation and exits. |
 
-### Mapping tab
+### The configuration page
 
-The header shows the bridge status and, while emulating, how many controllers are open, whether HidHide hides them and whether the virtual NEO exists. The left panel shows your controllers: the TCA Airbus pair as diagrams, any other controller as a numbered button panel. The middle panel is the T.Flight Hotas NEO with its numbered buttons and POV hat. Below them, a table lists NEO buttons 1–15 with their ACE COMBAT 8 actions and the controls that feed each one.
+The page fits one desktop window (1280 × 800 and up) without scrolling. The header shows the bridge status and, while emulating, how many controllers are open, whether HidHide hides them and whether the virtual NEO exists, next to the **Profile** menu and **Print cheat sheet**. A rail on the left switches between **Mapping**, **Flight axes**, **Throttle**, **Camera & head**, **Buttons & helpers**, **Controllers** and **Live**. On the settings pages, a bar at the bottom holds **Try in game**, **Discard**, **Reset to defaults** and **Save settings**.
+
+**Every preview is live.** While emulating, each page follows what you do on your HOTAS straight away, through your unsaved settings: the curve dot and meters follow the stick, the throttle needle your throttle, the camera graph your hat hold, the helper states and press timeline your buttons. Test controls appear only when emulation is stopped.
+
+### Mapping
+
+The left panel shows your controllers: the TCA Airbus pair as diagrams, any other controller as a numbered button panel. The middle panel is the T.Flight Hotas NEO with its numbered buttons and POV hat. The right panel has three tabs: **Selected control**, **NEO buttons** (NEO buttons 1–15 with their ACE COMBAT 8 actions, the controls that feed each one, and the NEO axes) and **Log**.
 
 - **Click a control,** or press it while emulating. Its current NEO targets light up.
 - **Click NEO buttons or POV arrows** to build its new mapping. Blue ring means kept, yellow ring means added, red dashed ring means removed. Then choose **Record mapping**.
-- **With nothing selected,** clicking a NEO control or a row of the NEO button table highlights every control that feeds it.
-- **Under *Hats and other inputs*,** choose which hat is the **camera hat**, and whether it drives the **Camera** (the NEO mini-stick, the default) or **Mapped controls**. Other hats are always mappable like buttons.
-- **Recorded corrections** keeps a log of every change you record.
+- **Behaviour** sets how the control drives its NEO targets: **Hold**, **Pulse** (a short press when it switches on), **Pulse on change** (a short press each time it moves, on and off), **Toggle** or **Repeat**. A small timeline shows what the game receives.
+- **Press / Long press / Double tap** picks which action the NEO clicks change. Each tile shows its current mapping.
+- **Normal / Shift** switches the layer being mapped once a shift control is set (see *Buttons & helpers*).
+- **With nothing selected,** clicking a NEO control or a row of the NEO buttons table highlights every control that feeds it.
+- **Camera hat** chooses which hat drives the camera, and whether it drives the **Camera** (the NEO mini-stick, the default) or is **Mapped** like buttons. Other hats are always mappable.
 
-### Axes and settings tab
+### Settings pages
 
-| Setting | Meaning |
+| Page | Settings |
 | --- | --- |
-| Stick deadzone, camera strength | Applied to roll, pitch and yaw, and to the camera. Each has a number field and a slider. |
-| Axis sources | Which controller axis drives NEO roll, pitch, yaw and throttle, each with **Invert**. **Detect** binds the next axis you move while emulating. Every throttle axis in the list shares the throttle; the last one moved takes over. |
-| High-G from split levers | Two levers and their thresholds, as lever travel: 0 % at idle, 100 % fully forward. While one lever is at or above the *forward* threshold and the other at or below the *back* threshold, NEO 5 (High-G) is held and the throttle follows the forward lever. Tick *Forward is the high raw value* for throttles that report forward as a high number. |
-| Controllers | **Automatic** uses every connected Thrustmaster controller; or tick the ones you want, including another brand's. Each set of controllers keeps its own mapping. |
+| Flight axes | Per axis (**Roll**, **Pitch**, **Yaw**): **deadzone**, **full deflection at**, **anti-deadzone**, **curve** and **smoothing**, with a live curve. **Axis sources** pick which controller axis drives each NEO axis, with **Invert**; **Detect** binds the next axis you move while emulating. **Yaw source**: the bound axis, **Off**, or the difference between the two split levers. |
+| Throttle | **Linear** or ACE COMBAT **Detents** (brake below idle, cruise around the CL detent, boost from the last detent; **Capture** each detent while emulating). **Throttle axes**: every axis in the list shares the throttle; the last one moved takes over. **High-G from split levers**: two levers and their thresholds; tick *Forward is the high raw value* for throttles that report forward as a high number. |
+| Camera & head | Camera **strength**, **ramp** and **full strength after a long press**, with the hat hold drawn live. **Hat + a lever** lets another axis pan the camera. **Head tracking** through OpenTrack (UDP over network, 127.0.0.1, port 4242 by default). |
+| Buttons & helpers | **Precision aiming** (hold a control to scale the flight axes down), **Shift layer**, **Pause input** and **Next profile** combos, **Safe start** (the throttle rests at centre until it reaches it), and **Timing** for long press, double tap, repeat and pulses, with a timeline of your own presses. |
+| Controllers | **Automatic** uses every connected Thrustmaster controller; or tick the ones you want, including another brand's. Each set of controllers keeps its own mapping; the settings on the other pages are shared. |
+
+**Try in game** runs your unsaved settings in the running emulation without saving them. Profiles saved by earlier versions of either bridge, stable or experimental, are upgraded when loaded.
+
+### Live, profiles and the cheat sheet
+
+The **Live** page shows every NEO axis as the raw input above what the NEO receives, the bridge state, the controls being pressed, the 15 NEO buttons as they are sent, and the POV. The **Profile** menu saves the settings under a name, switches between saved profiles, and imports or exports them as JSON. **Print cheat sheet** prints a light A4 page of your controllers' mapping.
+
+If a controller disconnects while emulating, every control is released, the virtual NEO stays and the bridge waits for the same controllers to return, then hides them again. When emulation starts, the bridge warns if Steam was already running or Steam Input is on for ACE COMBAT 8.
 
 ### Default mapping
 
@@ -110,7 +129,7 @@ The header shows the bridge status and, while emulating, how many controllers ar
 | Sidestick hat | Rx/Ry mini-stick | Camera |
 | Levers split (one ≥ 75 %, other ≤ 25 %) | 5 | High-G |
 
-The TCA's ENG switches and mode selector **latch**: while one rests in an active position, its NEO button stays held. **Reset everything to defaults** on the settings tab restores the default of the current controller set.
+The TCA's ENG switches **pulse on change** and its mode selector **pulses**, so a latched switch sends one short press instead of holding its button. **Reset to defaults** on a settings page restores the default of the current controller set.
 
 ## Files and data
 

@@ -42,13 +42,13 @@ Your settings live in `%LOCALAPPDATA%\any-tm-hotas-bridge`. If you used the stab
 
 1. Close Steam and the game.
 2. Right-click the icon → **Start emulation**. The tooltip shows *Emulating*. Your controllers are now hidden from games, and the virtual NEO replaces them.
-3. Right-click the icon → **Configure…**. The **Mapping** tab shows the controllers it found, with a button panel for each.
-4. Open **Axes and settings** and check each axis:
+3. Right-click the icon → **Configure…**. The **Mapping** page shows the controllers it found, with a button panel for each.
+4. Open **Flight axes** and **Throttle** and check each axis while you move it: the previews follow your HOTAS live.
    - **Axis sources:** the bridge guessed roll, pitch, yaw and throttle from the axis names your controllers report. To change one, press **Detect** next to it and move the stick, twist, lever or pedal you want.
    - **Invert:** tick it for any axis that moves the wrong way in the game. Throttles are the usual suspects.
-   - **Controllers:** every connected Thrustmaster controller is used. Untick one to leave it visible to the game.
-   - Press **Save settings**. Changes apply at once, even while emulating.
-5. Back on the **Mapping** tab, press a button on your HOTAS: it lights up. Click the NEO buttons it should press, then **Record mapping**. The table under the NEO picture lists the ACE COMBAT 8 action of each NEO button.
+   - **Controllers:** every connected Thrustmaster controller is used. Untick one on the **Controllers** page to leave it visible to the game.
+   - Press **Save settings**, or **Try in game** to fly with the changes before saving them.
+5. Back on the **Mapping** page, press a button on your HOTAS: it lights up. Click the NEO buttons it should press, then **Record mapping**. The **NEO buttons** tab lists the ACE COMBAT 8 action of each NEO button.
 6. Start Steam and the game. It should list a T.Flight Hotas NEO and use its HOTAS controls.
 7. When you're done, choose **Stop emulation**, or **Quit**. Both release every control, remove the virtual NEO and unhide your controllers.
 

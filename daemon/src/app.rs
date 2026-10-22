@@ -42,6 +42,10 @@ pub struct Apis {
     pub driver: DriverApi,
     pub runner: fn() -> Runner,
     pub pnputil: fn() -> Runner,
+    /// Runs tasklist and reg for the launch-order warnings.
+    pub launch: fn() -> Runner,
+    /// Windows' System32 folder (tasklist.exe, reg.exe).
+    pub system32: PathBuf,
     pub program_files: PathBuf,
     pub local_app_data: Option<PathBuf>,
     pub pipe_name: String,
@@ -61,6 +65,8 @@ impl Apis {
             driver: DriverApi::real(),
             runner: hidhide::real_runner,
             pnputil: pnputil_runner,
+            launch: launch_runner,
+            system32: PathBuf::from(std::env::var_os("SystemRoot").unwrap_or(r"C:\Windows".into())).join("System32"),
             program_files: PathBuf::from(std::env::var_os("ProgramFiles").unwrap_or(r"C:\Program Files".into())),
             local_app_data: std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
             pipe_name: protocol::PIPE_NAME.into(),
@@ -90,6 +96,11 @@ pub const STABLE_FOLDER: &str = "tca-neo-bridge";
 /// `data` beside the executable only if LOCALAPPDATA is unavailable.
 pub fn default_data(local_app_data: Option<&Path>, exe: &Path) -> PathBuf {
     local_app_data.map_or_else(|| exe.with_file_name("data"), |base| base.join(APP_FOLDER))
+}
+
+/// tasklist and reg answer quickly; a stuck one must not hold up starting.
+pub fn launch_runner() -> Runner {
+    crate::process::runner(Duration::from_secs(5))
 }
 
 /// pnputil can be slow on systems with many staged drivers.
@@ -224,6 +235,11 @@ fn owned(options: Options, apis: &Apis, exe_path: &Path) -> i32 {
         hiding: Box::new(move || Hiding::new(hidhide::installation(&program_files), runner(), &data, std::slice::from_ref(&exe))),
         period: apis.period,
         device_timeout: Duration::from_secs(10),
+        retry: Duration::from_secs(1),
+        checks: {
+            let (launch, system32) = (apis.launch, apis.system32.clone());
+            Box::new(move || crate::launch::warnings(&launch(), &system32))
+        },
     };
     let controller = Controller::new(shared, deps, options.source, notify);
     let (class, title) = (ffi::wide("AnyTmHotasBridgeTray"), ffi::wide(PRODUCT));

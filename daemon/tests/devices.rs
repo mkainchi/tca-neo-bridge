@@ -2,7 +2,7 @@ mod common;
 use common::*;
 use neo_daemon::config;
 use neo_daemon::device::{self, PipeServer, SoftwareDevice};
-use neo_daemon::emulation::{Controller, Deps, Emulation, Notify, Source, DISCONNECTED};
+use neo_daemon::emulation::{Controller, Deps, Emulation, Notify, Source, RECONNECT_FAILED};
 use neo_daemon::ffi;
 use neo_daemon::hid::{self, Decoder, HidApi, InputState, Reader, Value};
 use neo_daemon::hidhide::Hiding;
@@ -25,6 +25,17 @@ fn temp(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+/// Defaults plus the TCA profile stored explicitly, so its mapping can be changed.
+fn with_tca() -> config::Config {
+    let mut cfg = config::defaults();
+    cfg.setups.insert(config::TCA_SETUP.into(), config::tca_profile());
+    cfg
+}
+
+fn tca(cfg: &mut config::Config) -> &mut config::Profile {
+    cfg.setups.get_mut(config::TCA_SETUP).unwrap()
 }
 
 fn ids(opened: &[hid::Opened]) -> Vec<String> {
@@ -357,6 +368,8 @@ fn deps(runner_fail: Option<&str>, hidden_dir: PathBuf) -> (Deps, Arc<Mutex<Opti
         hiding: Box::new(move || Hiding::new(Some("HidHideCLI.exe".into()), hidhide_runner(runner_fail.clone()), &hidden_dir, &["neo-daemon.exe".into()])),
         period: Duration::from_millis(1),
         device_timeout: Duration::from_millis(50),
+        retry: Duration::from_millis(5),
+        checks: Box::new(Vec::new),
     };
     (deps, fail)
 }
@@ -400,8 +413,8 @@ fn tca_session_maps_hot_reloads_and_releases_on_disconnect() {
     pair();
     let dir = temp("tca");
     let shared = Arc::new(Shared::new(dir.join("config.json"), config::defaults()));
-    let (deps, _) = deps(None, dir.clone());
-    let (notify, _) = counter();
+    let (deps, fail) = deps(None, dir.clone());
+    let (notify, notified) = counter();
     let session = Emulation::start(&deps, shared.clone(), Source::Hotas, notify).unwrap();
     assert!(dir.join("hidhide-session.json").exists());
     assert_eq!(*shared.links.lock().unwrap(), Some(Links { source: "hotas", hidden: true, inputs: 2, virtual_neo: true }));
@@ -413,29 +426,88 @@ fn tca_session_maps_hot_reloads_and_releases_on_disconnect() {
         s.reads.insert(0, [Read::Data(stick_report(1, 0))].into());
         s.reads.insert(1, [Read::Data(quadrant_report(65535))].into());
     }
-    // Left lever at idle (raw 65535, the NEO Z idle value too); default throttle is not inverted.
-    let pressed_report = |button: u16| neo::input_report([0, 32768, 65535, 32768, 32768, 32768, 32768], button, 8);
+    // Left lever at idle (raw 65535): safe start holds the throttle at centre until the lever reaches it.
+    let pressed_report = |button: u16| neo::input_report([0, 32768, 32768, 32768, 32768, 32768, 32768], button, 8);
     wait_until(|| state().frames.iter().any(|f| protocol::parse(f) == Some(pressed_report(1))));
     assert_eq!(*shared.pressed.lock().unwrap(), ["tca-stick/b1"]);
     assert_eq!(*shared.levers.lock().unwrap(), Some([0.0, 1.0 - 32768.0 / 65535.0]));
     assert_eq!(shared.axes.lock().unwrap()["tca-quadrant"], [1.0, 2.0 * 32768.0 / 65535.0 - 1.0]);
-    let mut changed = config::defaults();
-    let mut profile = config::tca_profile();
-    profile.buttons.insert("tca-stick/b1".into(), vec![15]);
-    changed.setups.insert(config::TCA_SETUP.into(), profile);
-    shared.save(changed).unwrap();
+    wait_until(|| shared.monitor.lock().unwrap().is_some_and(|m| m.roll == -1.0 && !m.armed));
+    let mut changed = with_tca();
+    tca(&mut changed).buttons.insert("tca-stick/b1".into(), vec![15]);
+    shared.save(changed.clone()).unwrap();
     wait_until(|| state().frames.iter().any(|f| protocol::parse(f) == Some(pressed_report(1 << 14))));
+    // A preview runs without being saved; its pause combo (s1 + s2) pauses input: neutral frames, a tray refresh.
+    let mut preview = changed;
+    tca(&mut preview).combos.pause = vec!["tca-stick/b1".into(), "tca-stick/b2".into()];
+    shared.set_preview(Some(preview)).unwrap();
+    let before = notified.load(Ordering::SeqCst);
+    state().reads.insert(0, [Read::Data(stick_report(3, 0))].into());
+    wait_until(|| shared.paused());
+    assert!(notified.load(Ordering::SeqCst) > before);
+    state().frames.clear();
+    wait_until(|| state().frames.iter().any(|f| protocol::parse(f) == Some(neo::neutral())));
+    assert!(state().frames.iter().all(|f| protocol::parse(f) == Some(neo::neutral())));
+    state().reads.insert(0, [Read::Data(stick_report(1, 0))].into());
+    // The next-profile combo (s4): without saved profiles it explains why; with one it switches to it.
+    shared.set_paused(false);
+    let mut cycling = with_tca();
+    tca(&mut cycling).combos.next_profile = vec!["tca-stick/b4".into()];
+    shared.set_preview(Some(cycling)).unwrap();
+    state().reads.insert(0, [Read::Data(stick_report(8, 0))].into());
+    wait_until(|| shared.notices.lock().unwrap().len() == 1);
+    assert_eq!(shared.take_notice().map(|n| (n.title, n.error)), Some(("Profile not switched", true)));
+    state().reads.insert(0, [Read::Data(stick_report(0, 0))].into());
+    wait_until(|| shared.pressed.lock().unwrap().is_empty());
+    let mut night = config::defaults();
+    night.axes.roll.curve = 0.25;
+    neo_daemon::profiles::save(&shared.profiles_dir(), "Night", &night).unwrap();
+    state().reads.insert(0, [Read::Data(stick_report(8, 0))].into());
+    wait_until(|| shared.notices.lock().unwrap().len() == 1);
+    assert_eq!(shared.take_notice().map(|n| n.text), Some("Now flying with Night.".into()));
+    assert_eq!((shared.config().1, shared.previewing()), (night, false));
     let mut hat_up = stick_report(1, 0);
     hat_up[7] = 0;
     state().reads.insert(0, [Read::Data(hat_up)].into());
     wait_until(|| *shared.pressed.lock().unwrap() == ["tca-stick/b1", "tca-stick/hat-up"]);
-    state().reads.insert(1, [Read::Fail].into());
-    wait_until(|| shared.status() == Status::Error(DISCONNECTED.into()));
+    // The quadrant is unplugged: controls are released, the virtual NEO stays, and the bridge waits for it.
+    shared.notices.lock().unwrap().clear();
+    {
+        let mut s = state();
+        s.interfaces.clear();
+        s.reads.insert(1, [Read::Fail].into());
+    }
+    wait_until(|| shared.notices.lock().unwrap().len() == 1);
+    assert_eq!(shared.take_notice().map(|n| (n.title, n.error)), Some(("Controller disconnected", true)));
+    assert_eq!(*shared.links.lock().unwrap(), Some(Links { source: "hotas", hidden: true, inputs: 0, virtual_neo: true }));
+    assert!(shared.pressed.lock().unwrap().is_empty() && shared.levers.lock().unwrap().is_none() && shared.monitor.lock().unwrap().is_none());
+    std::thread::sleep(Duration::from_millis(30)); // several searches find nothing
+    state().frames.clear();
+    wait_until(|| state().frames.len() > 2);
+    assert!(state().frames.iter().all(|f| protocol::parse(f) == Some(neo::neutral())));
+    assert!(shared.links.lock().unwrap().is_some_and(|links| links.virtual_neo)); // the session is still running
+    // It returns: hidden again, read again, and safe start holds the throttle until the lever reaches centre.
+    pair();
+    {
+        let mut s = state();
+        s.reads.insert(0, [Read::Data(stick_report(1, 0))].into());
+        s.reads.insert(1, [Read::Data(quadrant_report(0))].into());
+    }
+    wait_until(|| shared.notices.lock().unwrap().len() == 1);
+    assert_eq!(shared.take_notice().map(|n| (n.title, n.error)), Some(("Controller reconnected", false)));
+    assert!(shared.links.lock().unwrap().is_some_and(|links| links.inputs == 2));
+    wait_until(|| *shared.pressed.lock().unwrap() == ["tca-stick/b1"]);
+    wait_until(|| shared.monitor.lock().unwrap().is_some_and(|m| !m.armed));
+    // A device that comes back but cannot be hidden again stops the session.
+    *fail.lock().unwrap() = Some("--dev-gaming".into());
+    state().reads.insert(0, [Read::Fail].into());
+    wait_until(|| shared.status() == Status::Error(RECONNECT_FAILED.into()));
     assert!(!dir.join("hidhide-session.json").exists());
     assert!(shared.pressed.lock().unwrap().is_empty());
     assert_eq!(*shared.levers.lock().unwrap(), None);
-    assert!(shared.axes.lock().unwrap().is_empty());
-    assert_eq!(*shared.devices.lock().unwrap(), None);
+    // The session ends unpaused, without a preview or monitor.
+    assert!(!shared.paused() && !shared.previewing() && shared.monitor.lock().unwrap().is_none());
+    assert!(shared.axes.lock().unwrap().is_empty() && shared.devices.lock().unwrap().is_none());
     drop(session);
 }
 
@@ -447,7 +519,9 @@ fn generic_session_uses_the_convention_profile_and_the_device_list() {
     other.path.push('2');
     state().interfaces = vec![Interface::generic(0x044f, 0xb10a, 16), other];
     let dir = temp("generic");
-    let shared = Arc::new(Shared::new(dir.join("config.json"), config::defaults()));
+    let mut cfg = config::defaults();
+    cfg.safe_start = false;
+    let shared = Arc::new(Shared::new(dir.join("config.json"), cfg.clone()));
     let (deps, _) = deps(None, dir);
     let (notify, _) = counter();
     // Auto selection: the T.16000M only (the other vendor's stick stays visible and unused).
@@ -461,7 +535,6 @@ fn generic_session_uses_the_convention_profile_and_the_device_list() {
     assert_eq!(*shared.levers.lock().unwrap(), None);
     drop(session);
     // Explicit list: the other vendor's stick alone.
-    let mut cfg = config::defaults();
     cfg.devices = vec!["1234-0001".into()];
     shared.save(cfg).unwrap();
     let session = Emulation::start(&deps, shared.clone(), Source::Hotas, notify).unwrap();
@@ -470,7 +543,42 @@ fn generic_session_uses_the_convention_profile_and_the_device_list() {
 }
 
 #[test]
-fn sidestick_disconnect_also_stops_the_session() {
+fn head_tracking_moves_the_camera_and_a_busy_port_is_reported() {
+    let _g = guard();
+    ready_device();
+    pair();
+    state().reads.insert(0, [Read::Forever(stick_report(0, 8192))].into());
+    state().reads.insert(1, [Read::Forever(quadrant_report(32768))].into());
+    let dir = temp("head");
+    let mut cfg = config::defaults();
+    cfg.head_tracking.enabled = true;
+    cfg.head_tracking.port = 47_000 + (std::process::id() % 2000) as u16;
+    let shared = Arc::new(Shared::new(dir.join("config.json"), cfg.clone()));
+    let (first, _) = deps(None, dir.clone());
+    let (notify, _) = counter();
+    let session = Emulation::start(&first, shared.clone(), Source::Hotas, notify.clone()).unwrap();
+    let sender = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mut datagram = [0u8; 48];
+    datagram[24..32].copy_from_slice(&22.5f64.to_le_bytes()); // half of the 45° yaw range
+    wait_until(|| {
+        sender.send_to(&datagram, ("127.0.0.1", cfg.head_tracking.port)).unwrap();
+        shared.monitor.lock().unwrap().is_some_and(|m| m.head == Some([22.5, 0.0]))
+    });
+    let rx = shared.monitor.lock().unwrap().unwrap().axes[3];
+    assert_eq!(rx, neo::unit16(neo::shape(0.5, &cfg.head_tracking.tuning)));
+    // A second session on the same port cannot listen: it says so and still emulates.
+    let blocked = Arc::new(Shared::new(temp("head2").join("config.json"), cfg.clone()));
+    let (other, _) = deps(None, temp("head2"));
+    drop(session);
+    let holder = std::net::UdpSocket::bind(("127.0.0.1", cfg.head_tracking.port)).unwrap();
+    let second = Emulation::start(&other, blocked.clone(), Source::Hotas, notify).unwrap();
+    assert_eq!(blocked.take_notice().map(|n| n.title), Some("Head tracking off"));
+    drop(second);
+    drop(holder);
+}
+
+#[test]
+fn sidestick_disconnect_reconnects_too() {
     let _g = guard();
     ready_device();
     pair();
@@ -479,8 +587,16 @@ fn sidestick_disconnect_also_stops_the_session() {
     let (deps, _) = deps(None, dir);
     let (notify, _) = counter();
     let session = Emulation::start(&deps, shared.clone(), Source::Hotas, notify).unwrap();
+    // Only the sidestick is back at first: a different set, so the bridge keeps waiting for the whole pair.
+    state().interfaces = vec![Interface::new(0x0405, 64)];
     state().reads.insert(0, [Read::Fail].into());
-    wait_until(|| shared.status() == Status::Error(DISCONNECTED.into()));
+    wait_until(|| shared.notices.lock().unwrap().len() == 1);
+    std::thread::sleep(Duration::from_millis(30));
+    assert_eq!(shared.notices.lock().unwrap().len(), 1);
+    pair();
+    wait_until(|| shared.notices.lock().unwrap().len() == 2);
+    assert_eq!(shared.notices.lock().unwrap().iter().map(|n| n.title).collect::<Vec<_>>(), ["Controller disconnected", "Controller reconnected"]);
+    assert!(shared.links.lock().unwrap().is_some_and(|links| links.virtual_neo)); // the session is still running
     drop(session);
 }
 
@@ -558,6 +674,7 @@ fn controller_start_stop_errors_and_shutdown() {
     controller.start(); // ignored while starting/emulating
     controller.wait();
     assert_eq!(shared.status(), Status::Emulating);
+    assert!(shared.warnings.lock().unwrap().is_empty() && shared.notices.lock().unwrap().is_empty());
     controller.stop();
     controller.wait();
     assert_eq!(shared.status(), Status::Idle);

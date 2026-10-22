@@ -1,5 +1,5 @@
 //! Loopback-only configuration page. Every API call needs the per-launch token and an exact Host header.
-use crate::{config, hid, labels, models};
+use crate::{config, hid, labels, models, profiles};
 use crate::shared::Shared;
 use serde_json::json;
 use std::io::{Read, Write};
@@ -95,12 +95,20 @@ pub fn handle(request: &Request, shared: &Shared, port: u16, token: &str) -> Res
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/api/config") => {
             let (_, current) = shared.config();
-            json_reply(200, json!({"config": current, "defaults": config::defaults(), "status": shared.status().label(), "links": *shared.links.lock().unwrap(), "profile": shared.config_path.display().to_string()}))
+            json_reply(200, json!({"config": current, "defaults": config::defaults(), "status": shared.status().label(), "links": *shared.links.lock().unwrap(), "profile": shared.config_path.display().to_string(), "preview": *shared.preview.lock().unwrap(), "warnings": *shared.warnings.lock().unwrap()}))
         }
         ("PUT", "/api/config") => match config::parse(&request.body).and_then(|c| shared.save(c)) {
             Ok(()) => json_reply(200, json!({"saved": true, "running": shared.status().running()})),
             Err(error) => json_reply(400, json!({"error": error})),
         },
+        ("PUT", "/api/preview") => match config::parse(&request.body).and_then(|c| shared.set_preview(Some(c))) {
+            Ok(()) => json_reply(200, json!({"preview": true, "running": shared.status().running()})),
+            Err(error) => json_reply(400, json!({"error": error})),
+        },
+        ("DELETE", "/api/preview") => {
+            let _ = shared.set_preview(None);
+            json_reply(200, json!({"preview": false}))
+        }
         ("GET", "/api/labels") => match labels::load(&shared.labels_path()) {
             Ok(entries) => json_reply(200, json!({"labels": entries})),
             Err(error) => json_reply(400, json!({"error": error})),
@@ -120,11 +128,60 @@ pub fn handle(request: &Request, shared: &Shared, port: u16, token: &str) -> Res
             }
             Err(error) => json_reply(400, json!({"error": error})),
         },
+        ("GET", "/api/profiles") => profile_list(shared),
+        (method, path) if path.starts_with("/api/profiles/") => profile_route(method, &path["/api/profiles/".len()..], shared),
         ("GET", "/api/live") => json_reply(
             200,
-            json!({"pressed": *shared.pressed.lock().unwrap(), "levers": *shared.levers.lock().unwrap(), "axes": *shared.axes.lock().unwrap(), "status": shared.status().label(), "links": *shared.links.lock().unwrap()}),
+            json!({"pressed": *shared.pressed.lock().unwrap(), "levers": *shared.levers.lock().unwrap(), "axes": *shared.axes.lock().unwrap(), "monitor": *shared.monitor.lock().unwrap(), "paused": shared.paused(), "preview": shared.previewing(), "warnings": *shared.warnings.lock().unwrap(), "status": shared.status().label(), "links": *shared.links.lock().unwrap()}),
         ),
         _ => json_reply(404, json!({"error": "Unknown request."})),
+    }
+}
+
+/// Percent-decoding for a path segment; None for a bad escape or text that is not UTF-8.
+pub fn decode(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(index + 1..index + 3)?).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+fn profile_list(shared: &Shared) -> Response {
+    let dir = shared.profiles_dir();
+    json_reply(200, json!({"profiles": profiles::list(&dir), "active": profiles::active(&dir)}))
+}
+
+/// `PUT <name>` saves the saved profile under a name and makes it active, `POST <name>/activate` switches to it,
+/// `DELETE <name>` removes it.
+fn profile_route(method: &str, rest: &str, shared: &Shared) -> Response {
+    let (segment, action) = rest.split_once('/').unwrap_or((rest, ""));
+    let Some(name) = decode(segment) else { return json_reply(400, json!({"error": "Unreadable profile name."})) };
+    let dir = shared.profiles_dir();
+    let outcome = match (method, action) {
+        ("PUT", "") => profiles::save(&dir, &name, &shared.config().1).and_then(|()| profiles::set_active(&dir, Some(&name))),
+        ("POST", "activate") => shared.activate(&name).map(|_| ()),
+        ("DELETE", "") => profiles::delete(&dir, &name).and_then(|()| match profiles::active(&dir) {
+            Some(active) if active == name => profiles::set_active(&dir, None),
+            _ => Ok(()),
+        }),
+        _ => return json_reply(404, json!({"error": "Unknown request."})),
+    };
+    match outcome {
+        Ok(()) => {
+            let (_, current) = shared.config();
+            json_reply(200, json!({"profiles": profiles::list(&dir), "active": profiles::active(&dir), "config": current, "running": shared.status().running()}))
+        }
+        Err(error) => json_reply(400, json!({"error": error})),
     }
 }
 
