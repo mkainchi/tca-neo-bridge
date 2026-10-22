@@ -152,6 +152,20 @@ impl Hiding {
         }
     }
 
+    /// After a TCA reconnects, possibly on another USB port as a new device instance: journal and hide every
+    /// supported device not hidden yet, so `close` unhides it too, then check the result.
+    pub fn rehide(&mut self) -> Result<(), String> {
+        let found = self.devices(&["0405", "0406", "0407"])?;
+        let fresh: Vec<String> = found.difference(&self.entries("dev")?).cloned().collect();
+        self.state.as_mut().ok_or(ERROR)?.devices.extend(fresh.iter().cloned());
+        self.save()?;
+        for device in &fresh {
+            self.call(&["--dev-hide", device])?;
+        }
+        self.expected.extend(found);
+        self.verify()
+    }
+
     pub fn close(&mut self) -> Result<(), String> {
         let Some(state) = self.state.clone() else { return Ok(()) };
         for device in &state.devices {

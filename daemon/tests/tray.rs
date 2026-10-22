@@ -23,6 +23,7 @@ struct Ui {
     shell_present: bool,
     icon_size: i32,
     menu: Vec<(u32, String)>,
+    tracked: bool,
     opened: Vec<String>,
     posted: Vec<u32>,
     quits: usize,
@@ -97,8 +98,13 @@ unsafe extern "system" fn post_message(_: HWND, message: u32, _: usize, _: isize
 unsafe extern "system" fn post_quit(_: i32) {
     ui().quits += 1;
 }
+/// A new menu after the previous one was tracked starts a fresh recording; submenus add to the current one.
 unsafe extern "system" fn create_menu() -> HANDLE {
-    ui().menu.clear();
+    let mut u = ui();
+    if u.tracked {
+        u.menu.clear();
+        u.tracked = false;
+    }
     5
 }
 unsafe extern "system" fn append_menu(_: HANDLE, flags: u32, _: usize, text: PCWSTR) -> ffi::BOOL {
@@ -109,7 +115,9 @@ unsafe extern "system" fn track_menu(_: HANDLE, _: u32, x: i32, y: i32, _: i32, 
     assert_eq!((x, y), (10, 20));
     // A status message arriving while the modal menu runs must not hit the borrowed tray.
     tray::wndproc(42, WM_STATUS, 0, 0);
-    ui().chosen.pop_front().unwrap_or(0)
+    let mut u = ui();
+    u.tracked = true;
+    u.chosen.pop_front().unwrap_or(0)
 }
 unsafe extern "system" fn destroy_menu(_: HANDLE) -> ffi::BOOL {
     1
@@ -226,12 +234,22 @@ fn apis() -> Apis {
         driver: driver_api(),
         runner: neo_daemon::hidhide::real_runner,
         pnputil: fake_pnputil,
+        launch: fake_launch,
+        system32: temp("system32"),
         program_files: temp("no-hidhide"),
         local_app_data: Some(temp("localappdata")),
         pipe_name: "p".into(),
         bind: "127.0.0.1:0".into(),
         period: Duration::from_millis(1),
     }
+}
+
+/// tasklist reports Steam running; reg has no Steam folder.
+fn fake_launch() -> neo_daemon::process::Runner {
+    Box::new(|tool: &std::path::Path, _: &[String]| match tool.file_name().unwrap().to_str().unwrap() {
+        "tasklist.exe" => Ok((Some(0), "\"steam.exe\",\"1234\"".into())),
+        _ => Ok((Some(1), String::new())),
+    })
 }
 
 fn fake_pnputil() -> neo_daemon::process::Runner {
@@ -273,6 +291,7 @@ fn default_data_lives_in_local_app_data_whatever_the_launch_folder() {
     assert_eq!(app::default_data(Some(&base), &exe), base.join("tca-neo-bridge"));
     assert_eq!(app::default_data(None, &exe), PathBuf::from(r"C:\Tools\tca-neo-bridge\data"));
     let _ = app::pnputil_runner();
+    let _ = app::launch_runner();
 }
 #[test]
 fn token_requires_system_randomness() {
@@ -284,16 +303,20 @@ fn token_requires_system_randomness() {
 
 #[test]
 fn menu_entries_follow_status() {
-    let enabled = |status: Status, driver| tray::menu_items(&status, driver).iter().filter(|i| i.0.is_some()).map(|i| i.2).collect::<Vec<_>>();
-    assert_eq!(enabled(Status::Idle, (None, false)), [true, false, true, true, true]);
-    assert_eq!(enabled(Status::Emulating, (Some(true), false)), [false, true, true, false, true]);
-    assert_eq!(enabled(Status::Starting, (None, false)), [false, false, true, false, false]);
-    assert_eq!(enabled(Status::Error("x".into()), (Some(false), false)), [true, false, true, true, true]);
-    assert_eq!(enabled(Status::Idle, (Some(true), true)), [true, false, true, false, true]);
-    let label = |driver| tray::menu_items(&Status::Idle, driver)[4].1;
+    let enabled = |status: Status, driver| tray::menu_items(&status, driver, false).iter().filter(|i| i.0.is_some()).map(|i| i.2).collect::<Vec<_>>();
+    assert_eq!(enabled(Status::Idle, (None, false)), [true, false, false, true, true, true]);
+    assert_eq!(enabled(Status::Emulating, (Some(true), false)), [false, true, true, true, false, true]);
+    assert_eq!(enabled(Status::Starting, (None, false)), [false, false, false, true, false, false]);
+    assert_eq!(enabled(Status::Error("x".into()), (Some(false), false)), [true, false, false, true, true, true]);
+    assert_eq!(enabled(Status::Idle, (Some(true), true)), [true, false, false, true, false, true]);
+    let pause = |paused| tray::menu_items(&Status::Emulating, (None, false), paused)[2].1;
+    assert_eq!([pause(false), pause(true)], ["Pause input", "Resume input"]);
+    let label = |driver| tray::menu_items(&Status::Idle, driver, false)[5].1;
     assert_eq!([label((None, false)), label((Some(false), false)), label((Some(true), false)), label((Some(true), true))],
         ["Install driver\u{2026}", "Install driver\u{2026}", "Reinstall driver\u{2026}", "Installing driver\u{2026}"]);
-    assert_eq!(tray::tooltip(&Status::Idle), "TCA-NEO bridge \u{2014} Idle");
+    assert_eq!(tray::tooltip(&Status::Idle, false), "TCA-NEO bridge \u{2014} Idle");
+    assert_eq!(tray::tooltip(&Status::Idle, true), "TCA-NEO bridge \u{2014} Idle");
+    assert_eq!(tray::tooltip(&Status::Emulating, true), "TCA-NEO bridge \u{2014} Emulating (input paused)");
 }
 
 #[test]
@@ -439,6 +462,8 @@ fn installed_tray(source: Source) -> std::sync::Arc<neo_daemon::shared::Shared> 
         hiding: Box::new(|| Err("Install HidHide before emulating.".into())),
         period: Duration::from_millis(1),
         device_timeout: Duration::from_millis(20),
+        retry: Duration::from_millis(5),
+        checks: Box::new(|| vec![neo_daemon::launch::STEAM_INPUT.to_string()]),
     };
     let notify: neo_daemon::emulation::Notify = std::sync::Arc::new(|| unsafe {
         post_message(42, WM_STATUS, 0, 0);
@@ -481,10 +506,15 @@ fn menu_commands_errors_balloons_and_busy_quit() {
     assert_eq!(send(WM_TRAY, 0, lparam(tray::WM_RBUTTONUP)), 0);
     wait_status(&shared, |s| *s == Status::Emulating);
     let labels: Vec<String> = ui().menu.iter().map(|m| m.1.clone()).collect();
-    assert_eq!(labels, ["Start emulation", "Stop emulation", "", "Configure\u{2026}", "Install driver\u{2026}", "", "Quit"]);
-    assert_eq!(ui().menu.iter().map(|m| m.0).collect::<Vec<_>>(), [0, 1, 0x800, 0, 0, 0x800, 0]);
+    assert_eq!(labels, ["Start emulation", "Stop emulation", "Pause input", "", "Configure\u{2026}", "Install driver\u{2026}", "", "Quit"]);
+    assert_eq!(ui().menu.iter().map(|m| m.0).collect::<Vec<_>>(), [0, 1, 1, 0x800, 0, 0, 0x800, 0]);
     send(WM_STATUS, 0, 0);
     assert!(ui().icons.last().unwrap().2.ends_with("Emulating"));
+    // Pause and resume input from the menu while emulating.
+    send(WM_COMMAND, tray::ID_PAUSE, 0);
+    assert!(shared.paused() && ui().icons.last().unwrap().2.ends_with("Emulating (input paused)"));
+    send(WM_COMMAND, tray::ID_PAUSE, 0);
+    assert!(!shared.paused() && ui().icons.last().unwrap().2.ends_with("Emulating"));
     // Context-menu key → Configure (does not destroy).
     ui().chosen = [ID_CONFIGURE as i32].into();
     send(WM_TRAY, 0, lparam(tray::WM_CONTEXTMENU));
@@ -494,14 +524,21 @@ fn menu_commands_errors_balloons_and_busy_quit() {
     // Stop via WM_COMMAND.
     send(WM_COMMAND, ID_STOP, 0);
     wait_status(&shared, |s| *s == Status::Idle);
+    // Pause is ignored unless emulating.
+    send(WM_COMMAND, tray::ID_PAUSE, 0);
+    assert!(!shared.paused());
     // Start failure shows one balloon per new error.
     state().sw_result = Some(-1);
     send(WM_COMMAND, ID_START, 0);
     wait_status(&shared, |s| matches!(s, Status::Error(_)));
     send(WM_STATUS, 0, 0);
     send(WM_STATUS, 0, 0);
-    let balloons = ui().icons.iter().filter(|i| i.1 & 0x10 != 0).count();
-    assert_eq!(balloons, 1);
+    send(WM_STATUS, 0, 0);
+    // Every start also checks the launch order: here Steam Input is reported, once per start.
+    let balloons: Vec<String> = ui().icons.iter().filter(|i| i.1 & 0x10 != 0).map(|i| i.3.clone()).collect();
+    assert_eq!(balloons.iter().filter(|text| text.contains("ACE COMBAT 8, so Steam remaps")).count(), 2);
+    assert_eq!(balloons.len(), 3); // two launch warnings and the start error, shown once
+    assert_eq!(*shared.warnings.lock().unwrap(), [neo_daemon::launch::STEAM_INPUT]);
     // Quit is refused while busy.
     shared.set_status(Status::Starting);
     send(WM_COMMAND, ID_QUIT, 0);
@@ -521,6 +558,35 @@ fn menu_commands_errors_balloons_and_busy_quit() {
     tray::TRAY.with(|t| t.borrow_mut().take());
     // Without a tray, the real default procedure handles messages.
     assert_eq!(send(0x0400, 0, 0), 0);
+}
+
+#[test]
+fn profile_submenu_lists_saved_profiles_and_switches_with_a_balloon() {
+    let _g = reset();
+    let shared = installed_tray(Source::Validation);
+    // No saved profiles: no submenu.
+    send(WM_TRAY, 0, lparam(tray::WM_RBUTTONUP));
+    assert!(!ui().menu.iter().any(|m| m.1 == "Profile"));
+    let dir = shared.profiles_dir();
+    let mut attack = neo_daemon::config::defaults();
+    attack.axes.roll.curve = 0.4;
+    neo_daemon::profiles::save(&dir, "Attack", &attack).unwrap();
+    neo_daemon::profiles::save(&dir, "Cruise", &neo_daemon::config::defaults()).unwrap();
+    neo_daemon::profiles::set_active(&dir, Some("Cruise")).unwrap();
+    // The submenu sits before Configure…, with the active profile checked; choosing one activates it.
+    ui().chosen = [(tray::ID_PROFILE_BASE) as i32].into();
+    send(WM_TRAY, 0, lparam(tray::WM_RBUTTONUP));
+    let menu = ui().menu.clone();
+    let at = menu.iter().position(|m| m.1 == "Profile").unwrap();
+    assert_eq!((menu[at].0, &menu[at + 1].1), (0x10, &"Configure\u{2026}".to_string()));
+    assert!(menu.contains(&(0, "Attack".into())) && menu.contains(&(0x8, "Cruise".into())));
+    assert_eq!((shared.config().1, neo_daemon::profiles::active(&dir)), (attack, Some("Attack".into())));
+    let shown = ui().icons.last().unwrap().clone();
+    assert!(shown.1 & 0x10 != 0 && shown.3 == "Now flying with Attack.");
+    // A profile deleted while the menu was open.
+    send(WM_COMMAND, tray::ID_PROFILE_BASE + 5, 0);
+    assert_eq!(ui().icons.last().unwrap().3, "That profile no longer exists.");
+    tray::TRAY.with(|t| t.borrow_mut().take());
 }
 
 #[test]
@@ -560,11 +626,11 @@ fn status_icons_and_tooltips_change_together_and_survive_explorer_restart() {
         shared.set_status(status.clone());
         send(WM_STATUS, 0, 0);
         let shown = ui().icons.last().unwrap().clone();
-        assert_eq!((shown.2, shown.4), (tray::tooltip(&status), icon));
+        assert_eq!((shown.2, shown.4), (tray::tooltip(&status, false), icon));
         send(0xc123, 0, 0);
         let u = ui();
         let added = &u.icons[u.icons.len() - 2];
-        assert_eq!((added.0, added.2.as_str(), added.4), (0, tray::tooltip(&status).as_str(), icon));
+        assert_eq!((added.0, added.2.as_str(), added.4), (0, tray::tooltip(&status, false).as_str(), icon));
     }
     assert_eq!(ui().loaded_icons.len(), 4); // cached across refreshes and Explorer restarts
     tray::TRAY.with(|t| t.borrow_mut().take());
