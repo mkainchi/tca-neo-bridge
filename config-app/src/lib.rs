@@ -36,11 +36,12 @@ pub struct App {
 
 impl App {
     pub fn new(ctx: &egui::Context, api: Box<dyn Api>, signals: Arc<Signals>, period: Duration, fonts: &std::path::Path) -> Self {
-        theme::install(ctx, fonts);
-        egui_extras::install_image_loaders(ctx);
+        // The profile is asked for first, so it never waits on fonts or drawing.
         let wake = ctx.clone();
         let worker = Worker::start(api, period, Box::new(move || wake.request_repaint()));
         worker.send(Request::Load);
+        theme::install(ctx, fonts);
+        diagrams::install(ctx, fonts);
         Self { state: State::default(), worker, signals }
     }
 }

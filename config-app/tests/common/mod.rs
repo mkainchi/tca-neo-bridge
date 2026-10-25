@@ -87,8 +87,13 @@ pub fn monitor() -> serde_json::Value {
     json!({"roll": 0.1, "pitch": -0.2, "yaw": 0.0, "slider": 0.5, "levers": [0.2, 0.8], "axes": [32768, 32768, 32768, 32768, 32768, 32768, 32768], "armed": true, "precision": false, "shift": false, "buttons": 0, "pov": 8, "head": null})
 }
 
-pub fn wait_until(mut condition: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+pub fn wait_until(condition: impl FnMut() -> bool) {
+    wait_for(Duration::from_secs(10), condition);
+}
+
+/// Wait up to `limit` for `condition` (the real app starts slowly on CI runners).
+pub fn wait_for(limit: Duration, mut condition: impl FnMut() -> bool) {
+    let deadline = Instant::now() + limit;
     while !condition() {
         assert!(Instant::now() < deadline, "timed out");
         std::thread::sleep(Duration::from_millis(2));

@@ -88,7 +88,8 @@ fn plate(ui: &mut Ui, room: Rect, diagram: &Diagram) -> Rect {
         painter.hline(rect.x_range(), y, Stroke::new(1.0, PLATE_GRID));
         y += 16.0;
     }
-    egui::Image::new(diagram.image.clone()).paint_at(ui, rect);
+    let texture = diagrams::texture(ui.ctx(), diagram, rect.size());
+    painter.image(texture.id(), rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
     rect
 }
 
