@@ -134,6 +134,9 @@ fn layers_actions_hand_and_hat() {
     harness.snapshot("mapping-long-press-1600x900");
     click(&mut harness, "Double tap");
     click(&mut harness, "Press");
+    // Choosing the option already chosen changes nothing.
+    click(&mut harness, "Right-hand setup");
+    assert_eq!(harness.state().state.map.hand, Hand::Right);
     click(&mut harness, "Left-hand setup");
     assert_eq!(harness.state().state.map.hand, Hand::Left);
     click(&mut harness, "Hat mapped");

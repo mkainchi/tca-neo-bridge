@@ -57,10 +57,10 @@ pub fn page(ui: &mut Ui, saved: &Config, map: &mut Map, compact: bool) -> Vec<Re
 /// The page head's right-hand side: the Normal / Shift layer switch.
 pub fn layer_switch(ui: &mut Ui, saved: &Config, map: &mut Map) {
     let shift = saved.shift.as_deref().map(|key| format!("Shift \u{b7} {}", short(key)));
-    let options = [(Layer::Normal, "Normal", "Normal layer", true), (Layer::Shift, shift.as_deref().unwrap_or("Shift"), "Shift layer", shift.is_some())];
-    let response = ui.scope(|ui| seg(ui, &options, map.layer, Some(Layer::Shift)));
-    if let Some(layer) = response.inner {
-        map.set_layer(saved, layer);
+    let options = [("Normal", "Normal layer", true), (shift.as_deref().unwrap_or("Shift"), "Shift layer", shift.is_some())];
+    let response = ui.scope(|ui| seg(ui, &options, usize::from(map.layer == Layer::Shift), Some(1)));
+    if let Some(choice) = response.inner {
+        map.set_layer(saved, [Layer::Normal, Layer::Shift][choice]);
     }
     if shift.is_none() {
         response.response.on_hover_text("Choose a shift control on the Buttons & helpers page");
@@ -183,8 +183,8 @@ fn tca_panel(ui: &mut Ui, saved: &Config, map: &mut Map, compact: bool) {
             ui.label(widgets::h3("TCA"));
         },
         |ui| {
-            if let Some(hand) = seg(ui, &[(Hand::Left, "L", "Left-hand setup", true), (Hand::Right, "R", "Right-hand setup", true)], map.hand, None) {
-                map.hand = hand;
+            if let Some(choice) = seg(ui, &[("L", "Left-hand setup", true), ("R", "Right-hand setup", true)], usize::from(map.hand == Hand::Right), None) {
+                map.hand = [Hand::Left, Hand::Right][choice];
             }
         },
     );
@@ -305,8 +305,8 @@ fn chip_row(ui: &mut Ui, title: &str, keys: &[String], height: f32, map: &mut Ma
         ui.scope_builder(UiBuilder::new().max_rect(line_rect).layout(Layout::right_to_left(Align::Center)), |ui| {
             ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
             if let (Some(mapped), 0) = (hat, index) {
-                let switch = seg(ui, &[(HatMode::Camera, "Camera", "Hat drives the camera", true), (HatMode::Mapped, "Mapped", "Hat mapped", true)], if mapped { HatMode::Mapped } else { HatMode::Camera }, None);
-                requests.extend(switch.and_then(|mode| map.set_hat(saved, mode)));
+                let switch = seg(ui, &[("Camera", "Hat drives the camera", true), ("Mapped", "Hat mapped", true)], usize::from(mapped), None);
+                requests.extend(switch.and_then(|choice| map.set_hat(saved, [HatMode::Camera, HatMode::Mapped][choice])));
                 ui.add_space(4.0);
             }
             for key in line.iter().rev() {

@@ -52,16 +52,16 @@ pub fn h3(text: &str) -> RichText {
     RichText::new(text.to_uppercase()).font(FontId::new(13.0, theme::display())).color(theme::WHITE).strong()
 }
 
-/// A segmented choice sized to its options; returns the option clicked, if any. Options: (value, text, accessible
-/// label, enabled). `amber` is the option shown in amber while chosen (the shift layer).
-pub fn seg<T: Copy + PartialEq>(ui: &mut Ui, options: &[(T, &str, &str, bool)], current: T, amber: Option<T>) -> Option<T> {
-    let widths: Vec<f32> = options.iter().map(|(_, text, _, _)| (ui.painter().layout_no_wrap(text.to_string(), mono(11.5), theme::MUTED).size().x + 20.0).max(32.0)).collect();
+/// A segmented choice sized to its options; returns the index of the option clicked, if any. Options: (text,
+/// accessible label, enabled). `amber` is the option shown in amber while chosen (the shift layer).
+pub fn seg(ui: &mut Ui, options: &[(&str, &str, bool)], current: usize, amber: Option<usize>) -> Option<usize> {
+    let widths: Vec<f32> = options.iter().map(|(text, _, _)| (ui.painter().layout_no_wrap(text.to_string(), mono(11.5), theme::MUTED).size().x + 20.0).max(32.0)).collect();
     let total = widths.iter().sum::<f32>() + 2.0 * (options.len() as f32 - 1.0) + 6.0;
     let (outer, _) = ui.allocate_exact_size(Vec2::new(total, 36.0), Sense::hover());
     ui.painter().rect(outer, CornerRadius::same(theme::RADIUS), theme::GROUND, Stroke::new(1.0, theme::LINE_2), StrokeKind::Inside);
     let mut chosen = None;
     let mut left = outer.left() + 3.0;
-    for (&(value, text, label, enabled), width) in options.iter().zip(widths) {
+    for (value, (&(text, label, enabled), width)) in options.iter().zip(widths).enumerate() {
         let rect = Rect::from_min_size(Pos2::new(left, outer.top() + 3.0), Vec2::new(width, 30.0));
         left += width + 2.0;
         let on = value == current;

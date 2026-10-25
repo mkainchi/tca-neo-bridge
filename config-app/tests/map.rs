@@ -4,7 +4,7 @@ use common::config_reply;
 use neo_common::config::{Config, Direction, HatMode, Mode};
 use neo_common::labels::Entry;
 use neo_config::map::{Focus, Map, Side};
-use neo_config::mapping::{Layer, Neo, Slot};
+use neo_config::mapping::{Layer, Mapping, Neo, Slot};
 use neo_config::state::{Page, State};
 use neo_config::worker::{Loaded, Reply, Request};
 use serde_json::json;
@@ -58,6 +58,11 @@ fn actions_and_layers_change_what_is_edited() {
     let empty = map.proposal.clone().unwrap();
     assert_eq!(map.shown(&saved, &empty, Slot::Press), "Normal: NEO 1 (Gun)");
     assert_eq!(map.shown(&saved, &empty, Slot::Long), "Nothing");
+    // A shift mapping of its own shows as itself.
+    let own = Mapping { buttons: vec![3], pov: None, mode: Mode::Hold };
+    assert_eq!(map.shown(&saved, &own, Slot::Press), "NEO 3 (Weapon select)");
+    let pov = Mapping { buttons: vec![], pov: Some(Direction::Up), mode: Mode::Hold };
+    assert_eq!(map.shown(&saved, &pov, Slot::Press), "NEO POV up");
     map.set_layer(&saved, Layer::Normal);
     assert_eq!(map.shown(&saved, &map.proposal.clone().unwrap(), Slot::Press), "NEO 1 (Gun)");
     // No shift control: the shift layer falls back to normal.
