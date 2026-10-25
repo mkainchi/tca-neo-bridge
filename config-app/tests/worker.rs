@@ -26,17 +26,17 @@ fn load_reads_the_profile_and_the_saved_profile_names() {
     fake.reply("/api/profiles", Ok(json!({"profiles": ["Attack"], "active": "Attack"}).to_string()));
     let (worker, woken) = start(&fake, SLOW);
     worker.send(Request::Load);
-    let Reply::Loaded(config, profiles) = next(&worker) else { panic!("not loaded") };
-    assert_eq!((config.status.as_str(), profiles.active.as_deref()), ("Idle", Some("Attack")));
+    let Reply::Loaded(loaded) = next(&worker) else { panic!("not loaded") };
+    assert_eq!((loaded.config.status.as_str(), loaded.profiles.unwrap().active.as_deref(), loaded.labels), ("Idle", Some("Attack"), Ok(vec![])));
     assert_eq!(woken.load(Ordering::SeqCst), 1);
-    assert_eq!(fake.calls(), [("GET".into(), "/api/config".into()), ("GET".into(), "/api/profiles".into())]);
+    assert_eq!(fake.calls(), [("GET".into(), "/api/config".into()), ("GET".into(), "/api/profiles".into()), ("GET".into(), "/api/labels".into())]);
 }
 
 #[test]
 fn load_failures_are_reported_and_a_stale_token_is_fatal() {
     let fake = FakeApi::idle();
     let (worker, _) = start(&fake, SLOW);
-    fake.reply("/api/profiles", Err(ApiError::Rejected("Busy.".into())));
+    fake.reply("/api/config", Err(ApiError::Rejected("Busy.".into())));
     worker.send(Request::Load);
     assert_eq!(next(&worker), Reply::Failed("Busy.".into()));
     fake.reply("/api/config", Err(ApiError::Unreachable));
@@ -100,4 +100,80 @@ fn a_stale_token_on_a_poll_is_fatal() {
 #[test]
 fn config_reply_fixture_parses() {
     assert!(serde_json::from_str::<neo_common::api::ConfigReply>(&config_reply(json!({"status": "Emulating"}))).is_ok());
+}
+
+fn entry() -> neo_common::labels::Entry {
+    neo_common::labels::Entry { label: "Sidestick button 1".into(), sources: vec!["s1".into()], mapping: "NEO 1 (Gun) \u{2192} Nothing".into() }
+}
+
+#[test]
+fn load_reports_the_log_and_profiles_on_their_own() {
+    let fake = FakeApi::idle();
+    fake.reply("/api/labels", Err(ApiError::Rejected("Unreadable.".into())));
+    fake.reply("/api/profiles", Err(ApiError::Unreachable));
+    let (worker, _) = start(&fake, SLOW);
+    worker.send(Request::Load);
+    let Reply::Loaded(loaded) = next(&worker) else { panic!("not loaded") };
+    assert_eq!((loaded.profiles, loaded.labels), (Err("The bridge is not answering.".into()), Err("Unreadable.".into())));
+    fake.reply("/api/labels", Err(ApiError::Forbidden));
+    worker.send(Request::Load);
+    assert_eq!(next(&worker), Reply::Fatal(Fatal::Forbidden));
+}
+
+#[test]
+fn a_stale_token_on_the_profile_list_or_any_save_is_fatal() {
+    for (path, request) in [("/api/profiles", Request::Load), ("PUT /api/config", Request::Record { config: Box::new(neo_daemon::config::defaults()), labels: vec![] }), ("PUT /api/labels", Request::Forget(vec![]))] {
+        let fake = FakeApi::idle();
+        fake.reply(path, Err(ApiError::Forbidden));
+        let (worker, _) = start(&fake, SLOW);
+        worker.send(request);
+        assert_eq!(next(&worker), Reply::Fatal(Fatal::Forbidden));
+    }
+}
+
+#[test]
+fn recording_saves_the_profile_then_the_log() {
+    let fake = FakeApi::idle();
+    let (worker, _) = start(&fake, SLOW);
+    let config = Box::new(neo_daemon::config::defaults());
+    fake.reply("PUT /api/config", Ok(json!({"saved": true, "running": true}).to_string()));
+    worker.send(Request::Record { config: config.clone(), labels: vec![entry()] });
+    assert_eq!(next(&worker), Reply::Recorded { config: config.clone(), running: true, log: Ok(vec![entry()]) });
+    let bodies = fake.bodies();
+    assert_eq!((bodies[0].0.as_str(), bodies[1].0.as_str()), ("/api/config", "/api/labels"));
+    assert_eq!(serde_json::from_str::<neo_common::config::Config>(&bodies[0].1).unwrap(), *config);
+    assert_eq!(serde_json::from_str::<Vec<neo_common::labels::Entry>>(&bodies[1].1).unwrap(), [entry()]);
+    // The log fails on its own; the profile is still saved.
+    fake.reply("PUT /api/labels", Err(ApiError::Rejected("Disk full.".into())));
+    worker.send(Request::Record { config: config.clone(), labels: vec![] });
+    assert_eq!(next(&worker), Reply::Recorded { config: config.clone(), running: true, log: Err("Disk full.".into()) });
+    // The profile is refused: nothing is logged.
+    fake.reply("PUT /api/config", Err(ApiError::Rejected("Invalid profile.".into())));
+    worker.send(Request::Record { config: config.clone(), labels: vec![] });
+    assert_eq!(next(&worker), Reply::NotSaved("Invalid profile.".into()));
+    assert_eq!(fake.count("/api/labels"), 2);
+    fake.reply("PUT /api/config", Ok(json!({"saved": true, "running": false}).to_string()));
+    fake.reply("PUT /api/labels", Err(ApiError::Forbidden));
+    worker.send(Request::Record { config, labels: vec![] });
+    assert_eq!(next(&worker), Reply::Fatal(Fatal::Forbidden));
+}
+
+#[test]
+fn the_hat_mode_and_log_removals_are_saved() {
+    let fake = FakeApi::idle();
+    let (worker, _) = start(&fake, SLOW);
+    let config = Box::new(neo_daemon::config::defaults());
+    worker.send(Request::SetHat(config.clone()));
+    assert_eq!(next(&worker), Reply::HatSet { config: config.clone(), running: false });
+    worker.send(Request::Forget(vec![entry()]));
+    assert_eq!(next(&worker), Reply::Forgot(Ok(vec![entry()])));
+    fake.reply("PUT /api/labels", Err(ApiError::Unreachable));
+    worker.send(Request::Forget(vec![]));
+    assert_eq!(next(&worker), Reply::Forgot(Err("The bridge is not answering.".into())));
+    fake.reply("PUT /api/config", Ok("{}".into()));
+    worker.send(Request::SetHat(config));
+    assert_eq!(next(&worker), Reply::NotSaved("The daemon sent a reply this app does not understand.".into()));
+    fake.reply("PUT /api/config", Err(ApiError::Forbidden));
+    worker.send(Request::SetHat(Box::new(neo_daemon::config::defaults())));
+    assert_eq!(next(&worker), Reply::Fatal(Fatal::Forbidden));
 }

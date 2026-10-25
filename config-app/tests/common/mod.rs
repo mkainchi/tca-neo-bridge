@@ -12,7 +12,9 @@ pub const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef";
 pub struct Script {
     /// (method, path) of every call, in order.
     pub calls: Vec<(String, String)>,
-    /// Replies by path; a path without one is unreachable.
+    /// The body of every call that had one, by path.
+    pub bodies: Vec<(String, String)>,
+    /// Replies by path; a path without one is unreachable. PUTs use "PUT <path>" when one is set.
     pub replies: std::collections::HashMap<String, Result<String, ApiError>>,
     /// Replies for `/api/live` taken in turn before falling back to `replies`.
     pub live: VecDeque<Result<String, ApiError>>,
@@ -28,6 +30,9 @@ impl FakeApi {
         fake.reply("/api/config", Ok(config_reply(json!({}))));
         fake.reply("/api/profiles", Ok(json!({"profiles": [], "active": null}).to_string()));
         fake.reply("/api/live", Ok(live_reply(json!({}))));
+        fake.reply("/api/labels", Ok(json!({"labels": []}).to_string()));
+        fake.reply("PUT /api/config", Ok(json!({"saved": true, "running": false}).to_string()));
+        fake.reply("PUT /api/labels", Ok(json!({"saved": 1}).to_string()));
         fake
     }
 
@@ -39,21 +44,27 @@ impl FakeApi {
         self.0.lock().unwrap().calls.clone()
     }
 
+    pub fn bodies(&self) -> Vec<(String, String)> {
+        self.0.lock().unwrap().bodies.clone()
+    }
+
     pub fn count(&self, path: &str) -> usize {
         self.calls().iter().filter(|(_, p)| p == path).count()
     }
 }
 
 impl Api for FakeApi {
-    fn call(&mut self, method: &str, path: &str, _body: Option<&str>) -> Result<String, ApiError> {
+    fn call(&mut self, method: &str, path: &str, body: Option<&str>) -> Result<String, ApiError> {
         let mut script = self.0.lock().unwrap();
         script.calls.push((method.into(), path.into()));
+        script.bodies.extend(body.map(|body| (path.to_string(), body.to_string())));
         if path == "/api/live" {
             if let Some(reply) = script.live.pop_front() {
                 return reply;
             }
         }
-        script.replies.get(path).cloned().unwrap_or(Err(ApiError::Unreachable))
+        let put = format!("{method} {path}");
+        script.replies.get(&put).or_else(|| script.replies.get(path)).cloned().unwrap_or(Err(ApiError::Unreachable))
     }
 }
 

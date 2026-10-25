@@ -1,6 +1,9 @@
 //! TCA-NEO bridge configuration app: a native window over the daemon's loopback API, started from the tray.
 pub mod api;
+pub mod diagrams;
 pub mod launch;
+pub mod map;
+pub mod mapping;
 pub mod state;
 pub mod theme;
 pub mod ui;
@@ -34,6 +37,7 @@ pub struct App {
 impl App {
     pub fn new(ctx: &egui::Context, api: Box<dyn Api>, signals: Arc<Signals>, period: Duration, fonts: &std::path::Path) -> Self {
         theme::install(ctx, fonts);
+        egui_extras::install_image_loaders(ctx);
         let wake = ctx.clone();
         let worker = Worker::start(api, period, Box::new(move || wake.request_repaint()));
         worker.send(Request::Load);
@@ -58,7 +62,9 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        ui::shell(ui, &mut self.state);
+        for request in ui::shell(ui, &mut self.state) {
+            self.worker.send(request);
+        }
     }
 }
 

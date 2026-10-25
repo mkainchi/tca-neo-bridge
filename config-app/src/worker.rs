@@ -2,7 +2,10 @@
 //! visible. Replies go back over a channel and wake the window.
 use crate::api::{Api, ApiError};
 use neo_common::api::{ConfigReply, Live, Profiles};
-use serde::de::DeserializeOwned;
+use neo_common::config::Config;
+use neo_common::labels::Entry;
+use serde::de::{DeserializeOwned, IgnoredAny};
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
@@ -12,10 +15,16 @@ use std::time::Duration;
 /// Failed live polls in a row before the daemon counts as gone (about 300 ms at the normal period).
 pub const MISSES: u32 = 3;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Request {
-    /// The saved profile, the daemon's state and the saved profile names.
+    /// The saved profile, the daemon's state, the saved profile names and the correction log.
     Load,
+    /// Save the profile with a recorded mapping, then the correction log with its new entry.
+    Record { config: Box<Config>, labels: Vec<Entry> },
+    /// Save the profile with a new hat mode.
+    SetHat(Box<Config>),
+    /// Save the correction log with an entry removed.
+    Forget(Vec<Entry>),
 }
 
 /// Why the window must close.
@@ -27,33 +36,83 @@ pub enum Fatal {
     Lost,
 }
 
+/// What the window opens with: the profile and state, and the parts that may fail on their own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Loaded {
+    pub config: ConfigReply,
+    pub profiles: Result<Profiles, String>,
+    pub labels: Result<Vec<Entry>, String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Reply {
-    Loaded(Box<ConfigReply>, Profiles),
+    Loaded(Box<Loaded>),
     Live(Box<Live>),
+    /// The window could not load.
     Failed(String),
+    /// The mapping is saved (`running`: the emulation applied it); the log, saved or why not.
+    Recorded { config: Box<Config>, running: bool, log: Result<Vec<Entry>, String> },
+    HatSet { config: Box<Config>, running: bool },
+    /// A profile change the daemon refused, and why.
+    NotSaved(String),
+    /// The correction log after a removal, or why it was not saved.
+    Forgot(Result<Vec<Entry>, String>),
     Fatal(Fatal),
 }
 
+#[derive(Deserialize)]
+struct Saved {
+    running: bool,
+}
+
+#[derive(Deserialize)]
+struct LabelsReply {
+    labels: Vec<Entry>,
+}
+
+fn understood<T: DeserializeOwned>(body: Result<String, ApiError>) -> Result<T, ApiError> {
+    serde_json::from_str(&body?).map_err(|_| ApiError::Rejected("The daemon sent a reply this app does not understand.".into()))
+}
+
 fn get<T: DeserializeOwned>(api: &mut dyn Api, path: &str) -> Result<T, ApiError> {
-    let body = api.call("GET", path, None)?;
-    serde_json::from_str(&body).map_err(|_| ApiError::Rejected("The daemon sent a reply this app does not understand.".into()))
+    understood(api.call("GET", path, None))
 }
 
-fn outcome(error: ApiError) -> Reply {
-    match error {
-        ApiError::Forbidden => Reply::Fatal(Fatal::Forbidden),
-        ApiError::Rejected(message) => Reply::Failed(message),
-        ApiError::Unreachable => Reply::Failed("The bridge is not answering.".into()),
+fn put<T: DeserializeOwned>(api: &mut dyn Api, path: &str, body: &impl Serialize) -> Result<T, ApiError> {
+    understood(api.call("PUT", path, Some(&serde_json::to_string(body).expect("serializes"))))
+}
+
+/// A failure the window can show, or the end of the window when the token is stale.
+fn soft<T>(result: Result<T, ApiError>) -> Result<Result<T, String>, Fatal> {
+    match result {
+        Ok(value) => Ok(Ok(value)),
+        Err(ApiError::Forbidden) => Err(Fatal::Forbidden),
+        Err(ApiError::Rejected(message)) => Ok(Err(message)),
+        Err(ApiError::Unreachable) => Ok(Err("The bridge is not answering.".into())),
     }
 }
 
-fn handle(api: &mut dyn Api, request: Request) -> Reply {
-    match request {
-        Request::Load => get(api, "/api/config").and_then(|config| Ok(Reply::Loaded(Box::new(config), get(api, "/api/profiles")?))).unwrap_or_else(outcome),
-    }
+fn handle(api: &mut dyn Api, request: Request) -> Result<Reply, Fatal> {
+    Ok(match request {
+        Request::Load => match soft(get::<ConfigReply>(api, "/api/config"))? {
+            Err(message) => Reply::Failed(message),
+            Ok(config) => {
+                let profiles = soft(get(api, "/api/profiles"))?;
+                let labels = soft(get::<LabelsReply>(api, "/api/labels"))?.map(|reply| reply.labels);
+                Reply::Loaded(Box::new(Loaded { config, profiles, labels }))
+            }
+        },
+        Request::Record { config, labels } => match soft(put::<Saved>(api, "/api/config", &config))? {
+            Err(message) => Reply::NotSaved(message),
+            Ok(saved) => Reply::Recorded { log: soft(put::<IgnoredAny>(api, "/api/labels", &labels))?.map(|_| labels), config, running: saved.running },
+        },
+        Request::SetHat(config) => match soft(put::<Saved>(api, "/api/config", &config))? {
+            Err(message) => Reply::NotSaved(message),
+            Ok(saved) => Reply::HatSet { config, running: saved.running },
+        },
+        Request::Forget(labels) => Reply::Forgot(soft(put::<IgnoredAny>(api, "/api/labels", &labels))?.map(|_| labels)),
+    })
 }
-
 pub struct Worker {
     requests: Option<Sender<Request>>,
     pub replies: Receiver<Reply>,
@@ -72,7 +131,7 @@ impl Worker {
             let mut misses = 0;
             loop {
                 let reply = match inbox.recv_timeout(period) {
-                    Ok(request) => handle(api.as_mut(), request),
+                    Ok(request) => handle(api.as_mut(), request).unwrap_or_else(Reply::Fatal),
                     Err(RecvTimeoutError::Timeout) if polling.load(Ordering::SeqCst) => match get::<Live>(api.as_mut(), "/api/live") {
                         Ok(live) => {
                             misses = 0;

@@ -3,7 +3,7 @@ mod common;
 use common::{config_reply, live_reply};
 use neo_common::api::{Links, Profiles};
 use neo_config::state::{pills, Page, State, Tone};
-use neo_config::worker::{Fatal, Reply};
+use neo_config::worker::{Fatal, Loaded, Reply};
 use serde_json::json;
 
 fn links(source: &str, hidden: bool, tca: bool, virtual_neo: bool) -> Links {
@@ -40,7 +40,7 @@ fn replies_update_the_model() {
     state.apply(Reply::Failed("Busy.".into()));
     assert_eq!(state.note.as_deref(), Some("Busy."));
     let config = serde_json::from_str(&config_reply(json!({"status": "Emulating", "preview": neo_daemon::config::defaults(), "warnings": ["Steam is running."]}))).unwrap();
-    state.apply(Reply::Loaded(Box::new(config), Profiles { profiles: vec!["Attack".into()], active: Some("Attack".into()) }));
+    state.apply(Reply::Loaded(Box::new(Loaded { config, profiles: Ok(Profiles { profiles: vec!["Attack".into()], active: Some("Attack".into()) }), labels: Ok(vec![]) })));
     assert_eq!((state.status.as_str(), state.previewing, state.profile_name(), state.note.clone()), ("Emulating", true, "Attack", None));
     assert_eq!((state.saved.clone(), state.profile_path.as_str()), (Some(neo_daemon::config::defaults()), r"C:\data\config.json"));
     assert!(state.show_warnings());

@@ -1,5 +1,9 @@
 //! The one-screen shell: header with status pills, launch warnings, the rail, the page, and the save bar.
+pub mod mapping;
+pub mod widgets;
+
 use crate::state::{pills, Page, State, Tone};
+use crate::worker::Request;
 use crate::theme::{self, tint};
 use eframe::egui::{self, epaint::CubicBezierShape, Align, Color32, CornerRadius, Frame, Layout, Margin, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2, Role, WidgetInfo};
 
@@ -245,31 +249,49 @@ fn footer(ui: &mut Ui, state: &State) {
     });
 }
 
-fn page(ui: &mut Ui, state: &State) {
-    let frame = Frame::new().fill(theme::GROUND).inner_margin(Margin { left: 16, right: 16, top: 14, bottom: 12 });
-    egui::CentralPanel::default().frame(frame).show(ui, |ui| {
-        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.set_min_height(38.0);
-                ui.spacing_mut().item_spacing.x = 14.0;
-                ui.label(RichText::new(state.page.title().to_uppercase()).heading().color(theme::WHITE).strong());
-                ui.label(RichText::new(state.page.help()).small().color(theme::MUTED));
-            });
-            ui.add_space(12.0);
-            Frame::new().fill(theme::PANEL).stroke(Stroke::new(1.0, theme::LINE)).corner_radius(theme::RADIUS).inner_margin(Margin::same(16)).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(RichText::new("This page is not in the native app yet.").color(theme::MUTED));
-            });
-        });
+/// The page head: its title, its help (hidden in narrow windows) and, on the right, the page's own switch.
+fn page_head(ui: &mut Ui, state: &mut State, compact: bool) {
+    ui.horizontal(|ui| {
+        ui.set_min_height(38.0);
+        ui.spacing_mut().item_spacing.x = 14.0;
+        ui.label(RichText::new(state.page.title().to_uppercase()).heading().color(theme::WHITE).strong());
+        if !compact {
+            ui.label(RichText::new(state.page.help()).small().color(theme::MUTED));
+        }
+        if let (Page::Mapping, Some(saved)) = (state.page, state.saved.as_ref()) {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| mapping::layer_switch(ui, saved, &mut state.map));
+        }
     });
+    ui.add_space(12.0);
 }
 
-/// The whole window for one frame.
-pub fn shell(ui: &mut Ui, state: &mut State) {
+fn page(ui: &mut Ui, state: &mut State, compact: bool) -> Vec<Request> {
+    let frame = Frame::new().fill(theme::GROUND).inner_margin(Margin { left: 16, right: 16, top: 14, bottom: 12 });
+    egui::CentralPanel::default()
+        .frame(frame)
+        .show(ui, |ui| {
+            page_head(ui, state, compact);
+            match (state.page, state.saved.as_ref()) {
+                (Page::Mapping, Some(saved)) => mapping::page(ui, saved, &mut state.map, compact),
+                (page, _) => {
+                    let text = if page == Page::Mapping { "Loading the profile\u{2026}" } else { "This page is not in the native app yet." };
+                    Frame::new().fill(theme::PANEL).stroke(Stroke::new(1.0, theme::LINE)).corner_radius(theme::RADIUS).inner_margin(Margin::same(16)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(RichText::new(text).color(theme::MUTED));
+                    });
+                    Vec::new()
+                }
+            }
+        })
+        .inner
+}
+
+/// The whole window for one frame; returns the requests its controls made.
+pub fn shell(ui: &mut Ui, state: &mut State) -> Vec<Request> {
     let compact = ui.ctx().content_rect().width() < COMPACT_BELOW;
     header(ui, state, compact);
     warnings(ui, state);
     footer(ui, state);
     rail(ui, state, compact);
-    page(ui, state);
+    page(ui, state, compact)
 }

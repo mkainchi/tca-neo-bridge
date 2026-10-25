@@ -1,5 +1,6 @@
 //! What the window shows, kept apart from drawing so it can be tested on its own.
-use crate::worker::Reply;
+use crate::map::Map;
+use crate::worker::{Loaded, Reply};
 use neo_common::api::{Links, Monitor, Profiles};
 use neo_common::config::Config;
 
@@ -112,6 +113,7 @@ pub struct State {
     pub note: Option<String>,
     /// The daemon has gone or no longer knows this app: the window closes.
     pub closing: bool,
+    pub map: Map,
 }
 
 impl Default for State {
@@ -131,6 +133,7 @@ impl Default for State {
             profiles: Profiles { profiles: Vec::new(), active: None },
             note: None,
             closing: false,
+            map: Map::default(),
         }
     }
 }
@@ -138,32 +141,55 @@ impl Default for State {
 impl State {
     pub fn apply(&mut self, reply: Reply) {
         match reply {
-            Reply::Loaded(config, profiles) => {
-                let config = *config;
-                self.saved = Some(config.config);
+            Reply::Loaded(loaded) => {
+                let Loaded { config, profiles, labels } = *loaded;
                 self.defaults = Some(config.defaults);
                 self.profile_path = config.profile;
                 self.status = config.status;
+                self.map.emulating = config.links.is_some();
                 self.links = config.links;
                 self.previewing = config.preview.is_some();
                 self.warnings = config.warnings;
-                self.profiles = profiles;
-                self.note = None;
+                self.note = profiles.as_ref().err().map(|error| format!("Saved profiles could not be listed: {error}"));
+                self.profiles = profiles.unwrap_or(Profiles { profiles: Vec::new(), active: None });
+                match labels {
+                    Ok(labels) => self.map.labels = labels,
+                    Err(error) => self.map.note = Some(format!("Earlier corrections could not be loaded: {error}")),
+                }
+                self.saved(config.config);
             }
             Reply::Live(live) => {
                 let live = *live;
                 self.status = live.status;
+                self.map.emulating = live.links.is_some();
                 self.links = live.links;
                 self.paused = live.paused;
                 self.previewing = live.preview;
                 self.warnings = live.warnings;
                 self.monitor = live.monitor;
+                self.map.press(self.saved.as_ref(), &live.pressed, self.page == Page::Mapping);
             }
+            Reply::Recorded { config, running, log } => {
+                self.saved(*config);
+                self.map.recorded(log, running);
+            }
+            Reply::HatSet { config, running } => {
+                let hat = config.hat;
+                self.saved(*config);
+                self.map.hat_set(hat, running);
+            }
+            Reply::NotSaved(message) => self.map.not_saved(&message),
+            Reply::Forgot(result) => self.map.forgot(result),
             Reply::Failed(message) => self.note = Some(message),
             Reply::Fatal(_) => self.closing = true,
         }
     }
 
+    /// The saved profile changed: the mapping page follows it.
+    fn saved(&mut self, config: Config) {
+        self.map.normalize(&config);
+        self.saved = Some(config);
+    }
     /// Previews follow the device while emulating from the TCA.
     pub fn live(&self) -> bool {
         self.monitor.is_some()

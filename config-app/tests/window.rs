@@ -136,7 +136,7 @@ fn a_failed_load_shows_in_the_save_bar() {
     fake.reply("/api/profiles", Err(ApiError::Rejected("The profiles folder could not be read.".into())));
     let (mut harness, _) = open(&fake, NARROW, SLOW);
     settle(&mut harness, |app| app.state.note.is_some());
-    assert!(harness.query_by_label("The profiles folder could not be read.").is_some());
+    assert!(harness.query_by_label("Saved profiles could not be listed: The profiles folder could not be read.").is_some());
 }
 
 /// The shell with a saved profile active, at one of the design's sizes.
