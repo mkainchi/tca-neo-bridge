@@ -70,6 +70,19 @@ fn the_window_icon_is_the_largest_png_in_the_ico() {
 }
 
 #[test]
+fn the_dark_design_holds_on_a_light_windows_theme() {
+    let ctx = eframe::egui::Context::default();
+    ctx.set_theme(eframe::egui::Theme::Light);
+    theme::install(&ctx, &temp("light"));
+    for chosen in [eframe::egui::Theme::Light, eframe::egui::Theme::Dark] {
+        ctx.set_theme(chosen);
+        let style = ctx.global_style();
+        assert!(style.text_styles.contains_key(&theme::h1()) && style.text_styles.contains_key(&theme::cap()));
+        assert_eq!(style.visuals.panel_fill, theme::GROUND);
+    }
+}
+
+#[test]
 fn visuals_use_the_console_palette() {
     let visuals = theme::visuals();
     assert_eq!((visuals.panel_fill, visuals.selection.bg_fill), (theme::GROUND, theme::ACCENT));

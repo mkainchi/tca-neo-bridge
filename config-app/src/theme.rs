@@ -95,10 +95,12 @@ pub fn cap() -> TextStyle {
     TextStyle::Name("cap".into())
 }
 
+/// The design is dark only, whatever Windows' own theme: both of egui's theme styles get the same look.
 pub fn install(ctx: &egui::Context, font_dir: &Path) {
     ctx.set_fonts(fonts(font_dir));
-    ctx.set_visuals(visuals());
-    ctx.global_style_mut(|style| {
+    ctx.set_theme(egui::Theme::Dark);
+    ctx.all_styles_mut(|style| {
+        style.visuals = visuals();
         style.text_styles = [
             (TextStyle::Body, FontId::proportional(13.0)),
             (TextStyle::Button, FontId::proportional(12.5)),
