@@ -1,0 +1,16 @@
+[package]
+name = "neo-common"
+version = "0.3.0"
+edition = "2021"
+publish = false
+description = "Profile format, axis maths and Win32 declarations shared by the TCA-NEO bridge daemon and configuration app"
+license = "MIT"
+repository = "https://github.com/mkainchi/tca-neo-bridge"
+
+[lib]
+name = "neo_common"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

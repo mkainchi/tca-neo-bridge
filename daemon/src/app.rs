@@ -1,5 +1,6 @@
 //! Entry point: single instance, profile, configuration server, emulation controller and tray loop.
 use crate::config;
+use crate::config_app::{self, ConfigApp, ConfigAppApi};
 use crate::device::DeviceApi;
 use crate::driver::{DriverApi, DriverManager};
 use crate::emulation::{Controller, Deps, Notify, Source};
@@ -38,6 +39,9 @@ pub struct Apis {
     pub device: DeviceApi,
     pub ui: UiApi,
     pub driver: DriverApi,
+    pub config_app: ConfigAppApi,
+    /// Starts `neo-config.exe` with a piped standard input.
+    pub spawn: config_app::Spawn,
     pub runner: fn() -> Runner,
     pub pnputil: fn() -> Runner,
     /// Runs tasklist and reg for the launch-order warnings.
@@ -59,6 +63,8 @@ impl Apis {
             device: DeviceApi::real(),
             ui: UiApi::real(),
             driver: DriverApi::real(),
+            config_app: ConfigAppApi::real(),
+            spawn: config_app::spawn,
             runner: hidhide::real_runner,
             pnputil: pnputil_runner,
             launch: launch_runner,
@@ -241,6 +247,7 @@ fn owned(options: Options, apis: &Apis, exe_path: &Path) -> i32 {
                 options.data.join("driver-install.log"),
                 driver_notify,
             ),
+            config_app: ConfigApp::new(apis.config_app, exe_path.with_file_name(config_app::EXE), apis.spawn),
             shown: None,
             added: false,
         };

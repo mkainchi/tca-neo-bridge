@@ -18,15 +18,20 @@ The WDK's Visual Studio extension is **not** required: `driver\build.ps1` calls 
 
 ## Daemon
 
+The repository root is a Cargo workspace: `common` (shared profile types, axis maths and Win32 declarations), `daemon` and `config-app`. Builds go to `target\` at the root.
+
 ```powershell
-cd daemon
-cargo build --release                 # target\release\neo-daemon.exe
-cargo run -- --source validation      # tray app with a synthetic input pattern instead of the TCA
+cargo build --release                                  # target\release\neo-daemon.exe and neo-config.exe
+cargo run -p neo-daemon -- --source validation         # tray app with a synthetic input pattern instead of the TCA
 ```
 
 The daemon needs administrator rights to create the virtual device, and `driver\install-driver.ps1` beside the executable for the **Install driver…** menu, so a development build does not offer installation. Use a release package (below) or run `scripts\install-driver.ps1` from `driver\out\package` after copying the script and a `SHA256SUMS` there.
 
 Command-line options: `--data <dir>` (default `%LOCALAPPDATA%\tca-neo-bridge`), `--source tca|validation`, `--autostart`, `--self-test`.
+
+### Configuration app
+
+`neo-config.exe` is the native configuration window. The daemon's **Configure…** starts it when it sits beside `neo-daemon.exe` (as in `target\release`) and hands it the API port and token on its standard input; started any other way, it only shows where to open it from. While the app is not in the release package, **Configure…** opens the browser page instead. The app draws with wgpu on Direct3D 12 and uses the Windows fonts named by the design (Bahnschrift, Segoe UI Variable, Cascadia Mono), falling back to egui's own.
 
 ### Icon artwork
 
@@ -51,12 +56,12 @@ powershell -ExecutionPolicy Bypass -File scripts\check.ps1
 
 `check.ps1` fails unless all of these hold:
 
-- `cargo clippy --all-targets -D warnings` is clean.
-- **100 %** of Rust lines, functions and regions are covered (stable `cargo llvm-cov`).
-- **100 %** of Rust branches are covered (nightly `cargo llvm-cov --branch`).
+- `cargo clippy --workspace --all-targets -D warnings` is clean.
+- **100 %** of Rust lines, functions and regions are covered across the workspace (stable `cargo llvm-cov --workspace`).
+- **100 %** of Rust branches are covered (nightly `cargo llvm-cov --workspace --branch`).
 - **100 %** of the page script's statements, branches, functions and lines are covered (vitest + V8).
 
-No coverage-exclusion attributes are used. All Win32 calls go through tables of function pointers (`HidApi`, `DeviceApi`, `UiApi`, `DriverApi`, `SystemApi`), which the tests replace with fakes; the real tables are only constructed. `tests\binary.rs` runs the real executable so `main` is covered too. See [ENGINEERING.md](ENGINEERING.md#testing) for the reasoning.
+No coverage-exclusion attributes are used. All Win32 calls go through tables of function pointers (`HidApi`, `DeviceApi`, `UiApi`, `DriverApi`, `SystemApi`, `ConfigAppApi`, and the app's own `SystemApi`), which the tests replace with fakes; the real tables are only constructed. Each crate's `tests\binary.rs` runs the real executable so `main` is covered too; the app's plays the daemon (API and events) and opens a real window. The app's window tests (`egui_kittest`) compare against the snapshots in `config-app\tests\snapshots`; after an intended visual change, run them with `UPDATE_SNAPSHOTS=1` and review the new images. See [ENGINEERING.md](ENGINEERING.md#testing) for the reasoning.
 
 ## Release package
 

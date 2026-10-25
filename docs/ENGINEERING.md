@@ -136,11 +136,16 @@ The daemon's modules:
 | `tray` | Menu |
 | `driver` | Install/reinstall |
 | `config` and `labels` | Profile and correction log |
+| `config_app` | Starts the configuration app, brings it forward, closes it on Quit |
+
+The workspace has three crates. `common` (`neo_common`) holds what the daemon and the configuration app must agree on: the profile types and validation, the axis maths (`shape`, `detent`), the API reply types and the Win32 declarations. The daemon re-exports them, so its own module paths did not change.
+
+`neo-config.exe` (`config-app`) is a native egui window that replaces the browser page, one page at a time. Configure… starts it and writes `<port> <token>` to its standard input, so the token never appears on a command line. The app runs in a kill-on-close job owned by the daemon. A second Configure… sets the `Local\tca-neo-bridge-config-show` event, after `AllowSetForegroundWindow`, instead of starting a second copy. Quit sets `Local\tca-neo-bridge-config-quit`. The app also closes when the API answers 403 or stops answering for three polls in a row. It uses the same HTTP API as the page did, and polls `/api/live` every 100 ms while it is visible. It draws with wgpu on Direct3D 12, which falls back to the WARP software adapter on machines without a GPU driver.
 
 ## 6. Testing
 
 - **Win32 behind tables of function pointers.** Each module receives its Win32 calls as a table of plain function pointers. Tests substitute `extern "system"` fakes that simulate devices, pipes, UAC, pnputil and the tray, including blocking I/O that is cancelled the way Windows cancels it. This is how window procedures, worker threads and teardown order are tested deterministically, without real hardware.
-- **Coverage gates:** 100 % of Rust lines, functions and regions (stable), 100 % of branches (nightly), and 100 % of the page script. No exclusion attributes. Code that could only fail in impossible ways was restructured instead of excluded. Flaky timing-dependent coverage was turned into deterministic tests.
+- **Coverage gates:** 100 % of Rust lines, functions and regions (stable) and 100 % of branches (nightly) across the workspace, and 100 % of the page script. The configuration app's window is tested with `egui_kittest` against a scripted API, with snapshots at 1600 × 900 and 1280 × 800, and a real-binary test plays the daemon (API, events) so `main` and the window loop are covered too. No exclusion attributes. Code that could only fail in impossible ways was restructured instead of excluded. Flaky timing-dependent coverage was turned into deterministic tests.
 - **Parity tests** against the original converter's vectors, and a C unit test for the driver's frame parser.
 - **Live gates** (above) for everything the fakes cannot prove: SDK acceptance, physical input, isolation and, next, gameplay.
 

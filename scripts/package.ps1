@@ -18,7 +18,7 @@ if (-not $Version) {
 $registry = Join-Path $env:USERPROFILE '.cargo\registry\src'
 $env:RUSTFLAGS = "--remap-path-prefix=$registry=crates --remap-path-prefix=$root=tca-neo-bridge --remap-path-prefix=$env:USERPROFILE=~"
 try {
-    cargo build --release --quiet --manifest-path (Join-Path $root 'daemon\Cargo.toml'); if ($LASTEXITCODE) { throw 'daemon build failed' }
+    cargo build --release --quiet --manifest-path (Join-Path $root 'Cargo.toml') -p neo-daemon; if ($LASTEXITCODE) { throw 'daemon build failed' }
 } finally {
     Remove-Item Env:\RUSTFLAGS
 }
@@ -28,7 +28,7 @@ $name = "tca-neo-bridge-$Version-x64"
 $stage = Join-Path $root "dist\$name"
 Remove-Item -Recurse -Force $stage, "$stage.zip" -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force (Join-Path $stage 'driver') | Out-Null
-Copy-Item (Join-Path $root 'daemon\target\release\neo-daemon.exe') $stage
+Copy-Item (Join-Path $root 'target\release\neo-daemon.exe') $stage
 foreach ($file in 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'SECURITY.md') { Copy-Item (Join-Path $root $file) $stage }
 $package = Join-Path $root 'driver\out\package'
 foreach ($file in 'neohid.dll', 'neohid.inf', 'neohid.cat') { Copy-Item (Join-Path $package $file) (Join-Path $stage 'driver') }

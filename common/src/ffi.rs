@@ -156,9 +156,46 @@ pub struct SHELLEXECUTEINFOW {
     pub hProcess: HANDLE,
 }
 
+pub const WAIT_OBJECT_0: u32 = 0;
+pub const WAIT_TIMEOUT: u32 = 0x102;
+pub const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: u32 = 9;
+pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
+    pub PerProcessUserTimeLimit: i64,
+    pub PerJobUserTimeLimit: i64,
+    pub LimitFlags: u32,
+    pub MinimumWorkingSetSize: usize,
+    pub MaximumWorkingSetSize: usize,
+    pub ActiveProcessLimit: u32,
+    pub Affinity: usize,
+    pub PriorityClass: u32,
+    pub SchedulingClass: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+    pub BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION,
+    pub IoInfo: [u64; 6],
+    pub ProcessMemoryLimit: usize,
+    pub JobMemoryLimit: usize,
+    pub PeakProcessMemoryUsed: usize,
+    pub PeakJobMemoryUsed: usize,
+}
+
 #[link(name = "kernel32")]
 extern "system" {
     pub fn WaitForSingleObject(handle: HANDLE, milliseconds: u32) -> u32;
+    pub fn WaitForMultipleObjects(count: u32, handles: *const HANDLE, all: BOOL, milliseconds: u32) -> u32;
+    pub fn CreateEventW(attributes: *const c_void, manual: BOOL, initial: BOOL, name: PCWSTR) -> HANDLE;
+    pub fn OpenEventW(access: u32, inherit: BOOL, name: PCWSTR) -> HANDLE;
+    pub fn SetEvent(event: HANDLE) -> BOOL;
+    pub fn CreateJobObjectW(attributes: *const c_void, name: PCWSTR) -> HANDLE;
+    pub fn SetInformationJobObject(job: HANDLE, class: u32, info: *const c_void, length: u32) -> BOOL;
+    pub fn AssignProcessToJobObject(job: HANDLE, process: HANDLE) -> BOOL;
     pub fn GetExitCodeProcess(process: HANDLE, code: *mut u32) -> BOOL;
     pub fn CreateMutexW(attributes: *const c_void, owner: BOOL, name: PCWSTR) -> HANDLE;
     pub fn GetLastError() -> u32;
@@ -223,6 +260,8 @@ extern "system" {
     pub fn GetSystemMetrics(index: i32) -> i32;
     pub fn DestroyIcon(icon: HANDLE) -> BOOL;
     pub fn RegisterWindowMessageW(name: PCWSTR) -> u32;
+    pub fn AllowSetForegroundWindow(process: u32) -> BOOL;
+    pub fn MessageBoxW(hwnd: HWND, text: PCWSTR, caption: PCWSTR, kind: u32) -> i32;
 }
 
 #[link(name = "shell32")]

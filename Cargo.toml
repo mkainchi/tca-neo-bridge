@@ -1,0 +1,12 @@
+[workspace]
+members = ["common", "daemon", "config-app"]
+resolver = "2"
+
+[profile.release]
+panic = "abort"
+
+# The configuration app carries a GUI toolkit: optimise it for size.
+[profile.release.package.neo-config]
+opt-level = "s"
+codegen-units = 1
+strip = true

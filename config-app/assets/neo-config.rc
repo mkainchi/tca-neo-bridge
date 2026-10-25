@@ -1,0 +1,2 @@
+// The bridge mark is the configuration app's icon too (Explorer, taskbar).
+1 ICON "../../daemon/assets/bridge.ico"

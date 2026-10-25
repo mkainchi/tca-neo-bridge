@@ -1,5 +1,5 @@
 # Build output
-daemon/target/
+/target/
 driver/out/
 driver/descriptor.h
 dist/
