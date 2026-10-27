@@ -1,8 +1,9 @@
 //! What the window shows, kept apart from drawing so it can be tested on its own.
 use crate::map::Map;
-use crate::worker::{Loaded, Reply};
+use crate::settings::Settings;
+use crate::worker::{Loaded, Reply, Request};
 use neo_common::api::{Links, Monitor, Profiles};
-use neo_common::config::Config;
+use neo_common::config::{Config, HatMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
@@ -27,6 +28,11 @@ impl Page {
             Page::Helpers => "Buttons & helpers",
             Page::Live => "Live",
         }
+    }
+
+    /// The pages that edit the settings draft and show the save bar's actions.
+    pub fn settings(self) -> bool {
+        matches!(self, Page::Axes | Page::Throttle | Page::Camera | Page::Helpers)
     }
 
     pub fn help(self) -> &'static str {
@@ -97,13 +103,13 @@ pub struct State {
     pub status: String,
     pub links: Option<Links>,
     pub paused: bool,
-    /// A draft runs in game instead of the saved profile.
-    pub previewing: bool,
     pub warnings: Vec<String>,
     /// The warnings last dismissed; the banner returns when they change.
     pub dismissed: Vec<String>,
     /// Live input while emulating from the TCA.
     pub monitor: Option<Monitor>,
+    /// The quadrant levers (left, right) while emulating from the TCA.
+    pub levers: Option<[f64; 2]>,
     pub saved: Option<Config>,
     pub defaults: Option<Config>,
     /// Where the saved profile lives.
@@ -114,6 +120,9 @@ pub struct State {
     /// The daemon has gone or no longer knows this app: the window closes.
     pub closing: bool,
     pub map: Map,
+    pub settings: Settings,
+    /// The window's clock in milliseconds (the press timeline and the hat hold).
+    pub now: f64,
 }
 
 impl Default for State {
@@ -123,10 +132,10 @@ impl Default for State {
             status: "Loading\u{2026}".into(),
             links: None,
             paused: false,
-            previewing: false,
             warnings: Vec::new(),
             dismissed: Vec::new(),
             monitor: None,
+            levers: None,
             saved: None,
             defaults: None,
             profile_path: "config.json".into(),
@@ -134,12 +143,17 @@ impl Default for State {
             note: None,
             closing: false,
             map: Map::default(),
+            settings: Settings::default(),
+            now: 0.0,
         }
     }
 }
 
 impl State {
-    pub fn apply(&mut self, reply: Reply) {
+    /// Take in a reply from the daemon; `now` is the window's clock in milliseconds. Returns the requests that
+    /// follow from it (the next queued preview).
+    pub fn apply(&mut self, reply: Reply, now: f64) -> Vec<Request> {
+        self.now = now;
         match reply {
             Reply::Loaded(loaded) => {
                 let Loaded { config, profiles, labels } = *loaded;
@@ -148,13 +162,17 @@ impl State {
                 self.status = config.status;
                 self.map.emulating = config.links.is_some();
                 self.links = config.links;
-                self.previewing = config.preview.is_some();
                 self.warnings = config.warnings;
                 self.note = profiles.as_ref().err().map(|error| format!("Saved profiles could not be listed: {error}"));
                 self.profiles = profiles.unwrap_or(Profiles { profiles: Vec::new(), active: None });
                 match labels {
                     Ok(labels) => self.map.labels = labels,
                     Err(error) => self.map.note = Some(format!("Earlier corrections could not be loaded: {error}")),
+                }
+                // A preview already running is the draft to keep editing.
+                self.settings.show(config.preview.clone().unwrap_or_else(|| config.config.clone()));
+                if config.preview.is_some() {
+                    self.settings.resume_preview();
                 }
                 self.saved(config.config);
             }
@@ -164,24 +182,56 @@ impl State {
                 self.map.emulating = live.links.is_some();
                 self.links = live.links;
                 self.paused = live.paused;
-                self.previewing = live.preview;
                 self.warnings = live.warnings;
                 self.monitor = live.monitor;
+                self.levers = live.levers;
+                if !live.preview {
+                    self.settings.preview_gone();
+                }
+                let fresh: Vec<String> = live.pressed.iter().filter(|key| !self.map.held.contains(key)).cloned().collect();
+                let hat_camera = self.saved.as_ref().is_some_and(|saved| saved.hat == HatMode::Camera);
                 self.map.press(self.saved.as_ref(), &live.pressed, self.page == Page::Mapping);
+                return self.settings.press(&live.pressed, &fresh, hat_camera, now);
             }
             Reply::Recorded { config, running, log } => {
+                self.mappings(&config);
                 self.saved(*config);
                 self.map.recorded(log, running);
             }
             Reply::HatSet { config, running } => {
                 let hat = config.hat;
+                if let Some(draft) = self.settings.draft.as_mut() {
+                    draft.hat = hat;
+                }
                 self.saved(*config);
                 self.map.hat_set(hat, running);
             }
             Reply::NotSaved(message) => self.map.not_saved(&message),
             Reply::Forgot(result) => self.map.forgot(result),
+            Reply::Saved { config, running } => {
+                self.saved(*config);
+                self.settings.saved(running);
+            }
+            Reply::SaveFailed(message) => self.settings.save_failed(&message),
+            Reply::Previewed => return self.settings.previewed(),
+            Reply::PreviewFailed(message) => self.settings.preview_failed(&message),
+            Reply::PreviewEnded => {}
+            Reply::PreviewEndFailed(message) => self.settings.preview_end_failed(&message),
             Reply::Failed(message) => self.note = Some(message),
             Reply::Fatal(_) => self.closing = true,
+        }
+        Vec::new()
+    }
+
+    /// A recorded mapping is saved at once: the settings draft takes it too.
+    fn mappings(&mut self, config: &Config) {
+        if let Some(draft) = self.settings.draft.as_mut() {
+            draft.buttons = config.buttons.clone();
+            draft.pov = config.pov.clone();
+            draft.behaviours = config.behaviours.clone();
+            draft.shifted = config.shifted.clone();
+            draft.long_press = config.long_press.clone();
+            draft.double_tap = config.double_tap.clone();
         }
     }
 
@@ -189,6 +239,21 @@ impl State {
     fn saved(&mut self, config: Config) {
         self.map.normalize(&config);
         self.saved = Some(config);
+    }
+
+    /// Show a rail page. Leaving the settings pages ends a preview, keeping the draft.
+    pub fn show(&mut self, page: Page) -> Vec<Request> {
+        self.page = page;
+        if page.settings() {
+            Vec::new()
+        } else {
+            self.settings.leave()
+        }
+    }
+
+    /// The draft runs in game instead of the saved profile.
+    pub fn previewing(&self) -> bool {
+        self.settings.previewing
     }
     /// Previews follow the device while emulating from the TCA.
     pub fn live(&self) -> bool {

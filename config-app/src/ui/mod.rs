@@ -1,7 +1,9 @@
 //! The one-screen shell: header with status pills, launch warnings, the rail, the page, and the save bar.
 pub mod mapping;
+pub mod settings;
 pub mod widgets;
 
+use crate::settings::Tone as SettingsTone;
 use crate::state::{pills, Page, State, Tone};
 use crate::worker::Request;
 use crate::theme::{self, tint};
@@ -141,7 +143,7 @@ fn header(ui: &mut Ui, state: &State, compact: bool) {
                 if state.paused {
                     pill(ui, "Input paused", preview_colours());
                 }
-                if state.previewing {
+                if state.previewing() {
                     pill(ui, "Previewing unsaved", preview_colours());
                 }
             });
@@ -201,13 +203,14 @@ fn rail_item(ui: &mut Ui, page: Page, current: bool, compact: bool) -> bool {
     response.on_hover_text(page.title()).clicked()
 }
 
-fn rail(ui: &mut Ui, state: &mut State, compact: bool) {
+fn rail(ui: &mut Ui, state: &mut State, compact: bool) -> Vec<Request> {
+    let mut requests = Vec::new();
     let frame = Frame::new().fill(theme::BAR).inner_margin(Margin::symmetric(10, 12));
     egui::Panel::left("rail").frame(frame).resizable(false).exact_size(if compact { RAIL_COMPACT } else { RAIL }).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
         for page in Page::ALL {
             if rail_item(ui, page, state.page == page, compact) {
-                state.page = page;
+                requests.extend(state.show(page));
             }
             if matches!(page, Page::Mapping | Page::Helpers) {
                 ui.add_space(6.0);
@@ -234,23 +237,54 @@ fn rail(ui: &mut Ui, state: &mut State, compact: bool) {
             });
         });
     });
+    requests
 }
 
-fn footer(ui: &mut Ui, state: &State) {
+/// The save bar: what happened to the draft on the left; on the settings pages, Try in game, Discard, Reset to
+/// defaults and Save settings on the right.
+fn footer(ui: &mut Ui, state: &mut State) -> Vec<Request> {
+    let mut requests = Vec::new();
     let frame = Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(16, 0));
     egui::Panel::bottom("save-bar").frame(frame).exact_size(56.0).show(ui, |ui| {
         ui.horizontal_centered(|ui| {
-            if let Some(note) = &state.note {
+            let message = state.settings.message.clone().map(|(text, tone)| (text, match tone {
+                SettingsTone::Saved => theme::OK_INK,
+                SettingsTone::Dirty => theme::WARN_INK,
+                SettingsTone::Error => theme::DANGER_INK,
+            }));
+            if let Some((text, colour)) = message.or_else(|| state.note.clone().map(|note| (note, theme::DANGER_INK))) {
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(7.0), Sense::hover());
-                ui.painter().circle_filled(rect.center(), 3.5, theme::DANGER_INK);
-                ui.label(RichText::new(note).monospace().color(theme::DANGER_INK));
+                ui.painter().circle_filled(rect.center(), 3.5, colour);
+                ui.label(RichText::new(text).size(12.0).family(egui::FontFamily::Monospace).color(colour));
             }
+            // The actions edit the draft: settings pages only, once the profile (and with it the defaults) is in.
+            let (true, Some(saved), Some(defaults)) = (state.page.settings() && state.settings.draft.is_some(), state.saved.clone(), state.defaults.clone()) else {
+                return;
+            };
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let s = &mut state.settings;
+                if widgets::button(ui, "Save settings", "Save settings", widgets::Kind::Primary, !s.saving) {
+                    requests.extend(s.save());
+                }
+                if widgets::button(ui, "Reset to defaults", "Reset to defaults", widgets::Kind::Hazard, true) {
+                    requests.extend(s.reset(&defaults));
+                }
+                if widgets::button(ui, "Discard", "Discard", widgets::Kind::Plain, true) {
+                    requests.extend(s.discard(&saved));
+                }
+                if widgets::toggle(ui, s.previewing, "Try in game", true, 120.0) {
+                    let on = !s.previewing;
+                    requests.extend(s.set_preview(on));
+                }
+            });
         });
     });
+    requests
 }
 
 /// The page head: its title, its help (hidden in narrow windows) and, on the right, the page's own switch.
-fn page_head(ui: &mut Ui, state: &mut State, compact: bool) {
+fn page_head(ui: &mut Ui, state: &mut State, compact: bool) -> Vec<Request> {
     ui.horizontal(|ui| {
         ui.set_min_height(38.0);
         ui.spacing_mut().item_spacing.x = 14.0;
@@ -258,11 +292,17 @@ fn page_head(ui: &mut Ui, state: &mut State, compact: bool) {
         if !compact {
             ui.label(RichText::new(state.page.help()).small().color(theme::MUTED));
         }
-        if let (Page::Mapping, Some(saved)) = (state.page, state.saved.as_ref()) {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| mapping::layer_switch(ui, saved, &mut state.map));
-        }
-    });
-    ui.add_space(12.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| match (state.page, state.saved.clone()) {
+            (Page::Mapping, Some(saved)) => {
+                mapping::layer_switch(ui, &saved, &mut state.map);
+                Vec::new()
+            }
+            (page, _) if page.settings() => settings::head_switch(ui, state),
+            _ => Vec::new(),
+        })
+        .inner
+    })
+    .inner
 }
 
 fn page(ui: &mut Ui, state: &mut State, compact: bool) -> Vec<Request> {
@@ -270,18 +310,20 @@ fn page(ui: &mut Ui, state: &mut State, compact: bool) -> Vec<Request> {
     egui::CentralPanel::default()
         .frame(frame)
         .show(ui, |ui| {
-            page_head(ui, state, compact);
-            match (state.page, state.saved.as_ref()) {
-                (Page::Mapping, Some(saved)) => mapping::page(ui, saved, &mut state.map, compact),
+            let mut requests = page_head(ui, state, compact);
+            ui.add_space(12.0);
+            match (state.page, state.saved.clone()) {
+                (Page::Mapping, Some(saved)) => requests.extend(mapping::page(ui, &saved, &mut state.map, compact)),
+                (page, Some(_)) if page.settings() => requests.extend(settings::page(ui, state, compact)),
                 (page, _) => {
-                    let text = if page == Page::Mapping { "Loading the profile\u{2026}" } else { "This page is not in the native app yet." };
+                    let text = if page == Page::Live { "This page is not in the native app yet." } else { "Loading the profile\u{2026}" };
                     Frame::new().fill(theme::PANEL).stroke(Stroke::new(1.0, theme::LINE)).corner_radius(theme::RADIUS).inner_margin(Margin::same(16)).show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.label(RichText::new(text).color(theme::MUTED));
                     });
-                    Vec::new()
                 }
             }
+            requests
         })
         .inner
 }
@@ -291,7 +333,8 @@ pub fn shell(ui: &mut Ui, state: &mut State) -> Vec<Request> {
     let compact = ui.ctx().content_rect().width() < COMPACT_BELOW;
     header(ui, state, compact);
     warnings(ui, state);
-    footer(ui, state);
-    rail(ui, state, compact);
-    page(ui, state, compact)
+    let mut requests = footer(ui, state);
+    requests.extend(rail(ui, state, compact));
+    requests.extend(page(ui, state, compact));
+    requests
 }

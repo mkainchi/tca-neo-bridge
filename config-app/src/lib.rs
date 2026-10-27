@@ -4,6 +4,8 @@ pub mod diagrams;
 pub mod launch;
 pub mod map;
 pub mod mapping;
+pub mod previews;
+pub mod settings;
 pub mod state;
 pub mod theme;
 pub mod ui;
@@ -32,6 +34,10 @@ pub struct App {
     pub state: State,
     worker: Worker,
     signals: Arc<Signals>,
+    /// The clock of the press timeline.
+    started: std::time::Instant,
+    /// Requests made this frame (by replies, the close button and the controls), sent after drawing.
+    pending: Vec<Request>,
 }
 
 impl App {
@@ -42,7 +48,7 @@ impl App {
         worker.send(Request::Load);
         theme::install(ctx, fonts);
         diagrams::install(ctx, fonts);
-        Self { state: State::default(), worker, signals }
+        Self { state: State::default(), worker, signals, started: std::time::Instant::now(), pending: Vec::new() }
     }
 }
 
@@ -53,8 +59,16 @@ impl eframe::App for App {
                 ctx.send_viewport_cmd(command);
             }
         }
+        let now = self.started.elapsed().as_secs_f64() * 1000.0;
+        self.state.now = now;
         while let Ok(reply) = self.worker.replies.try_recv() {
-            self.state.apply(reply);
+            let follow = self.state.apply(reply, now);
+            self.pending.extend(follow);
+        }
+        // Closing the window ends a preview: the game goes back to the saved profile.
+        if ctx.input(|input| input.viewport().close_requested()) {
+            let end = self.state.settings.set_preview(false);
+            self.pending.extend(end);
         }
         if self.signals.quit.load(Ordering::SeqCst) || self.state.closing {
             ctx.send_viewport_cmd(ViewportCommand::Close);
@@ -63,7 +77,9 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        for request in ui::shell(ui, &mut self.state) {
+        let made = ui::shell(ui, &mut self.state);
+        self.pending.extend(made);
+        for request in self.pending.drain(..) {
             self.worker.send(request);
         }
     }

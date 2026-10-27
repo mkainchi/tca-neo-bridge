@@ -177,3 +177,34 @@ fn the_hat_mode_and_log_removals_are_saved() {
     worker.send(Request::SetHat(Box::new(neo_daemon::config::defaults())));
     assert_eq!(next(&worker), Reply::Fatal(Fatal::Forbidden));
 }
+#[test]
+fn settings_save_and_preview_through_the_daemon() {
+    let fake = FakeApi::idle();
+    fake.reply("PUT /api/preview", Ok(json!({"preview": true, "running": true}).to_string()));
+    fake.reply("DELETE /api/preview", Ok(json!({"preview": false}).to_string()));
+    let (worker, _) = start(&fake, SLOW);
+    let config = Box::new(neo_daemon::config::defaults());
+    worker.send(Request::Save(config.clone()));
+    assert_eq!(next(&worker), Reply::Saved { config: config.clone(), running: false });
+    worker.send(Request::Preview(config.clone()));
+    assert_eq!(next(&worker), Reply::Previewed);
+    worker.send(Request::EndPreview);
+    assert_eq!(next(&worker), Reply::PreviewEnded);
+    assert_eq!(fake.calls()[1..], [("PUT".into(), "/api/preview".into()), ("DELETE".into(), "/api/preview".into())]);
+    fake.reply("PUT /api/config", Err(ApiError::Rejected("Invalid profile.".into())));
+    fake.reply("PUT /api/preview", Err(ApiError::Rejected("Not emulating.".into())));
+    fake.reply("DELETE /api/preview", Err(ApiError::Unreachable));
+    worker.send(Request::Save(config.clone()));
+    assert_eq!(next(&worker), Reply::SaveFailed("Invalid profile.".into()));
+    worker.send(Request::Preview(config.clone()));
+    assert_eq!(next(&worker), Reply::PreviewFailed("Not emulating.".into()));
+    worker.send(Request::EndPreview);
+    assert_eq!(next(&worker), Reply::PreviewEndFailed("The bridge is not answering.".into()));
+    for (path, request) in [("PUT /api/config", Request::Save(config.clone())), ("PUT /api/preview", Request::Preview(config)), ("DELETE /api/preview", Request::EndPreview)] {
+        let fake = FakeApi::idle();
+        fake.reply(path, Err(ApiError::Forbidden));
+        let (worker, _) = start(&fake, SLOW);
+        worker.send(request);
+        assert_eq!(next(&worker), Reply::Fatal(Fatal::Forbidden));
+    }
+}

@@ -25,6 +25,12 @@ pub enum Request {
     SetHat(Box<Config>),
     /// Save the correction log with an entry removed.
     Forget(Vec<Entry>),
+    /// Save the settings draft.
+    Save(Box<Config>),
+    /// Run the draft in game without saving it.
+    Preview(Box<Config>),
+    /// Go back to the saved profile in game.
+    EndPreview,
 }
 
 /// Why the window must close.
@@ -57,6 +63,15 @@ pub enum Reply {
     NotSaved(String),
     /// The correction log after a removal, or why it was not saved.
     Forgot(Result<Vec<Entry>, String>),
+    /// The settings draft is saved (`running`: the emulation applied it), or why not.
+    Saved { config: Box<Config>, running: bool },
+    SaveFailed(String),
+    /// The draft runs in game, or why it does not.
+    Previewed,
+    PreviewFailed(String),
+    /// The saved profile runs in game again, or why it does not.
+    PreviewEnded,
+    PreviewEndFailed(String),
     Fatal(Fatal),
 }
 
@@ -111,6 +126,12 @@ fn handle(api: &mut dyn Api, request: Request) -> Result<Reply, Fatal> {
             Ok(saved) => Reply::HatSet { config, running: saved.running },
         },
         Request::Forget(labels) => Reply::Forgot(soft(put::<IgnoredAny>(api, "/api/labels", &labels))?.map(|_| labels)),
+        Request::Save(config) => match soft(put::<Saved>(api, "/api/config", &config))? {
+            Ok(saved) => Reply::Saved { config, running: saved.running },
+            Err(message) => Reply::SaveFailed(message),
+        },
+        Request::Preview(config) => soft(put::<IgnoredAny>(api, "/api/preview", &config))?.map_or_else(Reply::PreviewFailed, |_| Reply::Previewed),
+        Request::EndPreview => soft(understood::<IgnoredAny>(api.call("DELETE", "/api/preview", None)))?.map_or_else(Reply::PreviewEndFailed, |_| Reply::PreviewEnded),
     })
 }
 pub struct Worker {
