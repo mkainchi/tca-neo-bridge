@@ -96,6 +96,27 @@ pub fn pills(status: &str, links: Option<&Links>) -> Pills {
     }
 }
 
+/// The header's profile menu: open or not, the name being typed for Save as, its last outcome, and whether Delete is
+/// waiting for its second click.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProfileMenu {
+    pub open: bool,
+    pub name: String,
+    pub invalid: bool,
+    /// (text, is a problem).
+    pub note: Option<(String, bool)>,
+    pub confirm_delete: bool,
+    /// A file action asked for this frame, carried out after drawing (the dialogs are modal).
+    pub want: Option<Want>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Want {
+    Import,
+    Export,
+    Print,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct State {
     pub page: Page,
@@ -121,6 +142,7 @@ pub struct State {
     pub closing: bool,
     pub map: Map,
     pub settings: Settings,
+    pub menu: ProfileMenu,
     /// The window's clock in milliseconds (the press timeline and the hat hold).
     pub now: f64,
 }
@@ -144,6 +166,7 @@ impl Default for State {
             closing: false,
             map: Map::default(),
             settings: Settings::default(),
+            menu: ProfileMenu::default(),
             now: 0.0,
         }
     }
@@ -217,6 +240,20 @@ impl State {
             Reply::PreviewFailed(message) => self.settings.preview_failed(&message),
             Reply::PreviewEnded => {}
             Reply::PreviewEndFailed(message) => self.settings.preview_end_failed(&message),
+            Reply::Adopted { config, profiles, text } => {
+                self.settings.adopt((*config).clone(), &text);
+                self.saved(*config);
+                if let Some(profiles) = profiles {
+                    self.profiles = profiles;
+                }
+                self.menu.note = Some((text, false));
+            }
+            Reply::Listed { profiles, text } => {
+                self.profiles = profiles;
+                self.menu.name.clear();
+                self.menu.note = Some((text, false));
+            }
+            Reply::ProfileFailed(text) => self.menu.note = Some((text, true)),
             Reply::Failed(message) => self.note = Some(message),
             Reply::Fatal(_) => self.closing = true,
         }
@@ -249,6 +286,74 @@ impl State {
         } else {
             self.settings.leave()
         }
+    }
+
+    /// Switching or importing replaces the saved settings: unsaved edits must be saved or discarded first.
+    fn unsaved(&mut self) -> bool {
+        if self.settings.dirty {
+            self.menu.note = Some(("Save or discard unsaved settings first.".into(), true));
+        }
+        self.settings.dirty
+    }
+
+    pub fn activate(&mut self, name: &str) -> Vec<Request> {
+        if self.unsaved() {
+            return Vec::new();
+        }
+        vec![Request::Activate(name.into())]
+    }
+
+    /// Save the saved settings under the typed name (or replace a profile of that name), and make it active.
+    pub fn save_as(&mut self) -> Vec<Request> {
+        let name = self.menu.name.trim().to_string();
+        self.menu.invalid = !neo_common::profiles::valid(&name);
+        if self.menu.invalid {
+            self.menu.note = Some(("Use 1 to 40 letters, digits, spaces, _ or -.".into(), true));
+            return Vec::new();
+        }
+        if self.unsaved() {
+            return Vec::new();
+        }
+        vec![Request::SaveAs(name)]
+    }
+
+    /// Delete the active profile: the first click asks, the second deletes. The settings themselves stay.
+    pub fn delete(&mut self) -> Vec<Request> {
+        let Some(name) = self.profiles.active.clone() else { return Vec::new() };
+        self.menu.confirm_delete = !self.menu.confirm_delete;
+        if self.menu.confirm_delete {
+            return Vec::new();
+        }
+        vec![Request::DeleteProfile(name)]
+    }
+
+    /// A profile file's text: the daemon checks and upgrades it before it becomes the saved settings.
+    pub fn import(&mut self, text: &str, name: &str) -> Vec<Request> {
+        if self.unsaved() {
+            return Vec::new();
+        }
+        match serde_json::from_str(text) {
+            Ok(profile) => vec![Request::Import { profile, name: name.into() }],
+            Err(error) => {
+                self.menu.note = Some((format!("Not imported: Invalid profile: {error}."), true));
+                Vec::new()
+            }
+        }
+    }
+
+    /// The saved settings as a JSON file to keep or share; a file that could not be written is reported.
+    pub fn export(&mut self, path: &std::path::Path) {
+        let Some(saved) = &self.saved else { return };
+        let name = path.file_name().map_or(String::new(), |name| name.to_string_lossy().into_owned());
+        self.menu.note = Some(match std::fs::write(path, format!("{}\n", neo_common::config::to_json(saved))) {
+            Ok(()) => (format!("Exported {name}."), false),
+            Err(_) => (format!("Not exported: {name} could not be written."), true),
+        });
+    }
+
+    /// The file name an export suggests: the active profile's, or the bridge's.
+    pub fn export_name(&self) -> String {
+        format!("{}.json", self.profiles.active.as_deref().unwrap_or("tca-neo-bridge"))
     }
 
     /// The draft runs in game instead of the saved profile.

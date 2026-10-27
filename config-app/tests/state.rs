@@ -106,3 +106,62 @@ fn the_settings_draft_follows_the_daemon() {
     fresh.apply(Reply::HatSet { config: Box::new(neo_daemon::config::defaults()), running: false }, 0.0);
     assert!(fresh.settings.draft.is_none());
 }
+#[test]
+fn profile_actions_wait_for_unsaved_settings_and_valid_names() {
+    use neo_config::worker::Request;
+    let mut state = State::default();
+    let defaults = neo_daemon::config::defaults();
+    state.apply(Reply::Adopted { config: Box::new(defaults.clone()), profiles: None, text: "Imported a.json.".into() }, 0.0);
+    assert_eq!((state.saved.clone(), state.menu.note.clone(), state.settings.dirty), (Some(defaults.clone()), Some(("Imported a.json.".into(), false)), false));
+    assert_eq!(state.export_name(), "tca-neo-bridge.json");
+    // No active profile: nothing to delete.
+    assert!(state.delete().is_empty() && !state.menu.confirm_delete);
+    let listed = Profiles { profiles: vec!["Cruise".into()], active: Some("Cruise".into()) };
+    state.menu.name = "x".into();
+    state.apply(Reply::Listed { profiles: listed.clone(), text: "Saved as Cruise.".into() }, 0.0);
+    assert_eq!((state.profiles.clone(), state.menu.name.as_str(), state.export_name()), (listed.clone(), "", "Cruise.json".to_string()));
+    state.apply(Reply::Adopted { config: Box::new(defaults.clone()), profiles: Some(Profiles { profiles: vec![], active: None }), text: "Switched.".into() }, 0.0);
+    assert!(state.profiles.profiles.is_empty());
+    state.apply(Reply::ProfileFailed("Not saved: Busy.".into()), 0.0);
+    assert_eq!(state.menu.note, Some(("Not saved: Busy.".into(), true)));
+    // Names follow the daemon's rule.
+    state.menu.name = "  ".into();
+    assert!(state.save_as().is_empty() && state.menu.invalid);
+    assert_eq!(state.menu.note.as_ref().unwrap().0, "Use 1 to 40 letters, digits, spaces, _ or -.");
+    state.menu.name = " Dog fight ".into();
+    assert_eq!(state.save_as(), [Request::SaveAs("Dog fight".into())]);
+    assert!(!state.menu.invalid);
+    assert_eq!(state.activate("Cruise"), [Request::Activate("Cruise".into())]);
+    assert!(matches!(state.import("{\"version\": 1}", "a.json").as_slice(), [Request::Import { name, .. }] if name == "a.json"));
+    assert!(state.import("{", "b.json").is_empty());
+    assert!(state.menu.note.as_ref().unwrap().0.starts_with("Not imported: Invalid profile: EOF"));
+    // Unsaved edits block switching, saving under a name and importing.
+    state.settings.dirty = true;
+    assert!(state.activate("Cruise").is_empty() && state.save_as().is_empty() && state.import("{}", "a.json").is_empty());
+    assert_eq!(state.menu.note, Some(("Save or discard unsaved settings first.".into(), true)));
+    // Delete asks first; a second click deletes.
+    state.profiles = listed;
+    assert!(state.delete().is_empty() && state.menu.confirm_delete);
+    assert_eq!(state.delete(), [Request::DeleteProfile("Cruise".into())]);
+    assert!(!state.menu.confirm_delete);
+}
+
+#[test]
+fn export_writes_the_saved_settings() {
+    let dir = std::env::temp_dir().join(format!("neo-config-export-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut state = State::default();
+    let path = dir.join("Cruise.json");
+    // Nothing loaded yet: nothing to export.
+    state.export(&path);
+    assert!(!path.exists() && state.menu.note.is_none());
+    state.saved = Some(neo_daemon::config::defaults());
+    state.export(&path);
+    assert_eq!(state.menu.note, Some(("Exported Cruise.json.".into(), false)));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), format!("{}\n", neo_common::config::to_json(&neo_daemon::config::defaults())));
+    state.export(&dir);
+    assert!(state.menu.note.as_ref().unwrap().1);
+    state.export(std::path::Path::new(""));
+    assert_eq!(state.menu.note, Some(("Not exported:  could not be written.".into(), true)));
+    std::fs::remove_dir_all(dir).unwrap();
+}

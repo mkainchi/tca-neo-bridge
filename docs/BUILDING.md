@@ -31,7 +31,9 @@ Command-line options: `--data <dir>` (default `%LOCALAPPDATA%\tca-neo-bridge`), 
 
 ### Configuration app
 
-`neo-config.exe` is the native configuration window. The daemon's **Configure…** starts it when it sits beside `neo-daemon.exe` (as in `target\release`) and hands it the API port and token on its standard input; started any other way, it only shows where to open it from. While the app is not in the release package, **Configure…** opens the browser page instead. The app draws with wgpu on Direct3D 12 and uses the Windows fonts named by the design (Bahnschrift, Segoe UI Variable, Cascadia Mono), falling back to egui's own.
+`neo-config.exe` is the native configuration window. The daemon's **Configure…** starts it when it sits beside `neo-daemon.exe` (as in `target\release`) and hands it the API port and token on its standard input; started any other way, it only shows where to open it from. If it is missing, **Configure…** opens the browser page instead. The app draws with wgpu on Direct3D 12 and uses the Windows fonts named by the design (Bahnschrift, Segoe UI Variable, Cascadia Mono), falling back to Segoe UI and Consolas; it bundles no fonts.
+
+`scripts\package.ps1` ships both executables and runs `scripts\third-party-licenses.ps1`, which regenerates `THIRD_PARTY_LICENSES.md` (every crate compiled into them, with its licence files) from `cargo metadata`. Run it yourself after changing dependencies and commit the result.
 
 ### Icon artwork
 

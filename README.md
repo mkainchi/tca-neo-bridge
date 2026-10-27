@@ -46,7 +46,7 @@ TCA Sidestick + Quadrant ─► TCA-NEO bridge (tray app) ─► virtual NEO dri
 ## Installation
 
 1. Download `tca-neo-bridge-<version>-x64.zip` from [Releases](https://github.com/mkainchi/tca-neo-bridge/releases). To check the download, run `Get-FileHash tca-neo-bridge-<version>-x64.zip` in PowerShell and compare the result with the `.sha256` file published next to it.
-2. Extract it to a permanent folder, for example `C:\Tools\tca-neo-bridge`. Keep `neo-daemon.exe` and the `driver` folder together.
+2. Extract it to a permanent folder, for example `C:\Tools\tca-neo-bridge`. Keep `neo-daemon.exe`, `neo-config.exe` and the `driver` folder together.
 3. Right-click `neo-daemon.exe` → **Run as administrator**. Its cyan bridge icon appears in the notification area; the tooltip shows "TCA-NEO bridge" and the current status.
 4. Right-click the icon → **Install driver…** and approve the Windows prompt. A window shows the steps, and a notification confirms "Driver installed". The log is in `%LOCALAPPDATA%\tca-neo-bridge\driver-install.log`.
 
@@ -64,21 +64,21 @@ The icon's badge shows the emulation status: a gray hollow circle when idle, a g
 | Item | What it does |
 | --- | --- |
 | Start emulation / Stop emulation | Hide the TCA devices and create the virtual NEO, or undo both. |
-| Configure… | Opens the configuration page in your browser (local only). Double-clicking the icon does the same. |
+| Configure… | Opens the configuration window (`neo-config.exe`). Double-clicking the icon does the same; if the window is already open, it comes to the front. Quit closes it. |
 | Pause input / Resume input | While emulating, releases every control and sends a neutral NEO until resumed. The tooltip shows *input paused*. A TCA button combo can do the same (see *Buttons & helpers*). |
 | Profile ▸ | Appears once a profile is saved under a name. Choosing one makes it the active profile, even mid-flight; a balloon confirms it. The active one is checked. |
 | Install driver… / Reinstall driver… | Installs the driver, or replaces it with a freshly signed copy. Available while not emulating. |
 | Quit | Stops emulation and exits. |
 
-### The configuration page
+### The configuration window
 
-The page fits one desktop window (1280 × 800 and up) without scrolling. The header shows the daemon status and, while emulating, whether the TCA is open, whether HidHide hides it and whether the virtual NEO exists, next to the **Profile** menu and **Print cheat sheet**. A rail on the left switches between six pages: **Mapping**, **Flight axes**, **Throttle**, **Camera & head**, **Buttons & helpers** and **Live**. On the four settings pages, a bar at the bottom holds **Try in game**, **Discard**, **Reset to defaults** and **Save settings**.
+The configuration window is a native Windows app that talks only to the bridge on this computer. It fits 1280 × 800 and up without scrolling. The header shows the daemon status and, while emulating, whether the TCA is open, whether HidHide hides it and whether the virtual NEO exists, next to the **Profile** menu and **Print cheat sheet**. A rail on the left switches between six pages: **Mapping**, **Flight axes**, **Throttle**, **Camera & head**, **Buttons & helpers** and **Live**. On the four settings pages, a bar at the bottom holds **Try in game**, **Discard**, **Reset to defaults** and **Save settings**.
 
 **Every preview is live.** While emulating, each page follows what you do on the TCA straight away, through your unsaved settings: the curve dot and meters follow the stick, the throttle needle the lever, the camera graph your hat hold, and the helper states and press timeline your buttons. Test controls appear only when emulation is stopped (*Start emulation to see your device*). The rail shows **Live input** or **Idle**.
 
 ### Mapping
 
-![Mapping page: sidestick button 1 selected, its press mapped to NEO 1 (Gun)](docs/images/mapping.png)
+![Mapping page: sidestick button 1 selected, its press being changed from NEO 1 (Gun) to NEO 2 (Missile) and POV up, as a pulse](docs/images/app-mapping.png)
 
 The left panel shows the TCA sidestick (switch **L / R** for a left- or right-hand setup) and quadrant, the middle one a T.Flight Hotas NEO with its numbered buttons and POV hat. The right panel has three tabs: **Selected control**, **NEO buttons** (NEO buttons 1–15 with their ACE COMBAT 8 actions and the TCA controls that feed each one, and the NEO axes) and **Log**.
 
@@ -93,7 +93,7 @@ The left panel shows the TCA sidestick (switch **L / R** for a left- or right-ha
 
 ### Settings pages
 
-![Flight axes page: the roll response curve following the live stick, with every axis raw and sent](docs/images/settings.png)
+![Flight axes page: the roll response curve following the live stick, with every axis raw and sent](docs/images/app-settings.png)
 
 | Setting | Meaning |
 | --- | --- |
@@ -126,25 +126,27 @@ The virtual NEO stays, so the game keeps its controller. Every control is releas
 
 ### Launch warnings
 
-When emulation starts, the bridge checks the launch order and warns, without changing anything, if Steam was already running or Steam Input is on for ACE COMBAT 8. The warnings appear as tray balloons and as a strip under the header of the configuration page, which **Dismiss** hides until the warnings change.
+When emulation starts, the bridge checks the launch order and warns, without changing anything, if Steam was already running or Steam Input is on for ACE COMBAT 8. The warnings appear as tray balloons and as a strip under the header of the configuration window, which **Dismiss** hides until the warnings change.
 
 ### Live
 
-![Live page: raw TCA input next to what the NEO receives, the bridge state and the NEO buttons](docs/images/live.png)
+![Live page: raw TCA input next to what the NEO receives, the bridge state and the NEO buttons](docs/images/app-live.png)
 
 While emulating, the **Live** page shows every axis as the raw TCA input above what the NEO receives, so you can see the effect of your curves, detents and camera settings in flight. It also shows the bridge state (throttle armed or waiting for safe start, precision, shift, paused, preview), the TCA controls being pressed, the 15 NEO buttons lit as they are sent, and the POV.
 
 ### Profiles and cheat sheet
 
+![Profile menu: the saved profiles with the active one marked, Save as, Import, Export and Delete](docs/images/app-profiles.png)
+
 The **Profile** menu in the header lists your saved profiles. Choose one to switch to it; the current settings must be saved or discarded first.
 
 - **Save as** stores the saved settings under a name (letters, digits, spaces, `_` and `-`) and makes it the active profile.
-- **Import…** loads a profile JSON file someone shared. The bridge checks it, and upgrades older ones, before it becomes your settings; save it under a name to keep it.
-- **Export** downloads the saved settings as a JSON file.
+- **Import…** opens a profile JSON file someone shared. The bridge checks it, and upgrades older ones, before it becomes your settings; save it under a name to keep it.
+- **Export** saves the saved settings to a JSON file you choose.
 - **Delete** removes the active profile after a second click. The settings themselves stay.
 - A **Next profile** combo on *Buttons & helpers* cycles through the saved profiles in name order while flying, and the tray has a **Profile** submenu.
 
-**Print cheat sheet** prints a light A4 page from the saved profile: every mapped control with its press, long press, double tap and shift-layer action, the axes, the helpers and the timings.
+**Print cheat sheet** opens a light A4 page of the saved profile in your browser, ready to print: every mapped control with its press, long press, double tap and shift-layer action, the axes, the helpers and the timings.
 
 ### Default mapping
 
@@ -172,6 +174,8 @@ Everything is kept per user in `%LOCALAPPDATA%\tca-neo-bridge`:
 - `driver-install.log`.
 - `hidhide-session.json`: only while emulating; used to restore HidHide after an interruption.
 - `profiles\`: named profiles (`<name>.json`) and `active.txt`, the name of the active one.
+
+**Print cheat sheet** writes `tca-neo-bridge-cheat-sheet.html` to your temporary folder (`%TEMP%`) and opens it there.
 
 Run `neo-daemon.exe --data <folder>` to use another folder.
 

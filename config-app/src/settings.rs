@@ -571,6 +571,13 @@ impl Settings {
         self.problem(format!("Preview not ended: {error}"));
     }
 
+    /// Another profile is now the saved settings (switched to or imported): it replaces the draft.
+    pub fn adopt(&mut self, config: Config, text: &str) {
+        self.show(config);
+        self.previewing = false;
+        self.mark(false, text);
+    }
+
     /// The window opened on a preview already running: the draft is that preview.
     pub fn resume_preview(&mut self) {
         self.previewing = true;
