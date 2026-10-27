@@ -190,7 +190,7 @@ Run `neo-daemon.exe --data <folder>` to use another folder.
 | A control is "stuck" | A quadrant switch set to **Hold** is resting in an active position. Set its **Behaviour** to **Pulse on change** on the Mapping page; see *Default mapping*. |
 | The throttle does nothing after starting | Safe start is waiting: move the throttle lever (or the sidestick slider) to centre once. |
 | The aircraft is too twitchy or too sluggish | Tune that axis's curve and deadzone on *Axes and settings*. Try them with **Try in game**, then save. |
-| The game sees the TCA devices as well | Start emulation **before** starting Steam and the game. The page warns when Steam was already running. |
+| The game sees the TCA devices as well | Start emulation **before** starting Steam and the game. The configuration window warns when Steam was already running. |
 | "Steam Input is on for ACE COMBAT 8" | In Steam, open the game's **Properties › Controller** and choose **Disable Steam Input**. |
 | "Head tracking could not listen on UDP port …" | Another program uses that port. Choose another port in *Head tracking* and in OpenTrack, then start emulation again. |
 | The camera moves the wrong way with head tracking | Turn on **Invert left / right** or **Invert up / down**. |

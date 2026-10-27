@@ -44,22 +44,13 @@ fn parse_requests_and_lengths() {
 }
 
 #[test]
-fn routes_assets_tokens_and_host_checks() {
+fn routes_tokens_and_host_checks() {
     let shared = shared("routes");
     let get = |path: &str, token: &str| http::handle(&request("GET", path, token, ""), &shared, 8000, "secret");
-    assert_eq!(get("/", "").body, http::INDEX);
-    assert_eq!(get("/app.js", "").content_type, "text/javascript; charset=utf-8");
-    assert_eq!(get("/style.css", "").body, http::STYLE);
-    assert_eq!(get("/missing", "").status, 404);
-    for (path, _, body) in http::ASSETS {
-        let response = get(path, "");
-        assert_eq!((response.status, response.body.as_str()), (200, body), "{path}");
+    // Only the API is served: the former page and its files are gone.
+    for path in ["/", "/app.js", "/style.css", "/device/neo.svg", "/missing"] {
+        assert_eq!(get(path, "secret").status, 404, "{path}");
     }
-    assert_eq!(get("/device/sidestick-right.svg", "").content_type, "image/svg+xml");
-    assert!(get("/device/sidestick-left.svg", "").body.contains("left-hand setup"));
-    assert!(get("/device/neo.svg", "").body.contains("T.Flight HOTAS NEO"));
-    assert!(get("/device/quadrant.svg", "").body.contains("TCA A320 quadrant"));
-    assert_eq!(http::handle(&request("POST", "/device/neo.svg", "", ""), &shared, 8000, "secret").status, 404);
     assert_eq!(get("/api/config", "wrong").status, 403);
     assert_eq!(get("/api/nothing", "secret").status, 404);
     let mut foreign = request("GET", "/", "", "");
@@ -181,7 +172,7 @@ fn render_sets_security_headers() {
     for (status, reason) in [(200, "OK"), (400, "Bad Request"), (403, "Forbidden"), (404, "Not Found")] {
         let text = String::from_utf8(http::render(&http::Response { status, content_type: "text/plain", body: "hi".into() })).unwrap();
         assert!(text.starts_with(&format!("HTTP/1.1 {status} {reason}\r\n")));
-        assert!(text.contains("Content-Security-Policy: default-src 'self'") && text.contains("Content-Length: 2") && text.ends_with("\r\n\r\nhi"));
+        assert!(text.contains("Content-Security-Policy: default-src 'none'") && text.contains("Content-Length: 2") && text.ends_with("\r\n\r\nhi"));
     }
 }
 
@@ -198,10 +189,9 @@ fn live_server_serves_rejects_and_stops() {
     let shared = shared("server");
     assert!(Server::start(shared.clone(), "tok".into(), "256.0.0.1:0").is_err());
     let server = Server::start(shared, "tok".into(), "127.0.0.1:0").unwrap();
-    assert_eq!(server.url(), format!("http://127.0.0.1:{}/#tok", server.port));
     let host = format!("Host: 127.0.0.1:{}", server.port);
     let page = exchange(server.port, format!("GET / HTTP/1.1\r\n{host}\r\n\r\n").as_bytes());
-    assert!(page.starts_with("HTTP/1.1 200 OK") && page.contains("TCA-NEO bridge configuration"));
+    assert!(page.starts_with("HTTP/1.1 404") && page.contains("Content-Security-Policy: default-src 'none'"), "{page}");
     let body = config::to_json(&config::defaults());
     let head = format!("PUT /api/config HTTP/1.1\r\n{host}\r\nX-Neo-Token: tok\r\nContent-Length: {}\r\n\r\n", body.len());
     // Split across two writes to exercise incremental reads.

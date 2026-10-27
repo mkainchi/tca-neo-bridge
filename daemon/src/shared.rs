@@ -1,4 +1,4 @@
-//! State shared by the tray, the emulation loop and the configuration page.
+//! State shared by the tray, the emulation loop and the configuration API.
 use crate::config::{self, Config};
 use crate::driver::Notice;
 use crate::profiles;
