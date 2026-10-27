@@ -237,6 +237,9 @@ fn controls_are_picked_by_pressing_them() {
     s.press(&keys(&["s5", "s6"]), &keys(&["s5", "s6"]), false, 10.0);
     assert_eq!((s.single(Kind::Precision).map(String::as_str), s.capture.clone(), message(&s).0), (Some("s5"), None, "Unsaved: hold Sidestick button 5 for precision aiming."));
     s.start_capture(Kind::Shift);
+    // A poll with nothing newly pressed keeps waiting.
+    assert!(s.press(&keys(&["s5"]), &[], false, 15.0).is_empty());
+    assert_eq!(s.capture.as_ref().map(|capture| capture.kind), Some(Kind::Shift));
     s.press(&keys(&["q2"]), &keys(&["q2"]), false, 20.0);
     assert_eq!((s.single(Kind::Shift).map(String::as_str), message(&s).0), (Some("q2"), "Unsaved: hold Quadrant button 2 for the shift layer."));
     s.clear_single(Kind::Shift);
