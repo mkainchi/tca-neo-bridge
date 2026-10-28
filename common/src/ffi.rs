@@ -186,6 +186,40 @@ pub struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
     pub PeakJobMemoryUsed: usize,
 }
 
+/// The common Open and Save As dialogs (comdlg32).
+#[repr(C)]
+pub struct OPENFILENAMEW {
+    pub lStructSize: u32,
+    pub hwndOwner: HWND,
+    pub hInstance: HANDLE,
+    pub lpstrFilter: PCWSTR,
+    pub lpstrCustomFilter: *mut u16,
+    pub nMaxCustFilter: u32,
+    pub nFilterIndex: u32,
+    pub lpstrFile: *mut u16,
+    pub nMaxFile: u32,
+    pub lpstrFileTitle: *mut u16,
+    pub nMaxFileTitle: u32,
+    pub lpstrInitialDir: PCWSTR,
+    pub lpstrTitle: PCWSTR,
+    pub Flags: u32,
+    pub nFileOffset: u16,
+    pub nFileExtension: u16,
+    pub lpstrDefExt: PCWSTR,
+    pub lCustData: isize,
+    pub lpfnHook: *const c_void,
+    pub lpTemplateName: PCWSTR,
+    pub pvReserved: *mut c_void,
+    pub dwReserved: u32,
+    pub FlagsEx: u32,
+}
+
+#[link(name = "comdlg32")]
+extern "system" {
+    pub fn GetOpenFileNameW(dialog: *mut OPENFILENAMEW) -> BOOL;
+    pub fn GetSaveFileNameW(dialog: *mut OPENFILENAMEW) -> BOOL;
+}
+
 #[link(name = "kernel32")]
 extern "system" {
     pub fn WaitForSingleObject(handle: HANDLE, milliseconds: u32) -> u32;

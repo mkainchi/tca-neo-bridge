@@ -1,5 +1,5 @@
 # Gates: clippy, 100% Rust lines/functions/regions (stable) and branches (nightly) across the workspace (shared code,
-# daemon and configuration app), 100% page JS.
+# daemon and configuration app).
 $ErrorActionPreference = 'Stop'
 $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
@@ -14,7 +14,6 @@ try {
     if ($LASTEXITCODE) { throw 'nightly branch coverage gate failed' }
     $branches = cargo +nightly llvm-cov report --branch --summary-only | Select-String '^TOTAL'
     if ($branches -notmatch '100\.00%\s*$') { throw "branch coverage below 100%: $branches" }
-    npx.cmd vitest run --config vitest.config.js --coverage; if ($LASTEXITCODE) { throw 'page tests failed' }
 } finally {
     Pop-Location
 }

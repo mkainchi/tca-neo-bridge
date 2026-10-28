@@ -81,7 +81,7 @@ pub struct Emulation {
 /// The next-profile combo: activate the saved profile after the active one, and say which (or why not).
 fn next_profile(shared: &Shared) -> Notice {
     let dir = shared.profiles_dir();
-    let next = profiles::next(&dir, profiles::active(&dir).as_deref()).ok_or_else(|| "No saved profiles yet: save one on the configuration page.".to_string());
+    let next = profiles::next(&dir, profiles::active(&dir).as_deref()).ok_or_else(|| "No saved profiles yet: save one in the configuration window.".to_string());
     match next.and_then(|name| shared.activate(&name).map(|_| name)) {
         Ok(name) => Notice { title: "Profile switched", text: format!("Now flying with {name}."), error: false },
         Err(error) => Notice { title: "Profile not switched", text: error, error: true },

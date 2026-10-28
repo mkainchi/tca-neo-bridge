@@ -54,7 +54,7 @@ fn the_shell_loads_and_the_rail_switches_pages() {
     let (mut harness, _) = open(&fake, WIDE, SLOW);
     settle(&mut harness, |app| app.state.saved.is_some());
     assert!(harness.query_by_label("Daemon: Idle").is_some());
-    assert!(harness.query_by_label("Unsaved profile").is_some());
+    assert!(harness.query_by_label("Profile: Unsaved profile").is_some());
     assert!(harness.query_by_label("TCA: not open").is_some() && harness.query_by_label("Idle").is_some());
     for page in Page::ALL.iter().rev() {
         harness.get_by_label(page.title()).click();
@@ -88,6 +88,8 @@ fn a_narrow_window_has_an_icon_rail_and_fewer_pills() {
 fn live_state_shows_in_the_pills_and_the_rail() {
     let fake = FakeApi::idle();
     let session = json!({"source": "tca", "hidden": true, "tca": true, "virtual_neo": true});
+    // The window opens on a preview already running (the pill follows this window's own preview).
+    fake.reply("/api/config", Ok(config_reply(json!({"preview": neo_daemon::config::defaults()}))));
     fake.reply("/api/live", Ok(live_reply(json!({"status": "Emulating", "paused": true, "preview": true, "links": session, "monitor": common::monitor()}))));
     let (mut harness, _) = open(&fake, WIDE, Duration::from_millis(5));
     settle(&mut harness, |app| app.state.live() && app.state.saved.is_some());
@@ -145,7 +147,7 @@ fn snapshot_at(size: Vec2, name: &str) {
     fake.reply("/api/profiles", Ok(json!({"profiles": ["Dogfight"], "active": "Dogfight"}).to_string()));
     let (mut harness, _) = open(&fake, size, SLOW);
     settle(&mut harness, |app| app.state.saved.is_some());
-    assert!(harness.query_by_label("Dogfight").is_some());
+    assert!(harness.query_by_label("Profile: Dogfight").is_some());
     harness.snapshot(name);
 }
 

@@ -174,27 +174,27 @@ fn pressing_a_control_selects_it_while_the_page_is_open() {
 fn the_window_state_applies_mapping_replies() {
     let mut state = State::default();
     let config = serde_json::from_str(&config_reply(json!({"links": {"source": "tca", "hidden": true, "tca": true, "virtual_neo": true}}))).unwrap();
-    state.apply(Reply::Loaded(Box::new(Loaded { config, profiles: Err("Locked.".into()), labels: Err("Unreadable.".into()) })));
+    state.apply(Reply::Loaded(Box::new(Loaded { config, profiles: Err("Locked.".into()), labels: Err("Unreadable.".into()) })), 0.0);
     assert_eq!(state.note.as_deref(), Some("Saved profiles could not be listed: Locked."));
     assert_eq!(state.map.note.as_deref(), Some("Earlier corrections could not be loaded: Unreadable."));
     assert!(state.map.emulating && state.profiles.profiles.is_empty());
     let mut next = defaults();
     next.buttons.insert("q20".into(), vec![3]);
-    state.apply(Reply::Recorded { config: Box::new(next.clone()), running: false, log: Ok(vec![entry("A")]) });
+    state.apply(Reply::Recorded { config: Box::new(next.clone()), running: false, log: Ok(vec![entry("A")]) }, 0.0);
     assert_eq!((state.saved.clone(), state.map.labels.len()), (Some(next.clone()), 1));
     next.hat = HatMode::Mapped;
-    state.apply(Reply::HatSet { config: Box::new(next.clone()), running: false });
+    state.apply(Reply::HatSet { config: Box::new(next.clone()), running: false }, 0.0);
     assert_eq!(state.saved.as_ref().map(|c| c.hat), Some(HatMode::Mapped));
-    state.apply(Reply::NotSaved("No.".into()));
+    state.apply(Reply::NotSaved("No.".into()), 0.0);
     assert_eq!(state.map.note.as_deref(), Some("Not saved: No."));
-    state.apply(Reply::Forgot(Ok(vec![])));
+    state.apply(Reply::Forgot(Ok(vec![])), 0.0);
     assert!(state.map.labels.is_empty());
     // Live presses select only on the Mapping page.
     let live = |pressed: &[&str]| Reply::Live(Box::new(serde_json::from_value(json!({"pressed": pressed, "levers": null, "monitor": null, "paused": false, "preview": false, "warnings": [], "status": "Emulating", "links": null})).unwrap()));
     state.page = Page::Live;
-    state.apply(live(&["s9"]));
+    state.apply(live(&["s9"]), 0.0);
     assert_eq!(state.map.selected, None);
     state.page = Page::Mapping;
-    state.apply(live(&["s9", "s10"]));
+    state.apply(live(&["s9", "s10"]), 0.0);
     assert_eq!((state.map.selected.as_deref(), state.map.emulating), (Some("s10"), false));
 }
