@@ -1,4 +1,4 @@
-//! Loopback-only configuration page. Every API call needs the per-launch token and an exact Host header.
+//! Loopback-only configuration API for neo-config.exe. Every call needs the per-launch token and an exact Host header.
 use crate::{config, labels, profiles};
 use crate::shared::Shared;
 use serde_json::json;
@@ -9,19 +9,6 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-pub const INDEX: &str = include_str!("../web/index.html");
-pub const SCRIPT: &str = include_str!("../web/app.js");
-pub const STYLE: &str = include_str!("../web/style.css");
-/// Static files: the page and its device diagrams.
-pub const ASSETS: [(&str, &str, &str); 7] = [
-    ("/", "text/html; charset=utf-8", INDEX),
-    ("/app.js", "text/javascript; charset=utf-8", SCRIPT),
-    ("/style.css", "text/css; charset=utf-8", STYLE),
-    ("/device/neo.svg", "image/svg+xml", include_str!("../web/device/neo.svg")),
-    ("/device/sidestick-right.svg", "image/svg+xml", include_str!("../web/device/sidestick-right.svg")),
-    ("/device/sidestick-left.svg", "image/svg+xml", include_str!("../web/device/sidestick-left.svg")),
-    ("/device/quadrant.svg", "image/svg+xml", include_str!("../web/device/quadrant.svg")),
-];
 const LIMIT: usize = 65536;
 
 #[derive(Debug, Default, PartialEq)]
@@ -83,14 +70,11 @@ pub fn handle(request: &Request, shared: &Shared, port: u16, token: &str) -> Res
     if request.host != format!("127.0.0.1:{port}") {
         return reply(403, "text/plain", "Forbidden");
     }
-    if let Some((_, content_type, body)) = ASSETS.iter().find(|(path, _, _)| request.method == "GET" && *path == request.path) {
-        return reply(200, content_type, *body);
-    }
     if !request.path.starts_with("/api/") {
         return reply(404, "text/plain", "Not found");
     }
     if request.token != token {
-        return json_reply(403, json!({"error": "This page is out of date. Reopen Configure from the tray icon."}));
+        return json_reply(403, json!({"error": "This window is out of date. Reopen Configure from the tray icon."}));
     }
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/api/config") => {
@@ -182,7 +166,7 @@ pub fn render(response: &Response) -> Vec<u8> {
         _ => "Not Found",
     };
     format!(
-        "HTTP/1.1 {} {reason}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'self'\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {} {reason}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'none'\r\nConnection: close\r\n\r\n{}",
         response.status,
         response.content_type,
         response.body.len(),
@@ -232,9 +216,6 @@ impl Server {
         Ok(Self { port, token, stop, thread: Some(thread) })
     }
 
-    pub fn url(&self) -> String {
-        format!("http://127.0.0.1:{}/#{}", self.port, self.token)
-    }
 }
 
 impl Drop for Server {

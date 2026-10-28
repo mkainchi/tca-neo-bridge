@@ -8,6 +8,7 @@ pub const GROUND: Color32 = Color32::from_rgb(0x0b, 0x0f, 0x14);
 pub const BAR: Color32 = Color32::from_rgb(0x0e, 0x13, 0x1a);
 pub const PANEL: Color32 = Color32::from_rgb(0x12, 0x18, 0x20);
 pub const RAISE: Color32 = Color32::from_rgb(0x1a, 0x22, 0x2d);
+pub const SUNK: Color32 = Color32::from_rgb(0x16, 0x1d, 0x27);
 pub const LINE: Color32 = Color32::from_rgb(0x1e, 0x29, 0x3b);
 pub const LINE_2: Color32 = Color32::from_rgb(0x2c, 0x3b, 0x4e);
 pub const WHITE: Color32 = Color32::WHITE;
@@ -113,7 +114,7 @@ pub fn install(ctx: &egui::Context, font_dir: &Path) {
         .into();
         style.spacing.item_spacing = Vec2::new(8.0, 6.0);
         style.spacing.button_padding = Vec2::new(14.0, 6.0);
-        style.spacing.interact_size.y = 30.0;
+        style.spacing.interact_size.y = 18.0;
         style.spacing.window_margin = Margin::same(16);
     });
 }

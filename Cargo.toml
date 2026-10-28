@@ -10,3 +10,17 @@ panic = "abort"
 opt-level = "s"
 codegen-units = 1
 strip = true
+
+# Test builds draw the device diagrams too; unoptimised, the SVG renderer is slow enough to stall a frame for seconds.
+# Coverage instruments only this workspace's crates, so optimising these dependencies changes no gate.
+[profile.dev.package.resvg]
+opt-level = 3
+
+[profile.dev.package.usvg]
+opt-level = 3
+
+[profile.dev.package.tiny-skia]
+opt-level = 3
+
+[profile.dev.package.tiny-skia-path]
+opt-level = 3

@@ -26,7 +26,6 @@ struct Ui {
     icon_size: i32,
     menu: Vec<(u32, String)>,
     tracked: bool,
-    opened: Vec<String>,
     posted: Vec<u32>,
     quits: usize,
     destroyed: usize,
@@ -180,11 +179,6 @@ unsafe extern "system" fn notify_icon(message: u32, data: *const NOTIFYICONDATAW
     u.icons.push((message, d.uFlags, wide_string(d.szTip.as_ptr()), wide_string(d.szInfo.as_ptr()), d.hIcon));
     1
 }
-unsafe extern "system" fn shell_execute(_: HWND, verb: PCWSTR, file: PCWSTR, _: PCWSTR, _: PCWSTR, _: i32) -> HANDLE {
-    assert_eq!(wide_string(verb), "open");
-    ui().opened.push(wide_string(file));
-    33
-}
 unsafe extern "system" fn module_handle(_: PCWSTR) -> HANDLE {
     1
 }
@@ -227,7 +221,6 @@ fn ui_api() -> UiApi {
         destroy_icon,
         register_message,
         notify_icon,
-        shell_execute,
         module_handle,
     }
 }
@@ -360,14 +353,7 @@ fn options_parse_and_reject() {
         assert_eq!(app::options(&args(bad), "dflt".into()).unwrap_err(), app::USAGE);
     }
     assert!(app::self_test());
-    let defaults = neo_daemon::config::defaults();
-    let mut invalid = defaults.clone();
-    invalid.version = 9;
-    assert!(!app::assets_ok(&invalid, "app.js style.css", "x", "y"));
-    assert!(!app::assets_ok(&defaults, "style.css", "x", "y"));
-    assert!(!app::assets_ok(&defaults, "app.js", "x", "y"));
-    assert!(!app::assets_ok(&defaults, "app.js style.css", "", "y"));
-    assert!(!app::assets_ok(&defaults, "app.js style.css", "x", ""));
+
     let _ = (SystemApi::real(), UiApi::real(), Apis::real(), ConfigAppApi::real());
 }
 
@@ -466,7 +452,6 @@ fn tray_session_start_configure_menu_stop_and_quit() {
     assert_eq!(app::run(&args(&["--data", data.to_str().unwrap(), "--source", "validation"]), apis()), 0);
     let u = ui();
     // Double-click starts the configuration app with the port and token on its input, never on a command line.
-    assert!(u.opened.is_empty());
     assert_eq!(u.spawned, ["neo-config.exe"]);
     assert!(u.stdin.ends_with(&format!(" {}\n", "ab".repeat(24))));
     // Quit asks the app to close, waits for it, then ends its job.
@@ -786,7 +771,7 @@ fn configure_starts_the_app_once_then_brings_it_forward() {
         let u = ui();
         assert_eq!((u.spawned.len(), u.jobs, u.assigned.len()), (2, 1, 2));
     }
-    // It cannot start, or cannot be handed the token: the browser page opens instead.
+    // It cannot start, or cannot be handed the token: a notice says how to fix it.
     ui().app_alive = false;
     ui().spawn_fails = true;
     send(WM_COMMAND, ID_CONFIGURE, 0);
@@ -795,8 +780,8 @@ fn configure_starts_the_app_once_then_brings_it_forward() {
     send(WM_COMMAND, ID_CONFIGURE, 0);
     {
         let u = ui();
-        assert_eq!(u.opened.len(), 2);
-        assert!(u.opened[0].starts_with("http://127.0.0.1:") && u.opened[0].ends_with("#t"));
+        let notices: Vec<&String> = u.icons.iter().map(|icon| &icon.3).filter(|info| info.contains("neo-config.exe is missing")).collect();
+        assert_eq!(notices.len(), 2);
     }
     tray::TRAY.with(|t| t.borrow_mut().take());
     let u = ui();

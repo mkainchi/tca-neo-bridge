@@ -19,7 +19,7 @@ Because the private key no longer exists, the certificate you trusted can never 
 ## Data flow and network
 
 - **Daemon → driver:** the pipe `\\.\pipe\neo-hid-v1` accepts local clients only. Its ACL grants the daemon's user full access and LocalService/SYSTEM (the UMDF host accounts) read access. Frames are fixed-size and validated; anything malformed is discarded and the driver falls back to neutral input.
-- **Configuration page:** served on `127.0.0.1` only, on a random port. Every API call needs a random per-launch token (passed in the URL fragment, so it never appears in request lines or logs) and an exact `Host` header, which blocks DNS-rebinding attacks. Responses send `Content-Security-Policy: default-src 'self'`.
+- **Configuration API:** served on `127.0.0.1` only, on a random port, for `neo-config.exe`. Every call needs a random per-launch token, which the daemon hands to the app on its standard input (never on a command line, in the environment or in a URL), and an exact `Host` header, which blocks DNS-rebinding attacks. No page is served; responses send `Content-Security-Policy: default-src 'none'`.
 - **No telemetry,** no update checks and no outbound connections of any kind.
 - **Logs** (`%LOCALAPPDATA%\tca-neo-bridge`) hold status changes and errors only, never device instance paths or serial numbers.
 

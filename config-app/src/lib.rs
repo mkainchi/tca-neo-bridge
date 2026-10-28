@@ -1,6 +1,13 @@
 //! TCA-NEO bridge configuration app: a native window over the daemon's loopback API, started from the tray.
 pub mod api;
+pub mod diagrams;
+pub mod files;
 pub mod launch;
+pub mod map;
+pub mod mapping;
+pub mod previews;
+pub mod settings;
+pub mod sheet;
 pub mod state;
 pub mod theme;
 pub mod ui;
@@ -9,7 +16,7 @@ pub use neo_common::ffi;
 
 use crate::api::{Api, Http};
 use crate::launch::{Signals, SystemApi};
-use crate::state::State;
+use crate::state::{State, Want};
 use crate::worker::{Request, Worker};
 use eframe::egui::{self, ViewportCommand};
 use std::path::PathBuf;
@@ -29,15 +36,63 @@ pub struct App {
     pub state: State,
     worker: Worker,
     signals: Arc<Signals>,
+    /// The clock of the press timeline.
+    started: std::time::Instant,
+    /// Requests made this frame (by replies, the close button and the controls), sent after drawing.
+    pending: Vec<Request>,
+    files: files::FileApi,
+    /// Where the cheat sheet is written.
+    temp: PathBuf,
 }
 
 impl App {
     pub fn new(ctx: &egui::Context, api: Box<dyn Api>, signals: Arc<Signals>, period: Duration, fonts: &std::path::Path) -> Self {
-        theme::install(ctx, fonts);
+        // The profile is asked for first, so it never waits on fonts or drawing.
         let wake = ctx.clone();
         let worker = Worker::start(api, period, Box::new(move || wake.request_repaint()));
         worker.send(Request::Load);
-        Self { state: State::default(), worker, signals }
+        theme::install(ctx, fonts);
+        diagrams::install(ctx, fonts);
+        Self { state: State::default(), worker, signals, started: std::time::Instant::now(), pending: Vec::new(), files: files::FileApi::real(), temp: std::env::temp_dir() }
+    }
+}
+
+impl App {
+    /// Other file dialogs and folders (tests use fakes).
+    pub fn with_files(mut self, files: files::FileApi, temp: PathBuf) -> Self {
+        self.files = files;
+        self.temp = temp;
+        self
+    }
+
+    /// The file action the profile menu asked for: import, export, or print the cheat sheet.
+    fn file_action(&mut self, want: Want) {
+        let state = &mut self.state;
+        match want {
+            Want::Import => {
+                let Some(path) = files::choose_import(&self.files) else { return };
+                let name = path.file_name().map_or(String::new(), |name| name.to_string_lossy().into_owned());
+                match std::fs::read_to_string(&path) {
+                    Ok(text) => self.pending.extend(state.import(&text, &name)),
+                    Err(_) => state.menu.note = Some((format!("Not imported: {name} could not be read."), true)),
+                }
+            }
+            Want::Export => {
+                if let Some(path) = files::choose_export(&self.files, &state.export_name()) {
+                    state.export(&path);
+                }
+            }
+            Want::Print => {
+                let Some(saved) = &state.saved else { return };
+                let days = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs() / 86_400);
+                let page = sheet::page(saved, state.profiles.active.as_deref(), &sheet::date(days as i64));
+                let path = self.temp.join("tca-neo-bridge-cheat-sheet.html");
+                match std::fs::write(&path, page) {
+                    Ok(()) => files::open(&self.files, &path),
+                    Err(_) => state.menu.note = Some(("Not printed: the cheat sheet could not be written.".into(), true)),
+                }
+            }
+        }
     }
 }
 
@@ -48,8 +103,16 @@ impl eframe::App for App {
                 ctx.send_viewport_cmd(command);
             }
         }
+        let now = self.started.elapsed().as_secs_f64() * 1000.0;
+        self.state.now = now;
         while let Ok(reply) = self.worker.replies.try_recv() {
-            self.state.apply(reply);
+            let follow = self.state.apply(reply, now);
+            self.pending.extend(follow);
+        }
+        // Closing the window ends a preview: the game goes back to the saved profile.
+        if ctx.input(|input| input.viewport().close_requested()) {
+            let end = self.state.settings.set_preview(false);
+            self.pending.extend(end);
         }
         if self.signals.quit.load(Ordering::SeqCst) || self.state.closing {
             ctx.send_viewport_cmd(ViewportCommand::Close);
@@ -58,7 +121,14 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        ui::shell(ui, &mut self.state);
+        let made = ui::shell(ui, &mut self.state);
+        self.pending.extend(made);
+        if let Some(want) = self.state.menu.want.take() {
+            self.file_action(want);
+        }
+        for request in self.pending.drain(..) {
+            self.worker.send(request);
+        }
     }
 }
 

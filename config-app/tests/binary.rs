@@ -1,7 +1,11 @@
 //! Runs the real executable the way the daemon does (coverage collects child-process profiles): the handshake on
 //! standard input, a second copy refused, the show and quit events, and a daemon that stops answering.
 mod common;
-use common::{wait_until, TOKEN};
+use common::TOKEN;
+
+/// The real app opens a window and draws the diagrams before it settles; CI runners are much slower than desktops,
+/// and a shared runner can stall for a while.
+const SLOW_START: Duration = Duration::from_secs(60);
 use neo_daemon::ffi::{self, HANDLE};
 use neo_daemon::http;
 use neo_daemon::shared::Shared;
@@ -76,7 +80,7 @@ fn launch(port: u16) -> Child {
 }
 
 fn exit_code(child: &mut Child) -> i32 {
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + SLOW_START;
     loop {
         if let Some(status) = child.try_wait().unwrap() {
             return status.code().unwrap();
@@ -85,6 +89,18 @@ fn exit_code(child: &mut Child) -> i32 {
             let _ = child.kill();
             panic!("neo-config did not exit");
         }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Wait until `condition` holds while the app is still running; an app that exits first fails with its exit code.
+fn wait_running(app: &mut Child, mut condition: impl FnMut() -> bool) {
+    let deadline = Instant::now() + SLOW_START;
+    while !condition() {
+        if let Some(status) = app.try_wait().unwrap() {
+            panic!("neo-config exited early: {status}");
+        }
+        assert!(Instant::now() < deadline, "timed out");
         std::thread::sleep(Duration::from_millis(10));
     }
 }
@@ -107,7 +123,7 @@ fn the_real_app_follows_the_daemons_lifecycle() {
     unsafe { ffi::CloseHandle(mutex) };
     // Opened: it loads the profile and polls live input; Configure… again brings it forward; Quit closes it.
     let mut app = launch(daemon.port);
-    wait_until(|| daemon.asked("/api/config") == 1 && daemon.asked("/api/live") >= 2);
+    wait_running(&mut app, || daemon.asked("/api/config") == 1 && daemon.asked("/api/live") >= 2);
     unsafe { ffi::SetEvent(show) };
     std::thread::sleep(Duration::from_millis(200));
     assert!(app.try_wait().unwrap().is_none());
@@ -116,7 +132,7 @@ fn the_real_app_follows_the_daemons_lifecycle() {
     // The daemon stops answering: the app closes itself.
     unsafe { ResetEvent(quit) };
     let mut app = launch(daemon.port);
-    wait_until(|| daemon.asked("/api/config") == 2);
+    wait_running(&mut app, || daemon.asked("/api/config") == 2);
     daemon.stop();
     assert_eq!(exit_code(&mut app), 0);
     unsafe {
