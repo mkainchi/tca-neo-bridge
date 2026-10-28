@@ -1,0 +1,34 @@
+[package]
+name = "neo-config"
+version = "0.4.0"
+edition = "2021"
+publish = false
+description = "Configuration app for the TCA-NEO bridge: a native window over the daemon's loopback API"
+license = "MIT"
+repository = "https://github.com/mkainchi/tca-neo-bridge"
+
+[lib]
+name = "neo_config"
+path = "src/lib.rs"
+
+[[bin]]
+name = "neo-config"
+path = "src/main.rs"
+
+[dependencies]
+neo-common = { path = "../common" }
+eframe = { version = "=0.37.0", default-features = false, features = ["accesskit", "wgpu_no_default_features"] }
+# eframe's wgpu comes without backends; the window draws with Direct3D 12 only. (Test builds also get wgpu's default
+# backends through egui_kittest, so only a build without dev-dependencies shows a missing backend.)
+wgpu = { version = "30", default-features = false, features = ["dx12"] }
+png = "0.18"
+resvg = { version = "0.45", default-features = false, features = ["text"] }
+serde = "1"
+serde_json = "1"
+
+[dev-dependencies]
+neo-daemon = { path = "../daemon" }
+egui_kittest = { version = "=0.37.0", features = ["eframe", "wgpu", "snapshot"] }
+
+[build-dependencies]
+embed-resource = "3.0"

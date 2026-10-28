@@ -1,4 +1,5 @@
 //! Notification-area icon and menu: Start/Stop emulation, Pause/Resume input, Configure…, Install/Reinstall driver…, Quit.
+use crate::config_app::ConfigApp;
 use crate::driver::{DriverManager, Notice};
 use crate::emulation::Controller;
 use crate::ffi::{self, HANDLE, HWND, MSG, NOTIFYICONDATAW, PCWSTR, POINT, WNDCLASSEXW};
@@ -58,6 +59,7 @@ pub struct UiApi {
     pub destroy_icon: unsafe extern "system" fn(HANDLE) -> ffi::BOOL,
     pub register_message: unsafe extern "system" fn(PCWSTR) -> u32,
     pub notify_icon: unsafe extern "system" fn(u32, *const NOTIFYICONDATAW) -> ffi::BOOL,
+    /// Opens the probe report (`--probe`).
     pub shell_execute: unsafe extern "system" fn(HWND, PCWSTR, PCWSTR, PCWSTR, PCWSTR, i32) -> HANDLE,
     pub module_handle: unsafe extern "system" fn(PCWSTR) -> HANDLE,
 }
@@ -175,6 +177,7 @@ pub struct Tray {
     pub controller: Controller,
     pub server: Server,
     pub driver: DriverManager,
+    pub config_app: ConfigApp,
     pub shown: Option<Status>,
     pub added: bool,
 }
@@ -230,14 +233,19 @@ impl Tray {
         self.shown = Some(status);
     }
 
-    pub fn configure(&self) {
-        let (verb, url) = (ffi::wide("open"), ffi::wide(&self.server.url()));
-        // SAFETY: NUL-terminated strings outlive the call.
-        unsafe { (self.api.shell_execute)(self.hwnd, verb.as_ptr(), url.as_ptr(), std::ptr::null(), std::ptr::null(), 1) };
+    /// Open the configuration app (or bring it forward); a notice when it cannot start.
+    pub fn configure(&mut self) {
+        if self.config_app.open(self.server.port, &self.server.token).is_ok() {
+            return;
+        }
+        let text = "neo-config.exe is missing or could not start. Extract the release package again, keeping it beside neo-daemon.exe.";
+        self.controller.shared.notice(Notice { title: "Configuration not opened", text: text.into(), error: true });
+        self.refresh();
     }
 
     /// Stop emulation and remove the icon; the caller destroys the window outside the tray borrow.
     pub fn quit(&mut self) {
+        self.config_app.close();
         self.controller.shutdown();
         self.driver.wait();
         if self.added {

@@ -253,7 +253,7 @@ fn input_report_layout_and_limits() {
 }
 
 #[test]
-fn centered_unit16_and_ties_to_even() {
+fn unit16_rounds_ties_to_even() {
     assert_eq!(unit16(0.0), 32768); // 32767.5 rounds to even
     assert_eq!(unit16(-5.0), 0);
     assert_eq!(unit16(5.0), 65535);

@@ -1,8 +1,17 @@
 # Build output
-daemon/target/
+/target/
+# Build output from before the Cargo workspace (0.3.x built into daemon/)
+/daemon/target/
 driver/out/
 driver/descriptor.h
 dist/
+# Snapshot test failures (kittest writes these beside the expected images)
+config-app/tests/snapshots/*.diff.png
+config-app/tests/snapshots/*.new.png
+config-app/tests/snapshots/*.old.png
+
+# ModDB publication drafts, kept locally
+/docs/moddb/
 
 # Tooling
 node_modules/

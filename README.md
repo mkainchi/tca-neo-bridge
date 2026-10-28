@@ -67,7 +67,7 @@ The icon's badge shows the emulation status: a gray hollow circle when idle, a g
 | Install driver… / Reinstall driver… | Installs the driver, or replaces it with a freshly signed copy. Available while not emulating. |
 | Quit | Stops emulation and exits. |
 
-### The configuration page
+### The configuration window
 
 The page fits one desktop window (1280 × 800 and up) without scrolling. The header shows the bridge status and, while emulating, how many controllers are open, whether HidHide hides them and whether the virtual NEO exists, next to the **Profile** menu and **Print cheat sheet**. A rail on the left switches between **Mapping**, **Flight axes**, **Throttle**, **Camera & head**, **Buttons & helpers**, **Controllers** and **Live**. On the settings pages, a bar at the bottom holds **Try in game**, **Discard**, **Reset to defaults** and **Save settings**.
 
@@ -138,9 +138,12 @@ Everything is kept per user in `%LOCALAPPDATA%\any-tm-hotas-bridge`:
 - `config.json`: your profile, one mapping per controller set.
 - `label-map.json`: the recorded corrections.
 - `neo-daemon.log`: status changes and errors (never device paths or serial numbers).
+- `neo-config.log`: only if the configuration window closed after an internal error; what failed and where.
 - `driver-install.log`.
 - `probe.txt`: written by `neo-daemon.exe --probe` for test reports.
 - `hidhide-session.json`: only while emulating; used to restore HidHide after an interruption.
+
+**Print cheat sheet** writes `tca-neo-bridge-cheat-sheet.html` to your temporary folder (`%TEMP%`) and opens it there.
 
 Run `neo-daemon.exe --data <folder>` to use another folder.
 

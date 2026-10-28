@@ -18,10 +18,11 @@ if (-not $Version) {
 $registry = Join-Path $env:USERPROFILE '.cargo\registry\src'
 $env:RUSTFLAGS = "--remap-path-prefix=$registry=crates --remap-path-prefix=$root=tca-neo-bridge --remap-path-prefix=$env:USERPROFILE=~"
 try {
-    cargo build --release --quiet --manifest-path (Join-Path $root 'daemon\Cargo.toml'); if ($LASTEXITCODE) { throw 'daemon build failed' }
+    cargo build --release --quiet --manifest-path (Join-Path $root 'Cargo.toml') -p neo-daemon -p neo-config; if ($LASTEXITCODE) { throw 'build failed' }
 } finally {
     Remove-Item Env:\RUSTFLAGS
 }
+& (Join-Path $PSScriptRoot 'third-party-licenses.ps1')
 # Driver versions are four numbers: 0.3.0-experimental.1 → 0.3.0.1, 0.3.0 → 0.3.0.0.
 if ($Version -notmatch '^(\d+\.\d+\.\d+)(?:-[a-z]+\.(\d+))?$') { throw "Unsupported version $Version" }
 $driverVersion = "$($Matches[1]).$(if ($Matches[2]) { $Matches[2] } else { '0' })"
@@ -31,8 +32,18 @@ $name = "$Name-$Version-x64"
 $stage = Join-Path $root "dist\$name"
 Remove-Item -Recurse -Force $stage, "$stage.zip" -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force (Join-Path $stage 'driver') | Out-Null
-Copy-Item (Join-Path $root 'daemon\target\release\neo-daemon.exe') $stage
-foreach ($file in 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'SECURITY.md') { Copy-Item (Join-Path $root $file) $stage }
+foreach ($exe in 'neo-daemon.exe', 'neo-config.exe') { Copy-Item (Join-Path $root "target\release\$exe") $stage }
+
+# Smoke launch: the shipped app opens its window, finds nothing on the port and closes itself with code 0. A
+# release-only failure (a feature only test builds turn on) stops the build here instead of on a tester's PC.
+$handshake = Join-Path ([IO.Path]::GetTempPath()) 'neo-config-smoke.txt'
+$smokeErr = Join-Path ([IO.Path]::GetTempPath()) 'neo-config-smoke.err'
+Set-Content $handshake ('1 ' + ('0' * 48)) -Encoding ASCII
+$smoke = Start-Process (Join-Path $stage 'neo-config.exe') -RedirectStandardInput $handshake -RedirectStandardError $smokeErr -PassThru
+if (-not $smoke.WaitForExit(60000)) { $smoke.Kill(); throw 'neo-config.exe smoke launch did not close by itself' }
+if ($smoke.ExitCode -ne 0) { throw "neo-config.exe smoke launch failed (0x{0:X}): {1}" -f $smoke.ExitCode, (Get-Content $smokeErr -Raw) }
+Remove-Item $handshake, $smokeErr
+foreach ($file in 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_LICENSES.md', 'SECURITY.md') { Copy-Item (Join-Path $root $file) $stage }
 # Players' guide to the experimental bridge, at the top of the zip.
 Copy-Item (Join-Path $root 'docs\EXPERIMENTAL-ANY-HOTAS.md') (Join-Path $stage 'EXPERIMENTAL.md')
 $package = Join-Path $root 'driver\out\package'
@@ -43,7 +54,7 @@ Get-FileHash (Join-Path $stage 'driver\neohid.*') -Algorithm SHA256 |
     ForEach-Object { '{0}  {1}' -f $_.Hash.ToLowerInvariant(), (Split-Path $_.Path -Leaf) } |
     Set-Content (Join-Path $stage 'driver\SHA256SUMS') -Encoding ASCII
 
-$expected = @('EXPERIMENTAL.md', 'LICENSE', 'README.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md', 'neo-daemon.exe',
+$expected = @('EXPERIMENTAL.md', 'LICENSE', 'README.md', 'SECURITY.md', 'THIRD_PARTY_LICENSES.md', 'THIRD_PARTY_NOTICES.md', 'neo-config.exe', 'neo-daemon.exe',
     'driver\LICENSE-MS-PL.txt', 'driver\SHA256SUMS', 'driver\install-driver.ps1', 'driver\neohid.cat',
     'driver\neohid.dll', 'driver\neohid.inf', 'driver\uninstall-driver.ps1') | Sort-Object
 $actual = Get-ChildItem $stage -Recurse -File | ForEach-Object { $_.FullName.Substring($stage.Length + 1) } | Sort-Object

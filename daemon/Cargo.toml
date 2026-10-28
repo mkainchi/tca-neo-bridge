@@ -16,11 +16,9 @@ name = "neo-daemon"
 path = "src/main.rs"
 
 [dependencies]
+neo-common = { path = "../common" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [build-dependencies]
 embed-resource = "3.0"
-
-[profile.release]
-panic = "abort"
