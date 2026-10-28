@@ -14,12 +14,13 @@ pub enum Page {
     Throttle,
     Camera,
     Helpers,
+    Controllers,
     Live,
 }
 
 impl Page {
-    /// Rail order; a separator follows Mapping and Buttons & helpers.
-    pub const ALL: [Page; 6] = [Page::Mapping, Page::Axes, Page::Throttle, Page::Camera, Page::Helpers, Page::Live];
+    /// Rail order; a separator follows Mapping and Controllers.
+    pub const ALL: [Page; 7] = [Page::Mapping, Page::Axes, Page::Throttle, Page::Camera, Page::Helpers, Page::Controllers, Page::Live];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -28,13 +29,14 @@ impl Page {
             Page::Throttle => "Throttle",
             Page::Camera => "Camera & head",
             Page::Helpers => "Buttons & helpers",
+            Page::Controllers => "Controllers",
             Page::Live => "Live",
         }
     }
 
     /// The pages that edit the settings draft and show the save bar's actions.
     pub fn settings(self) -> bool {
-        matches!(self, Page::Axes | Page::Throttle | Page::Camera | Page::Helpers)
+        matches!(self, Page::Axes | Page::Throttle | Page::Camera | Page::Helpers | Page::Controllers)
     }
 
     pub fn help(self) -> &'static str {
@@ -44,6 +46,7 @@ impl Page {
             Page::Throttle => "Move the levers: the needle, zone and NEO throttle follow them live.",
             Page::Camera => "Press the hat or move your head: the hold and camera output show live.",
             Page::Helpers => "Hold a helper or tap a button: states and the press timeline update as you do.",
+            Page::Controllers => "Each set of controllers keeps its own mapping; the settings on the other pages are shared.",
             Page::Live => "Everything your controllers send and what the NEO receives, right now.",
         }
     }
@@ -247,9 +250,15 @@ impl State {
             Reply::NotSaved(message) => self.map.not_saved(&message),
             Reply::Forgot(result) => self.map.forgot(result),
             Reply::Saved { config, running } => {
+                // A different choice of controllers is a different set: ask which one it is now.
+                let moved = self.saved.as_ref().is_some_and(|saved| saved.devices != config.devices);
                 self.saved(*config);
                 self.settings.saved(running);
+                if moved {
+                    return vec![Request::Devices];
+                }
             }
+            Reply::Devices(devices) => self.set_changed(*devices),
             Reply::SaveFailed(message) => self.settings.save_failed(&message),
             Reply::Previewed => return self.settings.previewed(),
             Reply::PreviewFailed(message) => self.settings.preview_failed(&message),
@@ -275,6 +284,22 @@ impl State {
             Reply::Fatal(_) => self.closing = true,
         }
         Vec::new()
+    }
+
+    /// The controllers taking part changed: the window follows their set, with its saved mapping or its default.
+    fn set_changed(&mut self, devices: neo_common::api::Devices) {
+        let Some(saved) = self.saved.as_ref() else { return };
+        let file = saved.compose();
+        let view = View::of(&file, &devices.setup, &devices.profile);
+        if let Some(defaults) = self.defaults.as_mut() {
+            let shared = neo_common::config::Config { setups: Default::default(), ..defaults.compose() };
+            *defaults = View { setups: file.setups.clone(), devices: file.devices.clone(), ..View::of(&shared, &devices.setup, &devices.default) };
+        }
+        self.map.controllers = Controllers { present: devices.devices, active: devices.active };
+        self.map.deselect();
+        self.default_profile = Some(devices.default);
+        self.settings.show(view.clone());
+        self.saved(view);
     }
 
     /// A recorded mapping is saved at once: the settings draft takes it too.

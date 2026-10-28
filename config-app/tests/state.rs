@@ -42,7 +42,7 @@ fn pills_follow_the_status_and_the_session() {
 
 #[test]
 fn pages_have_titles_and_help_in_rail_order() {
-    assert_eq!(Page::ALL.map(Page::title), ["Mapping", "Flight axes", "Throttle", "Camera & head", "Buttons & helpers", "Live"]);
+    assert_eq!(Page::ALL.map(Page::title), ["Mapping", "Flight axes", "Throttle", "Camera & head", "Buttons & helpers", "Controllers", "Live"]);
     assert!(Page::ALL.iter().all(|page| page.help().ends_with('.')));
 }
 
@@ -134,7 +134,7 @@ fn the_settings_draft_follows_the_daemon() {
     state.settings.previewing = true;
     assert!(state.show(Page::Throttle).is_empty());
     assert_eq!(state.show(Page::Mapping), [Request::EndPreview]);
-    assert!(Page::ALL.iter().filter(|page| page.settings()).count() == 4);
+    assert!(Page::ALL.iter().filter(|page| page.settings()).count() == 5);
     // Before the profile loads there is no draft to update.
     let mut fresh = State::default();
     fresh.apply(Reply::Recorded { config: Box::new(view()), running: false, log: Ok(vec![]) }, 0.0);
@@ -220,4 +220,34 @@ fn export_writes_the_whole_file() {
     state.export(std::path::Path::new(""));
     assert_eq!(state.menu.note, Some(("Not exported:  could not be written.".into(), true)));
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_new_choice_of_controllers_switches_to_their_set() {
+    use neo_config::worker::Request;
+    let mut file = neo_daemon::config::defaults();
+    let mut stick = neo_daemon::config::tca_profile();
+    stick.buttons = [("t16000m/b1".to_string(), vec![2])].into();
+    file.setups.insert("t16000m".into(), stick.clone());
+    let mut state = opened(json!({"config": file}), no_profiles());
+    // Saving the same controllers keeps the set; another choice asks which set that is.
+    let saved = state.saved.clone().unwrap();
+    assert!(state.apply(Reply::Saved { config: Box::new(saved.clone()), running: false }, 0.0).is_empty());
+    let chosen = neo_config::view::View { devices: vec!["t16000m".into()], ..saved };
+    assert_eq!(state.apply(Reply::Saved { config: Box::new(chosen), running: false }, 0.0), [Request::Devices]);
+    state.map.selected = Some("tca-stick/b1".into());
+    let devices = json!({"devices": [common::t16000m()], "active": ["t16000m"], "setup": "t16000m", "profile": stick, "default": neo_daemon::config::default_profile(&[common::t16000m()])});
+    state.apply(Reply::Devices(Box::new(serde_json::from_value(devices).unwrap())), 0.0);
+    let now = state.saved.clone().unwrap();
+    // The set's saved mapping, the TCA pair's kept in the file; the selection and defaults follow.
+    assert_eq!((now.setup.as_str(), now.buttons.clone(), now.setups.len()), ("t16000m", stick.buttons.clone(), 2));
+    assert_eq!((state.map.controllers.active.clone(), state.map.selected.clone()), (vec!["t16000m".to_string()], None));
+    assert_eq!(state.settings.draft.as_ref().unwrap().setup, "t16000m");
+    let defaults = state.defaults.clone().unwrap();
+    assert_eq!((defaults.setup.as_str(), defaults.setups.len(), defaults.bindings.roll.unwrap().device), ("t16000m", 2, "t16000m".to_string()));
+    // Before the profile loads there is nothing to follow.
+    let mut fresh = State::default();
+    let devices = serde_json::from_str(&devices_reply(json!({}))).unwrap();
+    fresh.apply(Reply::Devices(Box::new(devices)), 0.0);
+    assert!(fresh.saved.is_none() && fresh.map.controllers.active.is_empty());
 }

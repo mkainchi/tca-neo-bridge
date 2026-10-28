@@ -33,6 +33,8 @@ pub enum Request {
     Preview(Box<View>),
     /// Go back to the saved profile in game.
     EndPreview,
+    /// The controllers again, after a save changed which ones take part.
+    Devices,
     /// Make a saved profile the active one.
     Activate(String),
     /// Save the saved settings under a name (replacing one of that name) and make it active.
@@ -90,6 +92,8 @@ pub enum Reply {
     Listed { profiles: Profiles, text: String },
     /// A profile action failed, and what to say.
     ProfileFailed(String),
+    /// The controllers taking part now, their set and its mapping.
+    Devices(Box<Devices>),
     Fatal(Fatal),
 }
 
@@ -169,6 +173,7 @@ fn handle(api: &mut dyn Api, request: Request) -> Result<Reply, Fatal> {
             Err(message) => Reply::SaveFailed(message),
         },
         Request::Preview(config) => soft(put::<IgnoredAny>(api, "/api/preview", &config.compose()))?.map_or_else(Reply::PreviewFailed, |_| Reply::Previewed),
+        Request::Devices => soft(get::<Devices>(api, "/api/devices"))?.map_or_else(Reply::Failed, |devices| Reply::Devices(Box::new(devices))),
         Request::EndPreview => soft(understood::<IgnoredAny>(api.call("DELETE", "/api/preview", None)))?.map_or_else(Reply::PreviewEndFailed, |_| Reply::PreviewEnded),
         Request::Activate(name) => match soft(understood::<ProfileAction>(api.call("POST", &format!("/api/profiles/{}/activate", encode(&name)), None)))? {
             Ok(done) => {

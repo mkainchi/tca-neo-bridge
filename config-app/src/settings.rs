@@ -6,6 +6,7 @@ use crate::previews::Press;
 use crate::view::View;
 use crate::worker::Request;
 use neo_common::config::{AxisTuning, Binding, YawSource};
+use neo_common::models::{DeviceInfo, THRUSTMASTER};
 use std::collections::BTreeMap;
 
 /// The flight axis tuned on the Flight axes page.
@@ -602,6 +603,23 @@ impl Settings {
             self.mark(true, "Unsaved changes \u{b7} preview ended when you left the settings.");
         }
         requests
+    }
+
+    /// Whether a present controller takes part in the draft: automatic takes every Thrustmaster one.
+    pub fn takes_part(&self, device: &DeviceInfo) -> bool {
+        self.draft.as_ref().is_some_and(|draft| if draft.devices.is_empty() { device.vid == THRUSTMASTER } else { draft.devices.contains(&device.id) })
+    }
+
+    /// Automatic: every Thrustmaster controller present; off, the ones taking part now, listed by id.
+    pub fn set_automatic(&mut self, on: bool, active: &[String]) -> Vec<Request> {
+        let devices = if on { Vec::new() } else { active.to_vec() };
+        self.edit("Unsaved changes.", |config| config.devices = devices)
+    }
+
+    /// Tick or untick a controller: the ticked ones are listed by id from then on.
+    pub fn toggle_device(&mut self, present: &[DeviceInfo], id: &str) -> Vec<Request> {
+        let ticked: Vec<String> = present.iter().filter(|device| self.takes_part(device) != (device.id == id)).map(|device| device.id.clone()).collect();
+        self.edit("Unsaved changes.", |config| config.devices = ticked)
     }
 
     /// The precision or shift control of the draft.

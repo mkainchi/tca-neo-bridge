@@ -290,3 +290,17 @@ fn an_import_becomes_the_saved_settings() {
 fn profile_names_are_percent_encoded() {
     assert_eq!(neo_config::worker::encode("Dog fight_2-b/é"), "Dog%20fight_2-b%2F%C3%A9");
 }
+#[test]
+fn the_controllers_are_read_again_after_a_new_choice() {
+    let fake = FakeApi::idle();
+    let (worker, _) = start(&fake, SLOW);
+    worker.send(Request::Devices);
+    let Reply::Devices(devices) = next(&worker) else { panic!("no controllers") };
+    assert_eq!(devices.setup, neo_daemon::config::TCA_SETUP);
+    fake.reply("/api/devices", Err(ApiError::Rejected("HID listing failed.".into())));
+    worker.send(Request::Devices);
+    assert_eq!(next(&worker), Reply::Failed("HID listing failed.".into()));
+    fake.reply("/api/devices", Err(ApiError::Forbidden));
+    worker.send(Request::Devices);
+    assert_eq!(next(&worker), Reply::Fatal(Fatal::Forbidden));
+}

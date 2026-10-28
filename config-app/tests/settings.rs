@@ -295,3 +295,24 @@ fn presses_and_the_hat_hold_are_timed() {
     s.press(&tca(), &keys(&["tca-stick/hat-up"]), &keys(&["tca-stick/hat-up"]), None, 10_000.0);
     assert_eq!((s.presses.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>(), s.hat_since), (vec!["tca-stick/b2", "tca-stick/hat-up"], None));
 }
+
+#[test]
+fn controllers_take_part_automatically_or_by_their_ticks() {
+    use neo_daemon::models::DeviceInfo;
+    let present = vec![common::t16000m(), common::twcs(), DeviceInfo { vid: 0x1234, id: "1234-5678".into(), ..common::t16000m() }];
+    assert!(!Settings::default().takes_part(&present[0]));
+    let mut s = loaded();
+    // Automatic: every Thrustmaster controller, not another vendor's.
+    assert_eq!(present.iter().map(|device| s.takes_part(device)).collect::<Vec<_>>(), [true, true, false]);
+    s.set_automatic(false, &["t16000m".to_string(), "twcs".to_string()]);
+    assert_eq!((s.draft.as_ref().unwrap().devices.clone(), message(&s).0), (vec!["t16000m".to_string(), "twcs".to_string()], "Unsaved changes."));
+    // Untick the throttle, tick the other vendor's stick.
+    s.toggle_device(&present, "twcs");
+    s.toggle_device(&present, "1234-5678");
+    assert_eq!(s.draft.as_ref().unwrap().devices, ["t16000m", "1234-5678"]);
+    s.set_automatic(true, &[]);
+    assert!(s.draft.as_ref().unwrap().devices.is_empty());
+    // From automatic, a tick lists every controller that was taking part, changed by that one.
+    s.toggle_device(&present, "t16000m");
+    assert_eq!(s.draft.as_ref().unwrap().devices, ["twcs"]);
+}

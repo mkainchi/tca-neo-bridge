@@ -1,4 +1,5 @@
 //! The one-screen shell: header with status pills, launch warnings, the rail, the page, and the save bar.
+pub mod controllers;
 pub mod live;
 pub mod mapping;
 pub mod profiles;
@@ -39,6 +40,13 @@ pub fn icon(page: Page) -> &'static [Mark] {
             Circle((10.0, 10.0), 2.5),
         ],
         Page::Helpers => &[Line(&[(4.0, 5.0), (16.0, 5.0)]), Line(&[(4.0, 10.0), (16.0, 10.0)]), Line(&[(4.0, 15.0), (16.0, 15.0)]), Line(&[(7.0, 3.0), (7.0, 7.0)]), Line(&[(13.0, 8.0), (13.0, 12.0)]), Line(&[(9.0, 13.0), (9.0, 17.0)])],
+        Page::Controllers => &[
+            Line(&[(6.0, 6.0), (14.0, 6.0), (17.0, 8.0), (18.5, 12.0), (17.5, 14.5), (14.5, 14.5), (12.5, 12.5), (7.5, 12.5), (5.5, 14.5), (2.5, 14.5), (1.5, 12.0), (3.0, 8.0), (6.0, 6.0)]),
+            Line(&[(6.0, 8.5), (6.0, 11.5)]),
+            Line(&[(4.5, 10.0), (7.5, 10.0)]),
+            Circle((13.5, 9.5), 0.6),
+            Circle((15.5, 11.0), 0.6),
+        ],
         Page::Live => &[Line(&[(2.0, 10.0), (5.0, 10.0), (7.0, 5.0), (10.0, 15.0), (12.0, 9.0), (14.0, 12.0), (18.0, 12.0)])],
     }
 }
@@ -99,6 +107,15 @@ pub fn pill(ui: &mut Ui, text: &str, colours: (Color32, Color32, Color32, Color3
     painter.galley(Pos2::new(rect.left() + 24.0, rect.center().y - galley.size().y / 2.0), galley, ink);
 }
 
+/// A small amber tag beside the title: this line is not the tested one.
+fn badge(ui: &mut Ui, text: &str) {
+    let galley = ui.painter().layout_no_wrap(text.to_uppercase(), egui::FontId::monospace(10.0), theme::WARN_INK);
+    let (rect, response) = ui.allocate_exact_size(galley.size() + Vec2::new(12.0, 6.0), Sense::hover());
+    response.widget_info(|| WidgetInfo::labeled(Role::Label, true, text));
+    ui.painter().rect(rect, CornerRadius::same(3), tint(theme::WARN, 0.12), Stroke::new(1.0, tint(theme::WARN, 0.6)), egui::StrokeKind::Inside);
+    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, theme::WARN_INK);
+}
+
 /// The daemon's own pill is tinted while it emulates or changes state.
 fn status_colours(tone: Tone) -> (Color32, Color32, Color32, Color32) {
     match tone {
@@ -128,6 +145,7 @@ fn header(ui: &mut Ui, state: &mut State, compact: bool) -> Vec<Request> {
             ui.painter().rect(rect, CornerRadius::same(theme::RADIUS), tint(theme::ACCENT, 0.08), Stroke::new(1.0, tint(theme::ACCENT, 0.5)), egui::StrokeKind::Inside);
             draw(ui.painter(), Rect::from_center_size(rect.center(), Vec2::splat(20.0)), 24.0, BRAND, Stroke::new(1.8, theme::ACCENT));
             ui.label(RichText::new("ANY-TM-HOTAS BRIDGE").text_style(theme::h1()).color(theme::WHITE).strong());
+            badge(ui, "Experimental");
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 profiles::print(ui, state);
@@ -213,7 +231,7 @@ fn rail(ui: &mut Ui, state: &mut State, compact: bool) -> Vec<Request> {
             if rail_item(ui, page, state.page == page, compact) {
                 requests.extend(state.show(page));
             }
-            if matches!(page, Page::Mapping | Page::Helpers) {
+            if matches!(page, Page::Mapping | Page::Controllers) {
                 ui.add_space(6.0);
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
                 ui.painter().hline(rect.x_range().shrink(4.0), rect.center().y, Stroke::new(1.0, theme::LINE));
@@ -315,6 +333,7 @@ fn page(ui: &mut Ui, state: &mut State, compact: bool) -> Vec<Request> {
             ui.add_space(12.0);
             match (state.page, state.saved.clone()) {
                 (Page::Mapping, Some(saved)) => requests.extend(mapping::page(ui, &saved, &mut state.map, compact)),
+                (Page::Controllers, Some(_)) => requests.extend(controllers::page(ui, state)),
                 (page, Some(_)) if page.settings() => requests.extend(settings::page(ui, state, compact)),
                 (Page::Live, Some(_)) => live::page(ui, state),
                 _ => {
