@@ -18,18 +18,19 @@ if (-not $Version) {
 $registry = Join-Path $env:USERPROFILE '.cargo\registry\src'
 $env:RUSTFLAGS = "--remap-path-prefix=$registry=crates --remap-path-prefix=$root=tca-neo-bridge --remap-path-prefix=$env:USERPROFILE=~"
 try {
-    cargo build --release --quiet --manifest-path (Join-Path $root 'daemon\Cargo.toml'); if ($LASTEXITCODE) { throw 'daemon build failed' }
+    cargo build --release --quiet --manifest-path (Join-Path $root 'Cargo.toml') -p neo-daemon -p neo-config; if ($LASTEXITCODE) { throw 'build failed' }
 } finally {
     Remove-Item Env:\RUSTFLAGS
 }
+& (Join-Path $PSScriptRoot 'third-party-licenses.ps1')
 & (Join-Path $root 'driver\build.ps1') -DriverVersion "$Version.0"
 
 $name = "tca-neo-bridge-$Version-x64"
 $stage = Join-Path $root "dist\$name"
 Remove-Item -Recurse -Force $stage, "$stage.zip" -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force (Join-Path $stage 'driver') | Out-Null
-Copy-Item (Join-Path $root 'daemon\target\release\neo-daemon.exe') $stage
-foreach ($file in 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'SECURITY.md') { Copy-Item (Join-Path $root $file) $stage }
+foreach ($exe in 'neo-daemon.exe', 'neo-config.exe') { Copy-Item (Join-Path $root "target\release\$exe") $stage }
+foreach ($file in 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_LICENSES.md', 'SECURITY.md') { Copy-Item (Join-Path $root $file) $stage }
 $package = Join-Path $root 'driver\out\package'
 foreach ($file in 'neohid.dll', 'neohid.inf', 'neohid.cat') { Copy-Item (Join-Path $package $file) (Join-Path $stage 'driver') }
 Copy-Item (Join-Path $root 'driver\LICENSE-MS-PL.txt') (Join-Path $stage 'driver')
@@ -38,7 +39,7 @@ Get-FileHash (Join-Path $stage 'driver\neohid.*') -Algorithm SHA256 |
     ForEach-Object { '{0}  {1}' -f $_.Hash.ToLowerInvariant(), (Split-Path $_.Path -Leaf) } |
     Set-Content (Join-Path $stage 'driver\SHA256SUMS') -Encoding ASCII
 
-$expected = @('LICENSE', 'README.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md', 'neo-daemon.exe',
+$expected = @('LICENSE', 'README.md', 'SECURITY.md', 'THIRD_PARTY_LICENSES.md', 'THIRD_PARTY_NOTICES.md', 'neo-config.exe', 'neo-daemon.exe',
     'driver\LICENSE-MS-PL.txt', 'driver\SHA256SUMS', 'driver\install-driver.ps1', 'driver\neohid.cat',
     'driver\neohid.dll', 'driver\neohid.inf', 'driver\uninstall-driver.ps1') | Sort-Object
 $actual = Get-ChildItem $stage -Recurse -File | ForEach-Object { $_.FullName.Substring($stage.Length + 1) } | Sort-Object

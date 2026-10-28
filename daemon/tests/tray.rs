@@ -1,13 +1,15 @@
 mod common;
 use common::*;
 use neo_daemon::app::{self, Apis, Options, SystemApi};
+use neo_daemon::config_app::{self, ConfigApp, ConfigAppApi, Launched};
 use neo_daemon::emulation::Source;
 use neo_daemon::ffi::{self, HANDLE, HWND, MSG, NOTIFYICONDATAW, PCWSTR, POINT, WNDCLASSEXW};
 use neo_daemon::shared::Status;
 use neo_daemon::tray::{self, UiApi, ID_CONFIGURE, ID_QUIT, ID_START, ID_STOP, WM_COMMAND, WM_STATUS, WM_TRAY};
 use std::collections::VecDeque;
 use std::ffi::c_void;
-use std::path::PathBuf;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -24,7 +26,6 @@ struct Ui {
     icon_size: i32,
     menu: Vec<(u32, String)>,
     tracked: bool,
-    opened: Vec<String>,
     posted: Vec<u32>,
     quits: usize,
     destroyed: usize,
@@ -33,6 +34,21 @@ struct Ui {
     error: u32,
     random: i32,
     closed: usize,
+    /// Configuration app fakes: events (name, manual reset), signalled handles, jobs, launches and waits.
+    events: Vec<(String, i32)>,
+    events_fail: bool,
+    set_events: Vec<HANDLE>,
+    jobs: usize,
+    job_limits: u32,
+    assigned: Vec<(HANDLE, HANDLE)>,
+    allowed: Vec<u32>,
+    waits: Vec<(HANDLE, u32)>,
+    app_alive: bool,
+    app_closed: Vec<HANDLE>,
+    spawned: Vec<String>,
+    spawn_fails: bool,
+    stdin: String,
+    stdin_fails: bool,
 }
 
 static UI: LazyLock<Mutex<Ui>> = LazyLock::new(Default::default);
@@ -163,11 +179,6 @@ unsafe extern "system" fn notify_icon(message: u32, data: *const NOTIFYICONDATAW
     u.icons.push((message, d.uFlags, wide_string(d.szTip.as_ptr()), wide_string(d.szInfo.as_ptr()), d.hIcon));
     1
 }
-unsafe extern "system" fn shell_execute(_: HWND, verb: PCWSTR, file: PCWSTR, _: PCWSTR, _: PCWSTR, _: i32) -> HANDLE {
-    assert_eq!(wide_string(verb), "open");
-    ui().opened.push(wide_string(file));
-    33
-}
 unsafe extern "system" fn module_handle(_: PCWSTR) -> HANDLE {
     1
 }
@@ -210,9 +221,76 @@ fn ui_api() -> UiApi {
         destroy_icon,
         register_message,
         notify_icon,
-        shell_execute,
         module_handle,
     }
+}
+
+unsafe extern "system" fn create_event(_: *const c_void, manual: ffi::BOOL, initial: ffi::BOOL, name: PCWSTR) -> HANDLE {
+    assert_eq!(initial, 0);
+    let mut u = ui();
+    u.events.push((wide_string(name), manual));
+    if u.events_fail { 0 } else { 60 + u.events.len() as HANDLE }
+}
+unsafe extern "system" fn set_event(event: HANDLE) -> ffi::BOOL {
+    ui().set_events.push(event);
+    1
+}
+unsafe extern "system" fn create_job(_: *const c_void, name: PCWSTR) -> HANDLE {
+    assert!(name.is_null());
+    ui().jobs += 1;
+    71
+}
+unsafe extern "system" fn set_job(job: HANDLE, class: u32, info: *const c_void, length: u32) -> ffi::BOOL {
+    assert_eq!((job, class, length as usize), (71, 9, std::mem::size_of::<ffi::JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()));
+    ui().job_limits = (*info.cast::<ffi::JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()).BasicLimitInformation.LimitFlags;
+    1
+}
+unsafe extern "system" fn assign(job: HANDLE, process: HANDLE) -> ffi::BOOL {
+    ui().assigned.push((job, process));
+    1
+}
+unsafe extern "system" fn allow_foreground(pid: u32) -> ffi::BOOL {
+    ui().allowed.push(pid);
+    1
+}
+unsafe extern "system" fn wait_app(handle: HANDLE, milliseconds: u32) -> u32 {
+    let mut u = ui();
+    u.waits.push((handle, milliseconds));
+    if u.app_alive { ffi::WAIT_TIMEOUT } else { ffi::WAIT_OBJECT_0 }
+}
+unsafe extern "system" fn close_app_handle(handle: HANDLE) -> ffi::BOOL {
+    ui().app_closed.push(handle);
+    1
+}
+
+fn config_app_api() -> ConfigAppApi {
+    ConfigAppApi { create_event, set_event, create_job, set_job, assign, allow_foreground, wait: wait_app, close: close_app_handle }
+}
+
+struct AppInput;
+
+impl Write for AppInput {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let mut u = ui();
+        if u.stdin_fails {
+            return Err(io::ErrorKind::BrokenPipe.into());
+        }
+        u.stdin.push_str(std::str::from_utf8(bytes).unwrap());
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn fake_spawn(exe: &Path) -> io::Result<(Launched, Box<dyn Write + Send>)> {
+    let mut u = ui();
+    u.spawned.push(exe.file_name().unwrap().to_string_lossy().into_owned());
+    if u.spawn_fails {
+        return Err(io::ErrorKind::NotFound.into());
+    }
+    u.app_alive = true;
+    Ok((Launched { process: 77, pid: 4242, child: None }, Box::new(AppInput)))
 }
 
 fn system() -> SystemApi {
@@ -232,6 +310,8 @@ fn apis() -> Apis {
         device: device_api(),
         ui: ui_api(),
         driver: driver_api(),
+        config_app: config_app_api(),
+        spawn: fake_spawn,
         runner: neo_daemon::hidhide::real_runner,
         pnputil: fake_pnputil,
         launch: fake_launch,
@@ -273,15 +353,8 @@ fn options_parse_and_reject() {
         assert_eq!(app::options(&args(bad), "dflt".into()).unwrap_err(), app::USAGE);
     }
     assert!(app::self_test());
-    let defaults = neo_daemon::config::defaults();
-    let mut invalid = defaults.clone();
-    invalid.version = 9;
-    assert!(!app::assets_ok(&invalid, "app.js style.css", "x", "y"));
-    assert!(!app::assets_ok(&defaults, "style.css", "x", "y"));
-    assert!(!app::assets_ok(&defaults, "app.js", "x", "y"));
-    assert!(!app::assets_ok(&defaults, "app.js style.css", "", "y"));
-    assert!(!app::assets_ok(&defaults, "app.js style.css", "x", ""));
-    let _ = (SystemApi::real(), UiApi::real(), Apis::real());
+
+    let _ = (SystemApi::real(), UiApi::real(), Apis::real(), ConfigAppApi::real());
 }
 
 #[test]
@@ -378,8 +451,12 @@ fn tray_session_start_configure_menu_stop_and_quit() {
     // Run the loop until the scripted messages are exhausted (GetMessage then returns 0).
     assert_eq!(app::run(&args(&["--data", data.to_str().unwrap(), "--source", "validation"]), apis()), 0);
     let u = ui();
-    assert_eq!(u.opened.len(), 1);
-    assert!(u.opened[0].starts_with("http://127.0.0.1:") && u.opened[0].ends_with(&"ab".repeat(24)));
+    // Double-click starts the configuration app with the port and token on its input, never on a command line.
+    assert_eq!(u.spawned, ["neo-config.exe"]);
+    assert!(u.stdin.ends_with(&format!(" {}\n", "ab".repeat(24))));
+    // Quit asks the app to close, waits for it, then ends its job.
+    assert_eq!(u.set_events, [62]);
+    assert!(u.waits.contains(&(77, config_app::QUIT_WAIT_MS)) && u.app_closed.contains(&71));
     assert_eq!(u.icons.iter().filter(|i| i.0 == 0).count(), 2);
     assert!(u.defaults >= 1);
     assert!(u.posted.contains(&WM_STATUS));
@@ -477,7 +554,8 @@ fn installed_tray(source: Source) -> std::sync::Arc<neo_daemon::shared::Shared> 
         post_message(42, WM_STATUS, 0, 0);
     });
     let driver = neo_daemon::driver::DriverManager::new(driver_api(), fake_pnputil(), script_dir.join("install-driver.ps1"), script_dir.join("log.txt"), driver_notify);
-    let mut t = tray::Tray { api: ui_api(), hwnd: 42, icons: tray::IconSet::load(ui_api(), 1), taskbar_created: 0xc123, controller, server, driver, shown: None, added: false };
+    let config_app = ConfigApp::new(config_app_api(), PathBuf::from(config_app::EXE), fake_spawn);
+    let mut t = tray::Tray { api: ui_api(), hwnd: 42, icons: tray::IconSet::load(ui_api(), 1), taskbar_created: 0xc123, controller, server, driver, config_app, shown: None, added: false };
     t.add();
     tray::TRAY.with(|slot| *slot.borrow_mut() = Some(t));
     shared
@@ -518,7 +596,7 @@ fn menu_commands_errors_balloons_and_busy_quit() {
     // Context-menu key → Configure (does not destroy).
     ui().chosen = [ID_CONFIGURE as i32].into();
     send(WM_TRAY, 0, lparam(tray::WM_CONTEXTMENU));
-    assert_eq!(ui().opened.len(), 1);
+    assert_eq!(ui().spawned.len(), 1);
     // Menu dismissed.
     send(WM_TRAY, 0, lparam(tray::WM_RBUTTONUP));
     // Stop via WM_COMMAND.
@@ -666,4 +744,69 @@ fn icon_loading_uses_windows_small_icon_dimensions_at_common_scales() {
         assert_eq!(ui().released_icons, [102, 103, 104, 105]);
         ui().released_icons.clear();
     }
+}
+
+#[test]
+fn configure_starts_the_app_once_then_brings_it_forward() {
+    let _g = reset();
+    let _shared = installed_tray(Source::Validation);
+    let port = tray::TRAY.with(|t| t.borrow().as_ref().unwrap().server.port);
+    assert_eq!(ui().events, [(config_app::SHOW_EVENT.to_string(), 0), (config_app::QUIT_EVENT.to_string(), 1)]);
+    send(WM_TRAY, 0, lparam(tray::WM_LBUTTONDBLCLK));
+    {
+        let u = ui();
+        assert_eq!((u.spawned.len(), u.stdin.as_str(), u.jobs, u.job_limits), (1, format!("{port} t\n").as_str(), 1, 0x2000));
+        assert_eq!(u.assigned, [(71, 77)]);
+    }
+    // Open: the daemon passes on its foreground right, then signals the app instead of starting another.
+    send(WM_COMMAND, ID_CONFIGURE, 0);
+    {
+        let u = ui();
+        assert_eq!((u.spawned.len(), u.allowed.as_slice(), u.set_events.as_slice()), (1, &[4242][..], &[61][..]));
+    }
+    // Closed by the user: the next Configure… starts it again, in the same job.
+    ui().app_alive = false;
+    send(WM_COMMAND, ID_CONFIGURE, 0);
+    {
+        let u = ui();
+        assert_eq!((u.spawned.len(), u.jobs, u.assigned.len()), (2, 1, 2));
+    }
+    // It cannot start, or cannot be handed the token: a notice says how to fix it.
+    ui().app_alive = false;
+    ui().spawn_fails = true;
+    send(WM_COMMAND, ID_CONFIGURE, 0);
+    ui().spawn_fails = false;
+    ui().stdin_fails = true;
+    send(WM_COMMAND, ID_CONFIGURE, 0);
+    {
+        let u = ui();
+        let notices: Vec<&String> = u.icons.iter().map(|icon| &icon.3).filter(|info| info.contains("neo-config.exe is missing")).collect();
+        assert_eq!(notices.len(), 2);
+    }
+    tray::TRAY.with(|t| t.borrow_mut().take());
+    let u = ui();
+    assert_eq!(u.set_events.last(), Some(&62));
+    assert_eq!(u.app_closed, [71, 61, 62]);
+}
+
+#[test]
+fn config_app_without_events_or_launches_closes_nothing_extra() {
+    let _g = reset();
+    ui().events_fail = true;
+    let mut app = ConfigApp::new(config_app_api(), PathBuf::from(config_app::EXE), fake_spawn);
+    app.close();
+    drop(app);
+    let u = ui();
+    assert!(u.app_closed.is_empty() && u.set_events.is_empty() && u.waits.is_empty());
+}
+
+#[test]
+fn real_spawn_pipes_standard_input() {
+    assert_eq!(config_app::spawn(Path::new(r"C:\no\such\neo-config.exe")).err().unwrap().kind(), io::ErrorKind::NotFound);
+    let cmd = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join(r"System32\cmd.exe");
+    let (launched, mut input) = config_app::spawn(&cmd).unwrap();
+    assert!(launched.process != 0 && launched.pid != 0);
+    input.write_all(b"exit\n").unwrap();
+    drop(input);
+    assert!(launched.child.unwrap().wait().unwrap().success());
 }

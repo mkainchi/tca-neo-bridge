@@ -1,11 +1,12 @@
 //! Entry point: single instance, profile, configuration server, emulation controller and tray loop.
 use crate::config;
+use crate::config_app::{self, ConfigApp, ConfigAppApi};
 use crate::device::DeviceApi;
 use crate::driver::{DriverApi, DriverManager};
 use crate::emulation::{Controller, Deps, Notify, Source};
 use crate::ffi::{self, HANDLE, MSG, WNDCLASSEXW};
 use crate::hidhide::{self, Hiding, Runner};
-use crate::http::{self, Server};
+use crate::http::Server;
 use crate::protocol;
 use crate::shared::Shared;
 use crate::tca::HidApi;
@@ -38,6 +39,9 @@ pub struct Apis {
     pub device: DeviceApi,
     pub ui: UiApi,
     pub driver: DriverApi,
+    pub config_app: ConfigAppApi,
+    /// Starts `neo-config.exe` with a piped standard input.
+    pub spawn: config_app::Spawn,
     pub runner: fn() -> Runner,
     pub pnputil: fn() -> Runner,
     /// Runs tasklist and reg for the launch-order warnings.
@@ -59,6 +63,8 @@ impl Apis {
             device: DeviceApi::real(),
             ui: UiApi::real(),
             driver: DriverApi::real(),
+            config_app: ConfigAppApi::real(),
+            spawn: config_app::spawn,
             runner: hidhide::real_runner,
             pnputil: pnputil_runner,
             launch: launch_runner,
@@ -118,14 +124,9 @@ pub fn options(args: &[String], default_data: PathBuf) -> Result<Options, String
     Ok(result)
 }
 
-/// Page assets reference each other and the profile validates.
-pub fn assets_ok(profile: &config::Config, index: &str, script: &str, style: &str) -> bool {
-    config::validate(profile).is_ok() && index.contains("app.js") && index.contains("style.css") && !script.is_empty() && !style.is_empty()
-}
-
-/// Embedded page and defaults are consistent (used by the coverage self-test of the real binary).
+/// The built-in defaults validate (used by the coverage self-test of the real binary).
 pub fn self_test() -> bool {
-    assets_ok(&config::defaults(), http::INDEX, http::SCRIPT, http::STYLE)
+    config::validate(&config::defaults()).is_ok()
 }
 
 pub fn token(api: &SystemApi) -> Option<String> {
@@ -241,6 +242,7 @@ fn owned(options: Options, apis: &Apis, exe_path: &Path) -> i32 {
                 options.data.join("driver-install.log"),
                 driver_notify,
             ),
+            config_app: ConfigApp::new(apis.config_app, exe_path.with_file_name(config_app::EXE), apis.spawn),
             shown: None,
             added: false,
         };

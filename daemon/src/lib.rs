@@ -1,11 +1,12 @@
 //! TCA-NEO bridge daemon: TCA Sidestick + Quadrant → virtual T.Flight Hotas NEO (driver/neohid).
 pub mod app;
 pub mod config;
+pub mod config_app;
 pub mod device;
 pub mod driver;
 pub mod headtrack;
 pub mod emulation;
-pub mod ffi;
+pub use neo_common::ffi;
 pub mod hidhide;
 pub mod launch;
 pub mod http;

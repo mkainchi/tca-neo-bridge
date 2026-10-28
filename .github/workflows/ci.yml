@@ -19,11 +19,6 @@ jobs:
           rustup component add clippy llvm-tools-preview
           rustup toolchain install nightly --profile minimal --component llvm-tools-preview
           cargo install cargo-llvm-cov --locked
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-      - name: Page test dependencies
-        run: npm ci
       - name: Lint and 100% coverage gates
         shell: pwsh
         run: ./scripts/check.ps1

@@ -1,8 +1,12 @@
 # Build output
-daemon/target/
+/target/
 driver/out/
 driver/descriptor.h
 dist/
+# Snapshot test failures (kittest writes these beside the expected images)
+config-app/tests/snapshots/*.diff.png
+config-app/tests/snapshots/*.new.png
+config-app/tests/snapshots/*.old.png
 
 # Tooling
 node_modules/
