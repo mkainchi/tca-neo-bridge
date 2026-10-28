@@ -216,3 +216,16 @@ fn the_window_state_applies_mapping_replies() {
     state.apply(live(&["tca-stick/b9", "tca-stick/b10"]), 0.0);
     assert_eq!((state.map.selected.as_deref(), state.map.emulating), (Some("tca-stick/b10"), false));
 }
+
+#[test]
+fn the_camera_hat_saves_only_a_new_choice() {
+    use neo_config::mapping::Controllers;
+    let mut map = with(Controllers { present: vec![t16000m(), common::twcs()], active: vec!["t16000m".into(), "twcs".into()] });
+    let saved = view();
+    // The stick's hat drives the camera already (the first with a hat): nothing to save.
+    assert_eq!(map.set_camera_hat(&saved, "t16000m"), None);
+    let Some(Request::SetHat(chosen)) = map.set_camera_hat(&saved, "twcs") else { panic!("no request") };
+    assert_eq!(chosen.camera_hat.as_deref(), Some("twcs"));
+    // One save at a time.
+    assert_eq!(map.set_camera_hat(&saved, "twcs"), None);
+}

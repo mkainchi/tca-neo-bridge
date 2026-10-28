@@ -232,7 +232,9 @@ impl State {
                 // Only the camera hat's presses ramp the camera.
                 let camera = self.saved.as_ref().filter(|saved| saved.hat == HatMode::Camera).and_then(|saved| self.map.controllers.camera(saved)).map(str::to_string);
                 self.map.press(self.saved.as_ref(), &live.pressed, self.page == Page::Mapping);
-                return self.settings.press(&self.map.controllers, &live.pressed, &fresh, camera.as_deref(), now);
+                let mut requests = self.settings.detect(&live.axes, &self.map.controllers);
+                requests.extend(self.settings.press(&self.map.controllers, &live.pressed, &fresh, camera.as_deref(), now));
+                return requests;
             }
             Reply::Recorded { config, running, log } => {
                 self.mappings(&config);
@@ -288,13 +290,12 @@ impl State {
 
     /// The controllers taking part changed: the window follows their set, with its saved mapping or its default.
     fn set_changed(&mut self, devices: neo_common::api::Devices) {
-        let Some(saved) = self.saved.as_ref() else { return };
+        // The saved settings and the defaults arrive together with the profile.
+        let (Some(saved), Some(defaults)) = (self.saved.as_ref(), self.defaults.as_ref()) else { return };
         let file = saved.compose();
         let view = View::of(&file, &devices.setup, &devices.profile);
-        if let Some(defaults) = self.defaults.as_mut() {
-            let shared = neo_common::config::Config { setups: Default::default(), ..defaults.compose() };
-            *defaults = View { setups: file.setups.clone(), devices: file.devices.clone(), ..View::of(&shared, &devices.setup, &devices.default) };
-        }
+        let shared = neo_common::config::Config { setups: Default::default(), ..defaults.compose() };
+        self.defaults = Some(View { setups: file.setups.clone(), devices: file.devices.clone(), ..View::of(&shared, &devices.setup, &devices.default) });
         self.map.controllers = Controllers { present: devices.devices, active: devices.active };
         self.map.deselect();
         self.default_profile = Some(devices.default);

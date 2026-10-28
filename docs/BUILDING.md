@@ -70,7 +70,7 @@ No coverage-exclusion attributes are used. All Win32 calls go through tables of 
 powershell -ExecutionPolicy Bypass -File scripts\package.ps1          # version from daemon\Cargo.toml
 ```
 
-This produces `dist\tca-neo-bridge-<version>-x64.zip` and its `.sha256`. The zip contains `neo-daemon.exe`, `neo-config.exe`, the `driver\` folder (DLL, INF, unsigned catalog, `SHA256SUMS`, install/uninstall scripts, MS-PL licence), the README, the licence, the notices, `THIRD_PARTY_LICENSES.md` and SECURITY.md. The script checks the content against an explicit allowlist.
+This produces `dist\any-tm-hotas-experimental-bridge-<version>-x64.zip` and its `.sha256`. The zip contains `neo-daemon.exe`, `neo-config.exe`, the `driver\` folder (DLL, INF, unsigned catalog, `SHA256SUMS`, install/uninstall scripts, MS-PL licence), the README, the licence, the notices, `THIRD_PARTY_LICENSES.md` and SECURITY.md. The script checks the content against an explicit allowlist.
 
 ## Continuous integration
 

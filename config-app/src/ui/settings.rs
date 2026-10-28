@@ -3,14 +3,14 @@
 use super::widgets::{self, bar, card, cap, help, live_chip, mono, number, panel, panel_head, seg, slider, state as chip_state, toggle, Kind as Button};
 use crate::mapping::{self, Controllers};
 use crate::previews::{self, axis_value, degrees, gestures, head_camera, signed, throttle_out, zone, Gesture, Tone, RAMP_SPAN_MS};
-use crate::settings::{Axis, Field, Kind, Settings, PRESS_SPAN};
+use crate::settings::{Axis, Bind, Field, Kind, Settings, PRESS_SPAN};
 use crate::state::{Page, State};
 use crate::theme::{self, tint};
 use crate::worker::Request;
 use eframe::egui::{self, epaint::PathShape, Align, Align2, Color32, CornerRadius, Layout, Pos2, Rect, RichText, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2};
 use neo_common::api::Monitor;
 use crate::view::View;
-use neo_common::config::{HatMode, ThrottleMode, YawSource};
+use neo_common::config::{Binding, HatMode, ThrottleMode, YawSource};
 use neo_common::maths::shape;
 
 /// The amber of the deadzone band, the brake hatch and the long-press marker.
@@ -332,7 +332,7 @@ fn axes(ui: &mut Ui, full: Rect, s: &mut Settings, inputs: &Inputs, defaults: &V
                 bar(ui, out, 8.0, theme::ACCENT, theme::SUNK);
             });
         }
-        legend(ui, &[("TCA raw", RAW), ("Sent to NEO", theme::ACCENT)]);
+        legend(ui, &[("Raw input", RAW), ("Sent to NEO", theme::ACCENT)]);
         divider(ui);
         ui.label(cap("Yaw source \u{b7} NEO Rz"));
         let sources = [YawSource::Twist, YawSource::Off, YawSource::LeverDifferential];
@@ -341,29 +341,101 @@ fn axes(ui: &mut Ui, full: Rect, s: &mut Settings, inputs: &Inputs, defaults: &V
             requests.extend(s.set_yaw_source(sources[index]));
         }
         ui.label(help(match config.yaw_source {
-            YawSource::Twist => "The sidestick twist steers the rudder, through the yaw curve.",
+            YawSource::Twist => "The bound yaw axis (the twist on most sticks) steers the rudder, through the yaw curve.",
             YawSource::Off => "No yaw input: useful if the twist is too easy to knock in combat.",
-            YawSource::LeverDifferential => "Pushing one quadrant lever ahead of the other yaws towards the back lever, through the yaw curve. The throttle follows the average of both levers.",
+            YawSource::LeverDifferential => "Pushing one split lever ahead of the other yaws towards the back lever, through the yaw curve. The throttle follows the average of both levers.",
         }));
         divider(ui);
-        ui.label(cap("Invert"));
-        let inverted = |binding: &Option<neo_common::config::Binding>| binding.as_ref().is_some_and(|binding| binding.invert);
-        let bindings = &config.bindings;
-        grid(ui, vec![("Roll", inverted(&bindings.roll)), ("Pitch", inverted(&bindings.pitch)), ("Yaw", inverted(&bindings.yaw))], 3, 36.0, |ui, (title, on)| {
-            if toggle(ui, on, title, false, ui.available_width()) {
-                requests.extend(s.edit("Unsaved changes.", |config| {
-                    let binding = match title {
-                        "Roll" => &mut config.bindings.roll,
-                        "Pitch" => &mut config.bindings.pitch,
-                        _ => &mut config.bindings.yaw,
-                    };
-                    if let Some(binding) = binding.as_mut() {
-                        binding.invert = !on;
-                    }
-                }));
-            }
-        });
+        ui.label(cap("Axis sources"));
+        for target in Bind::FLIGHT {
+            let (neo, action) = target.neo();
+            let binding = match target {
+                Bind::Roll => config.bindings.roll.as_ref(),
+                Bind::Pitch => config.bindings.pitch.as_ref(),
+                _ => config.bindings.yaw.as_ref(),
+            };
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.allocate_ui_with_layout(Vec2::new(44.0, 24.0), Layout::left_to_right(Align::Center), |ui| {
+                    ui.set_min_width(44.0);
+                    ui.label(RichText::new(action).size(12.0).color(theme::INK));
+                });
+                let width = (ui.available_width() - 160.0).max(80.0);
+                let what = action.to_lowercase();
+                if let Some(choice) = axis_picker(ui, &format!("{action} source"), binding, inputs.controllers, &format!("No source (NEO {neo} rests)"), width) {
+                    requests.extend(s.bind(target, choice));
+                }
+                if invert_box(ui, &format!("Invert {what}"), binding.is_some_and(|binding| binding.invert), binding.is_some()) {
+                    requests.extend(s.invert(target, !binding.is_some_and(|binding| binding.invert)));
+                }
+                detect_button(ui, s, target, &what);
+            });
+        }
+        ui.label(help(&s.hint));
     });
+}
+
+/// A controller-axis picker: `empty` (no source) and every axis of the controllers taking part, listed under the
+/// button while it is open. Some(choice) when one is picked; Escape or a click elsewhere closes the list.
+fn axis_picker(ui: &mut Ui, label: &str, current: Option<&Binding>, controllers: &Controllers, empty: &str, width: f32) -> Option<Option<Binding>> {
+    let name = |binding: &Binding| format!("{} \u{b7} {}", controllers.name(&binding.device), binding.axis);
+    let id = ui.make_persistent_id(("axis picker", label));
+    let mut open = ui.ctx().data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
+    // The button leads with the axis, so a narrow picker still shows which one is bound.
+    let text = current.map_or(empty.to_string(), |binding| format!("{} \u{b7} {}", binding.axis, controllers.name(&binding.device)));
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 30.0), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, label));
+    let painter = ui.painter();
+    let border = if open || response.hovered() { theme::ACCENT } else { theme::LINE_2 };
+    painter.rect(rect, CornerRadius::same(3), theme::GROUND, Stroke::new(1.0, border), StrokeKind::Inside);
+    let mut job = egui::text::LayoutJob::single_section(text, egui::TextFormat::simple(egui::FontId::proportional(12.5), theme::INK));
+    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 34.0);
+    let galley = painter.layout_job(job);
+    painter.galley(Pos2::new(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0), galley, theme::INK);
+    let chevron = Pos2::new(rect.right() - 14.0, rect.center().y);
+    painter.line(vec![chevron + Vec2::new(-3.0, -1.5), chevron + Vec2::new(0.0, 1.5), chevron + Vec2::new(3.0, -1.5)], Stroke::new(1.6, theme::MUTED));
+    widgets::focus_ring(ui, &response, rect);
+    if response.clicked() {
+        open = !open;
+    }
+    let mut picked = None;
+    if open {
+        let ctx = ui.ctx().clone();
+        let list = egui::Area::new(id.with("list")).order(egui::Order::Foreground).fixed_pos(rect.left_bottom() + Vec2::new(0.0, 4.0)).show(&ctx, |ui| {
+            egui::Frame::new().fill(theme::PANEL).stroke(Stroke::new(1.0, theme::LINE_2)).corner_radius(theme::RADIUS).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
+                ui.set_width(rect.width() - 12.0);
+                ui.spacing_mut().item_spacing.y = 2.0;
+                if super::profiles::profile_row(ui, empty, current.is_none()) {
+                    picked = Some(None);
+                }
+                for axis in controllers.axes() {
+                    if super::profiles::profile_row(ui, &name(&axis), current.is_some_and(|current| current.same_axis(&axis))) {
+                        picked = Some(Some(axis));
+                    }
+                }
+            });
+        });
+        let inside = list.response.rect;
+        let outside = ctx.input(|input| input.pointer.any_click() && input.pointer.interact_pos().is_some_and(|pos| !inside.contains(pos) && !rect.contains(pos)));
+        open = picked.is_none() && !outside && !ctx.input(|input| input.key_pressed(egui::Key::Escape));
+    }
+    ui.ctx().data_mut(|data| data.insert_temp(id, open));
+    picked
+}
+/// A small Invert box beside a picker, named for its axis; disabled without a source.
+fn invert_box(ui: &mut Ui, label: &str, on: bool, enabled: bool) -> bool {
+    let mut value = on;
+    let response = ui.add_enabled(enabled, egui::Checkbox::new(&mut value, RichText::new("Invert").size(12.0).color(theme::SOFT)));
+    ui.ctx().accesskit_node_builder(response.id, |node| node.set_label(label));
+    value != on
+}
+
+/// Detect (or Cancel while waiting for that axis to move).
+fn detect_button(ui: &mut Ui, s: &mut Settings, target: Bind, what: &str) {
+    let text = if s.detecting == Some(target) { "Cancel" } else { "Detect" };
+    if widgets::button(ui, text, &format!("{text} {what}"), Button::Quiet, true) {
+        s.start_detect(target);
+    }
 }
 
 fn divider(ui: &mut Ui) {
@@ -420,7 +492,7 @@ fn throttle(ui: &mut Ui, full: Rect, s: &mut Settings, inputs: &Inputs, requests
     panel(ui, cols[0], |ui| {
         tone_head(ui, &format!("Throttle \u{b7} {} \u{2192} NEO throttle", if inputs.monitor.is_some() { "live" } else { "test" }), (text.clone(), previews::zone_tone(area)));
         ui.label(help(if detents {
-            "ACE COMBAT throttle: centre cruises, forward boosts, back brakes. The quadrant detents mark where each band starts."
+            "ACE COMBAT throttle: centre cruises, forward boosts, back brakes. Your throttle detents mark where each band starts."
         } else {
             "Lever travel maps straight to the NEO throttle. Mid-travel is cruise."
         }));
@@ -481,32 +553,71 @@ fn throttle(ui: &mut Ui, full: Rect, s: &mut Settings, inputs: &Inputs, requests
                 ui.label(help(&if capture { "Put the throttle in a detent, then Capture.".to_string() } else { "Start emulation to capture the lever in its detents.".to_string() }));
             });
         }
+        // The throttle axes: each with Invert and Remove, then a picker (or Detect) to add one.
+        let throttle = config.bindings.throttle.clone();
         let rest = ui.available_rect_before_wrap();
-        let foot = Rect::from_min_max(Pos2::new(rest.left(), (rest.bottom() - 104.0).max(rest.top())), rest.max);
+        let foot = Rect::from_min_max(Pos2::new(rest.left(), (rest.bottom() - 70.0 - 34.0 * (throttle.len() + 1) as f32).max(rest.top())), rest.max);
         ui.scope_builder(UiBuilder::new().max_rect(foot).layout(Layout::top_down(Align::Min)), |ui| {
-            ui.spacing_mut().item_spacing.y = 10.0;
+            ui.spacing_mut().item_spacing.y = 8.0;
             divider(ui);
             ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_max_width(ui.available_width() - 140.0);
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    ui.label(RichText::new("Throttle axes").size(12.5).color(theme::INK).strong());
-                    let names: Vec<String> = config.bindings.throttle.iter().map(|binding| inputs.controllers.binding(binding)).collect();
-                    ui.label(help(&if names.is_empty() { "No throttle axis.".to_string() } else { format!("{}. The last one moved takes over.", names.join(" or ")) }));
-                });
+                ui.label(RichText::new("Throttle axes").size(12.5).color(theme::INK).strong());
+                ui.label(help("The last one moved takes over."));
             });
-            let inverted = !config.bindings.throttle.is_empty() && config.bindings.throttle.iter().all(|binding| binding.invert);
-            if toggle(ui, inverted, "Invert throttle", false, ui.available_width()) {
-                requests.extend(s.edit("Unsaved changes.", |config| config.bindings.throttle.iter_mut().for_each(|binding| binding.invert = !inverted)));
+            if throttle.is_empty() {
+                ui.label(help("No throttle axis: the NEO throttle rests at centre."));
             }
+            for (index, binding) in throttle.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let name = inputs.controllers.binding(&Binding { invert: false, ..binding.clone() });
+                    let width = (ui.available_width() - 170.0).max(80.0);
+                    ui.allocate_ui_with_layout(Vec2::new(width, 26.0), Layout::left_to_right(Align::Center), |ui| {
+                        ui.set_min_width(width);
+                        ui.add(egui::Label::new(RichText::new(&name).size(12.0).color(theme::SOFT)).truncate());
+                    });
+                    if invert_box(ui, &format!("Invert {name}"), binding.invert, true) {
+                        requests.extend(s.invert_throttle(index, !binding.invert));
+                    }
+                    if widgets::button(ui, "Remove", &format!("Remove {name}"), Button::Quiet, true) {
+                        requests.extend(s.remove_throttle(index));
+                    }
+                });
+            }
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let width = (ui.available_width() - 80.0).max(80.0);
+                if let Some(Some(binding)) = axis_picker(ui, "Add a throttle axis", None, inputs.controllers, "Add an axis\u{2026}", width) {
+                    requests.extend(s.bind(Bind::Throttle, Some(binding)));
+                }
+                detect_button(ui, s, Bind::Throttle, "a throttle axis");
+            });
         });
-    });    panel(ui, cols[1], |ui| {
+    });
+    panel(ui, cols[1], |ui| {
         let rule = &config.split_high_g;
         tone_head(ui, "High-G from split levers", previews::lever_state(rule, inputs.levers));
         if toggle(ui, rule.enabled, "Hold NEO 5 (High-G) while one lever is forward and the other back", false, ui.available_width()) {
             requests.extend(s.set_split(!rule.enabled));
         }
-        egui::Frame::new().fill(theme::GROUND).stroke(Stroke::new(1.0, theme::LINE_2)).corner_radius(3).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+        for (index, title) in ["First lever", "Second lever"].into_iter().enumerate() {
+            let lever = s.levers[index].clone();
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.allocate_ui_with_layout(Vec2::new(84.0, 24.0), Layout::left_to_right(Align::Center), |ui| {
+                    ui.set_min_width(84.0);
+                    ui.label(RichText::new(title).size(12.0).color(theme::INK));
+                });
+                let width = (ui.available_width() - 80.0).max(80.0);
+                if let Some(choice) = axis_picker(ui, &format!("{title} axis"), lever.as_ref(), inputs.controllers, "Not set", width) {
+                    requests.extend(s.bind(Bind::Lever(index), choice));
+                }
+                detect_button(ui, s, Bind::Lever(index), &title.to_lowercase());
+            });
+        }
+        if toggle(ui, rule.reverse, "Forward is the high raw value (most non-TCA throttles)", false, ui.available_width()) {
+            requests.extend(s.set_reverse(!rule.reverse));
+        }        egui::Frame::new().fill(theme::GROUND).stroke(Stroke::new(1.0, theme::LINE_2)).corner_radius(3).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 8.0;
             match inputs.levers {
@@ -639,6 +750,20 @@ fn camera(ui: &mut Ui, full: Rect, s: &mut Settings, inputs: &Inputs, requests: 
             ),
             None => "Only the hat moves the camera.".to_string(),
         }));
+        if let Some(lever) = config.camera_lever.clone() {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.label(cap("Camera lever"));
+                let width = (ui.available_width() - 160.0).max(80.0);
+                if let Some(choice) = axis_picker(ui, "Camera lever", Some(&lever), inputs.controllers, "Not set", width) {
+                    requests.extend(s.bind(Bind::Camera, choice));
+                }
+                if invert_box(ui, "Invert the camera lever", lever.invert, true) {
+                    requests.extend(s.invert(Bind::Camera, !lever.invert));
+                }
+                detect_button(ui, s, Bind::Camera, "the camera lever");
+            });
+        }
         let camera_axes = [("Camera X", 3), ("Camera Y", 4)].map(|(title, index)| (title, inputs.monitor.map_or(0.0, |monitor| axis_value(monitor.axes[index]))));
         grid(ui, camera_axes.to_vec(), 2, 30.0, |ui, (title, value)| {
             ui.horizontal(|ui| {

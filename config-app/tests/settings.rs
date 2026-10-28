@@ -316,3 +316,96 @@ fn controllers_take_part_automatically_or_by_their_ticks() {
     s.toggle_device(&present, "t16000m");
     assert_eq!(s.draft.as_ref().unwrap().devices, ["twcs"]);
 }
+#[test]
+fn an_axis_counts_as_moved_past_half_travel() {
+    use neo_config::settings::moved;
+    use std::collections::BTreeMap;
+    let tca = tca();
+    let axes = |stick: [f64; 4], quadrant: [f64; 2]| BTreeMap::from([("tca-stick".to_string(), stick.to_vec()), ("tca-quadrant".to_string(), quadrant.to_vec())]);
+    let baseline = axes([0.0; 4], [-1.0, -1.0]);
+    assert_eq!(moved(&baseline, &axes([0.4, 0.0, 0.0, 0.0], [-1.0, -1.0]), &tca), None);
+    // The first controller in order (the quadrant), then its first moved axis.
+    assert_eq!(moved(&baseline, &axes([0.0, 0.9, 0.0, 0.0], [-1.0, 0.2]), &tca), Some(Binding::new("tca-quadrant", "right", false)));
+    assert_eq!(moved(&baseline, &axes([0.0, 0.0, -0.8, 0.0], [-1.0, -1.0]), &tca), Some(Binding::new("tca-stick", "rz", false)));
+    // A controller missing from the baseline, or an axis beyond its layout, does not count.
+    let partial = BTreeMap::from([("tca-stick".to_string(), vec![0.0])]);
+    assert_eq!(moved(&partial, &axes([0.0, 0.0, 0.0, 0.0], [1.0, 1.0]), &tca), None);
+    let extra = BTreeMap::from([("tca-stick".to_string(), vec![0.0, 0.0, 0.0, 0.0, 1.0])]);
+    assert_eq!(moved(&BTreeMap::from([("tca-stick".to_string(), vec![0.0; 5])]), &extra, &tca), None);
+}
+
+#[test]
+fn axes_are_bound_inverted_removed_and_detected() {
+    use neo_config::settings::{Bind, DETECT_HINT};
+    use std::collections::BTreeMap;
+    let mut s = loaded();
+    let draft = |s: &Settings| s.draft.clone().unwrap();
+    let pedal = Binding::new("tca-stick", "slider", false);
+    s.bind(Bind::Yaw, Some(pedal.clone()));
+    s.invert(Bind::Yaw, true);
+    assert_eq!(draft(&s).bindings.yaw, Some(Binding { invert: true, ..pedal.clone() }));
+    s.bind(Bind::Roll, None);
+    s.invert(Bind::Roll, true);
+    assert_eq!(draft(&s).bindings.roll, None);
+    s.bind(Bind::Pitch, Some(Binding::new("tca-stick", "x", false)));
+    assert_eq!(draft(&s).bindings.pitch.unwrap().axis, "x");
+    // Throttle axes: added once each, inverted and removed by position.
+    s.bind(Bind::Throttle, Some(Binding::new("tca-quadrant", "right", false)));
+    s.bind(Bind::Throttle, Some(Binding::new("tca-quadrant", "right", true)));
+    s.bind(Bind::Throttle, None);
+    assert_eq!(draft(&s).bindings.throttle.len(), 3);
+    s.invert_throttle(2, true);
+    s.remove_throttle(0);
+    assert_eq!(draft(&s).bindings.throttle.iter().map(|binding| (binding.axis.as_str(), binding.invert)).collect::<Vec<_>>(), [("left", false), ("right", true)]);
+    // The camera lever keeps its inversion when another axis is picked, and clears with None.
+    s.bind(Bind::Camera, Some(pedal.clone()));
+    s.invert(Bind::Camera, true);
+    s.bind(Bind::Camera, Some(Binding::new("tca-stick", "rz", false)));
+    assert_eq!(draft(&s).camera_lever, Some(Binding::new("tca-stick", "rz", true)));
+    s.bind(Bind::Camera, None);
+    assert_eq!(draft(&s).camera_lever, None);
+    s.set_reverse(true);
+    assert!(draft(&s).split_high_g.reverse);
+    assert_eq!((Bind::Roll.neo(), Bind::Pitch.neo(), Bind::Yaw.neo()), (("X", "Roll"), ("Y", "Pitch"), ("Rz", "Yaw")));
+    // Detect: the first sample is the baseline; the axis that then moves is bound to the target.
+    let tca = tca();
+    assert!(s.detect(&BTreeMap::new(), &tca).is_empty() && s.hint == DETECT_HINT);
+    s.start_detect(Bind::Roll);
+    assert_eq!(s.hint, "Move the axis you want, all the way, during emulation\u{2026}");
+    s.detect(&BTreeMap::new(), &tca);
+    assert_eq!(s.hint, "Start emulation from the tray icon, then move the axis.");
+    let still = BTreeMap::from([("tca-stick".to_string(), vec![0.0; 4])]);
+    s.detect(&still, &tca);
+    s.detect(&still, &tca);
+    assert_eq!(s.detecting, Some(Bind::Roll));
+    s.detect(&BTreeMap::from([("tca-stick".to_string(), vec![0.0, 0.0, 0.0, 0.9])]), &tca);
+    assert_eq!((s.detecting, s.hint.as_str(), draft(&s).bindings.roll), (None, "Detected TCA Sidestick Airbus slider. Save settings to apply.", Some(pedal)));
+    s.start_detect(Bind::Throttle);
+    s.start_detect(Bind::Throttle);
+    assert_eq!((s.detecting, s.hint.as_str()), (None, "Detection cancelled."));
+}
+
+#[test]
+fn split_levers_come_as_a_pair_with_the_throttle_inversion() {
+    use neo_config::settings::Bind;
+    let mut s = loaded();
+    assert_eq!(s.levers, [Some(Binding::new("tca-quadrant", "left", false)), Some(Binding::new("tca-quadrant", "right", false))]);
+    // One lever is no pair while split High-G is on, or at all.
+    s.bind(Bind::Lever(1), None);
+    assert!(!s.validate());
+    assert_eq!(s.error(Field::SplitForward).map(String::as_str), Some("Pick both levers for split High-G or lever yaw, or turn them off."));
+    s.set_split(false);
+    assert!(!s.validate());
+    s.bind(Bind::Lever(0), None);
+    assert!(s.validate());
+    s.set_yaw_source(YawSource::LeverDifferential);
+    assert!(!s.validate());
+    // A full pair saves, each lever reading with the inversion of the throttle axis it shares.
+    s.set_yaw_source(YawSource::Twist);
+    s.bind(Bind::Lever(0), Some(Binding::new("tca-quadrant", "left", false)));
+    s.bind(Bind::Lever(1), Some(Binding::new("tca-quadrant", "right", true)));
+    s.invert_throttle(1, true);
+    assert!(s.validate());
+    let levers = s.draft.as_ref().unwrap().split_high_g.levers.clone();
+    assert_eq!(levers, [Binding::new("tca-quadrant", "left", true), Binding::new("tca-quadrant", "right", true)]);
+}

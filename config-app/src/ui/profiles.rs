@@ -28,7 +28,7 @@ pub fn picker(ui: &mut Ui, state: &mut State) -> Rect {
 }
 
 /// One saved profile in the menu: its name, and "active" beside the active one. True when clicked.
-fn profile_row(ui: &mut Ui, name: &str, active: bool) -> bool {
+pub(super) fn profile_row(ui: &mut Ui, name: &str, active: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
     response.widget_info(|| WidgetInfo::selected(Role::Button, true, active, name));
     let fill = if response.hovered() { theme::RAISE } else { Color32::TRANSPARENT };

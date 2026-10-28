@@ -95,6 +95,12 @@ fn fill(harness: &mut Harness<'static, App>, label: &str, text: &str) {
     harness.run_ok();
 }
 
+/// Open a picker and choose one of its options.
+fn pick(harness: &mut Harness<'static, App>, picker: &str, option: &str) {
+    click(harness, picker);
+    click(harness, option);
+}
+
 /// Nudge a slider one step with the arrow keys.
 fn nudge(harness: &mut Harness<'static, App>, label: &str, key: Key) {
     harness.get_by_label(label).focus();
@@ -143,12 +149,29 @@ fn flight_axes_edit_the_draft_and_the_save_bar_saves_it() {
         click(&mut harness, label);
         assert_eq!(draft(&harness).yaw_source, source);
     }
-    for label in ["Roll", "Pitch", "Yaw"] {
+    // Axis sources: invert each, pick another axis for roll, then none.
+    for label in ["Invert roll", "Invert pitch", "Invert yaw"] {
         harness.get_by_role_and_label(Role::CheckBox, label).click();
         harness.run_ok();
     }
     let bindings = draft(&harness).bindings;
     assert!([bindings.roll, bindings.pitch, bindings.yaw].iter().all(|binding| binding.as_ref().unwrap().invert));
+    pick(&mut harness, "Roll source", "TCA Sidestick Airbus \u{b7} slider");
+    assert_eq!(draft(&harness).bindings.roll.map(|binding| binding.axis), Some("slider".to_string()));
+    pick(&mut harness, "Roll source", "No source (NEO X rests)");
+    assert_eq!(draft(&harness).bindings.roll, None);
+    // An open list closes on Escape, or on a click elsewhere, choosing nothing.
+    click(&mut harness, "Pitch source");
+    harness.key_press(Key::Escape);
+    harness.run_ok();
+    assert!(harness.query_by_label("TCA Sidestick Airbus \u{b7} rz").is_none());
+    click(&mut harness, "Pitch source");
+    click(&mut harness, "AXIS SOURCES");
+    assert!(harness.query_by_label("TCA Sidestick Airbus \u{b7} rz").is_none());
+    assert_eq!(draft(&harness).bindings.pitch.map(|binding| binding.axis), Some("y".to_string()));
+    click(&mut harness, "Detect yaw");
+    assert!(harness.query_by_label("Cancel yaw").is_some() && harness.query_by_label("Move the axis you want, all the way, during emulation\u{2026}").is_some());
+    click(&mut harness, "Cancel yaw");
     // A problem blocks saving and trying in game, and shows where it is.
     fill(&mut harness, "Curve", "500");
     click(&mut harness, "Save settings");
@@ -186,14 +209,30 @@ fn throttle_detents_levers_and_split_high_g() {
     fill(&mut harness, "Cruise band \u{b1}", "4");
     assert_eq!((draft(&harness).throttle.idle, draft(&harness).throttle.band), (0.12, 0.04));
     harness.snapshot("settings-throttle-edited-1600x900");
-    harness.get_by_role_and_label(Role::CheckBox, "Invert throttle").click();
+    // Throttle axes: invert one, remove one, add another.
+    harness.get_by_role_and_label(Role::CheckBox, "Invert TCA Quadrant Eng 1&2 left").click();
     harness.run_ok();
+    click(&mut harness, "Remove TCA Sidestick Airbus slider");
+    pick(&mut harness, "Add a throttle axis", "TCA Quadrant Eng 1&2 \u{b7} right");
+    let throttle = draft(&harness).bindings.throttle;
+    assert_eq!(throttle.iter().map(|binding| (binding.axis.as_str(), binding.invert)).collect::<Vec<_>>(), [("left", true), ("right", false)]);
+    // Without any throttle axis the NEO throttle rests, and the page says so.
+    click(&mut harness, "Remove TCA Quadrant Eng 1&2 left");
+    click(&mut harness, "Remove TCA Quadrant Eng 1&2 right");
+    assert!(harness.query_by_label("No throttle axis: the NEO throttle rests at centre.").is_some());
+    pick(&mut harness, "Add a throttle axis", "TCA Quadrant Eng 1&2 \u{b7} left");
     harness.get_by_role_and_label(Role::CheckBox, "Hold NEO 5 (High-G) while one lever is forward and the other back").click();
     harness.run_ok();
-    assert!(draft(&harness).bindings.throttle.iter().all(|binding| binding.invert) && !draft(&harness).split_high_g.enabled);
-    harness.get_by_role_and_label(Role::CheckBox, "Invert throttle").click();
+    harness.get_by_role_and_label(Role::CheckBox, "Forward is the high raw value (most non-TCA throttles)").click();
     harness.run_ok();
-    assert!(draft(&harness).bindings.throttle.iter().all(|binding| !binding.invert));
+    assert!(!draft(&harness).split_high_g.enabled && draft(&harness).split_high_g.reverse);
+    // Half a lever pair cannot be saved.
+    pick(&mut harness, "Second lever axis", "Not set");
+    click(&mut harness, "Save settings");
+    assert!(harness.query_by_label("Pick both levers for split High-G or lever yaw, or turn them off.").is_some());
+    pick(&mut harness, "Second lever axis", "TCA Quadrant Eng 1&2 \u{b7} right");
+    click(&mut harness, "Detect first lever");
+    click(&mut harness, "Cancel first lever");
     fill(&mut harness, "Forward lever at least", "80");
     nudge(&mut harness, "Other lever at most, percent", Key::ArrowRight);
     assert_eq!((draft(&harness).split_high_g.forward, draft(&harness).split_high_g.back), (0.8, 0.26));
@@ -247,6 +286,15 @@ fn camera_and_head_tracking() {
     click(&mut harness, "Camera from the hat and a lever");
     assert_eq!(draft(&harness).camera_lever.map(|lever| (lever.device, lever.axis)), Some(("tca-quadrant".to_string(), "right".to_string())));
     assert!(!draft(&harness).split_high_g.enabled);
+    harness.get_by_role_and_label(Role::CheckBox, "Invert the camera lever").click();
+    harness.run_ok();
+    pick(&mut harness, "Camera lever", "TCA Sidestick Airbus \u{b7} rz");
+    assert_eq!(draft(&harness).camera_lever, Some(neo_common::config::Binding::new("tca-stick", "rz", true)));
+    click(&mut harness, "Detect the camera lever");
+    click(&mut harness, "Cancel the camera lever");
+    pick(&mut harness, "Camera lever", "Not set");
+    assert_eq!(draft(&harness).camera_lever, None);
+    click(&mut harness, "Camera from the hat and a lever");
     click(&mut harness, "Camera from the hat");
     assert_eq!(draft(&harness).camera_lever, None);
     harness.get_by_role_and_label(Role::CheckBox, "Look around with your head: OpenTrack moves the NEO camera").click();
@@ -343,4 +391,21 @@ fn leaving_the_settings_or_closing_the_window_ends_a_preview() {
     assert!(!harness.state().state.previewing());
     drop(harness);
     assert_eq!(fake.count("/api/preview"), 4);
+}
+
+#[test]
+fn detect_binds_the_axis_that_moves() {
+    let fake = FakeApi::idle();
+    let session = json!({"source": "hotas", "hidden": true, "inputs": 2, "virtual_neo": true});
+    let axes = |slider: f64| json!({"tca-stick": [0.0, 0.0, 0.0, slider], "tca-quadrant": [-1.0, -1.0]});
+    fake.reply("/api/live", Ok(live_reply(json!({"status": "Emulating", "links": session, "axes": axes(0.0)}))));
+    let mut harness = open(&fake, WIDE, Duration::from_millis(5));
+    settle(&mut harness, |app| app.state.links.is_some());
+    click(&mut harness, "Flight axes");
+    click(&mut harness, "Detect yaw");
+    settle(&mut harness, |app| app.state.settings.baseline.is_some());
+    fake.reply("/api/live", Ok(live_reply(json!({"status": "Emulating", "links": session, "axes": axes(0.9)}))));
+    settle(&mut harness, |app| app.state.settings.detecting.is_none());
+    assert_eq!(draft(&harness).bindings.yaw.map(|binding| binding.axis), Some("slider".to_string()));
+    assert!(harness.query_by_label("Detected TCA Sidestick Airbus slider. Save settings to apply.").is_some());
 }

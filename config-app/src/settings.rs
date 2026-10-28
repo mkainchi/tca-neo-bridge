@@ -5,7 +5,7 @@ use crate::mapping::{self, Controllers};
 use crate::previews::Press;
 use crate::view::View;
 use crate::worker::Request;
-use neo_common::config::{AxisTuning, Binding, YawSource};
+use neo_common::config::{AxisTuning, Binding, Bindings, YawSource};
 use neo_common::models::{DeviceInfo, THRUSTMASTER};
 use std::collections::BTreeMap;
 
@@ -264,6 +264,60 @@ pub struct Settings {
     pub presses: Vec<(String, Press)>,
     /// When the hat was pressed, while it is held (and drives the camera).
     pub hat_since: Option<f64>,
+    /// The axis binding waiting for an axis to move, and the axes as they were when it started.
+    pub detecting: Option<Bind>,
+    pub baseline: Option<BTreeMap<String, Vec<f64>>>,
+    /// What axis detection is doing, under the axis sources.
+    pub hint: String,
+    /// The split lever pair as picked: one may be missing while the other is chosen.
+    pub levers: [Option<Binding>; 2],
+}
+
+/// Where a detected or picked axis goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bind {
+    Roll,
+    Pitch,
+    Yaw,
+    /// Added to the throttle axes.
+    Throttle,
+    /// The first or second split lever.
+    Lever(usize),
+    Camera,
+}
+
+impl Bind {
+    pub const FLIGHT: [Bind; 3] = [Bind::Roll, Bind::Pitch, Bind::Yaw];
+
+    /// The NEO axis a flight binding feeds, and what it does in game.
+    pub fn neo(self) -> (&'static str, &'static str) {
+        match self {
+            Bind::Roll => ("X", "Roll"),
+            Bind::Pitch => ("Y", "Pitch"),
+            _ => ("Rz", "Yaw"),
+        }
+    }
+
+    fn flight(self, bindings: &mut Bindings) -> &mut Option<Binding> {
+        match self {
+            Bind::Roll => &mut bindings.roll,
+            Bind::Pitch => &mut bindings.pitch,
+            _ => &mut bindings.yaw,
+        }
+    }
+}
+
+pub const DETECT_HINT: &str = "Pick the axis of your HOTAS for each NEO axis, or press Detect and move it. Check every direction in the game: untested controllers may need Invert.";
+
+/// The axis that moved past half travel since the baseline, as a binding: the first controller in order, then its
+/// first such axis. None when nothing did.
+pub fn moved(baseline: &BTreeMap<String, Vec<f64>>, axes: &BTreeMap<String, Vec<f64>>, controllers: &Controllers) -> Option<Binding> {
+    controllers.active().into_iter().find_map(|device| {
+        let now = axes.get(&device.id)?;
+        let before = baseline.get(&device.id);
+        let index = now.iter().enumerate().position(|(i, value)| (value - before.and_then(|b| b.get(i)).copied().unwrap_or(*value)).abs() > 0.5)?;
+        device.layout.axes.get(index).map(|axis| Binding::new(&device.id, &axis.name, false))
+    })
 }
 
 impl Default for Settings {
@@ -284,6 +338,10 @@ impl Default for Settings {
             capture: None,
             presses: Vec::new(),
             hat_since: None,
+            detecting: None,
+            baseline: None,
+            hint: DETECT_HINT.into(),
+            levers: [None, None],
         }
     }
 }
@@ -299,6 +357,7 @@ pub enum LeverUser {
 impl Settings {
     /// Start from a profile: the draft, its field texts and no capture.
     pub fn show(&mut self, config: View) {
+        self.levers = [0, 1].map(|index| config.split_high_g.levers.get(index).cloned());
         self.draft = Some(config);
         self.capture = None;
         self.fill();
@@ -466,9 +525,13 @@ impl Settings {
                 (Field::Cruise, v(Field::Idle) >= v(Field::Cruise) - v(Field::Band) || v(Field::Cruise) + v(Field::Band) >= v(Field::Boost), "Needs idle < cruise \u{2212} band and cruise + band < boost."),
                 (Field::SplitBack, v(Field::SplitBack) >= v(Field::SplitForward), "Must be below the forward lever threshold."),
             ];
-            for (field, wrong, text) in checks {
+            // Split High-G and lever yaw read a pair of levers: both, or neither while they are off.
+            let picked = self.levers.iter().flatten().count();
+            let lever_users = self.draft.as_ref().is_some_and(|draft| draft.split_high_g.enabled || draft.yaw_source == YawSource::LeverDifferential);
+            let pair = (Field::SplitForward, picked != 2 && (picked > 0 || lever_users), "Pick both levers for split High-G or lever yaw, or turn them off.");
+            for (field, wrong, text) in checks.into_iter().chain([pair]) {
                 if wrong {
-                    self.errors.insert(field, text.into());
+                    self.errors.entry(field).or_insert_with(|| text.into());
                 }
             }
         }
@@ -478,12 +541,90 @@ impl Settings {
         }
         let axis = self.axis;
         let values: Vec<(Field, f64)> = Field::ALL.iter().map(|field| (*field, value(&self.fields, *field).unwrap_or_default() / field.spec().3)).collect();
+        let levers = self.levers.clone();
         if let Some(config) = self.draft.as_mut() {
             for (field, value) in values {
                 field.set(config, axis, value);
             }
+            // A lever that also feeds the throttle reads with the throttle's inversion.
+            let throttle = config.bindings.throttle.clone();
+            config.split_high_g.levers = levers.into_iter().flatten().map(|lever| Binding { invert: throttle.iter().find(|binding| binding.same_axis(&lever)).map_or(lever.invert, |binding| binding.invert), ..lever }).collect();
         }
         true
+    }
+
+    /// Bind a flight axis, add a throttle axis, set a split lever or the camera lever (None clears it).
+    pub fn bind(&mut self, target: Bind, binding: Option<Binding>) -> Vec<Request> {
+        match target {
+            Bind::Lever(index) => {
+                self.levers[index] = binding;
+                let levers: Vec<Binding> = self.levers.iter().flatten().cloned().collect();
+                self.edit("Unsaved changes.", |config| config.split_high_g.levers = levers)
+            }
+            Bind::Camera => {
+                let invert = self.draft.as_ref().and_then(|draft| draft.camera_lever.as_ref()).is_some_and(|lever| lever.invert);
+                self.set_camera_lever(binding.map(|lever| Binding { invert, ..lever }))
+            }
+            Bind::Throttle => self.edit("Unsaved changes.", |config| {
+                let throttle = &mut config.bindings.throttle;
+                throttle.extend(binding.filter(|new| !throttle.iter().any(|old| old.same_axis(new))));
+            }),
+            flight => self.edit("Unsaved changes.", |config| *flight.flight(&mut config.bindings) = binding),
+        }
+    }
+
+    /// Invert a flight axis or the camera lever (nothing while it has no source).
+    pub fn invert(&mut self, target: Bind, on: bool) -> Vec<Request> {
+        self.edit("Unsaved changes.", |config| {
+            let binding = match target {
+                Bind::Camera => &mut config.camera_lever,
+                flight => flight.flight(&mut config.bindings),
+            };
+            if let Some(binding) = binding.as_mut() {
+                binding.invert = on;
+            }
+        })
+    }
+
+    pub fn invert_throttle(&mut self, index: usize, on: bool) -> Vec<Request> {
+        self.edit("Unsaved changes.", |config| config.bindings.throttle[index].invert = on)
+    }
+
+    pub fn remove_throttle(&mut self, index: usize) -> Vec<Request> {
+        self.edit("Unsaved changes.", |config| {
+            config.bindings.throttle.remove(index);
+        })
+    }
+
+    /// Most throttles other than the TCA's report forward as the high raw value.
+    pub fn set_reverse(&mut self, on: bool) -> Vec<Request> {
+        self.edit("Unsaved changes.", |config| config.split_high_g.reverse = on)
+    }
+
+    /// Wait for an axis to move and bind it to `target`; the same Detect again cancels.
+    pub fn start_detect(&mut self, target: Bind) {
+        self.detecting = if self.detecting == Some(target) { None } else { Some(target) };
+        self.baseline = None;
+        self.hint = if self.detecting.is_some() { "Move the axis you want, all the way, during emulation\u{2026}" } else { "Detection cancelled." }.into();
+    }
+
+    /// A live sample while detecting: the first one is the baseline; an axis that then moves past half travel is bound.
+    pub fn detect(&mut self, axes: &BTreeMap<String, Vec<f64>>, controllers: &Controllers) -> Vec<Request> {
+        let Some(target) = self.detecting else { return Vec::new() };
+        if axes.is_empty() {
+            self.hint = "Start emulation from the tray icon, then move the axis.".into();
+            return Vec::new();
+        }
+        let Some(baseline) = &self.baseline else {
+            self.baseline = Some(axes.clone());
+            return Vec::new();
+        };
+        let Some(binding) = moved(baseline, axes, controllers) else { return Vec::new() };
+        self.detecting = None;
+        let name = controllers.binding(&binding);
+        let requests = self.bind(target, Some(binding));
+        self.hint = format!("Detected {name}. Save settings to apply.");
+        requests
     }
 
     /// The problem shown for a field, or for the group of cards it belongs to.
