@@ -59,7 +59,6 @@ pub struct UiApi {
     pub destroy_icon: unsafe extern "system" fn(HANDLE) -> ffi::BOOL,
     pub register_message: unsafe extern "system" fn(PCWSTR) -> u32,
     pub notify_icon: unsafe extern "system" fn(u32, *const NOTIFYICONDATAW) -> ffi::BOOL,
-    pub shell_execute: unsafe extern "system" fn(HWND, PCWSTR, PCWSTR, PCWSTR, PCWSTR, i32) -> HANDLE,
     pub module_handle: unsafe extern "system" fn(PCWSTR) -> HANDLE,
 }
 
@@ -87,7 +86,6 @@ impl UiApi {
             destroy_icon: ffi::DestroyIcon,
             register_message: ffi::RegisterWindowMessageW,
             notify_icon: ffi::Shell_NotifyIconW,
-            shell_execute: ffi::ShellExecuteW,
             module_handle: ffi::GetModuleHandleW,
         }
     }
@@ -232,14 +230,14 @@ impl Tray {
         self.shown = Some(status);
     }
 
-    /// Open the configuration app (or bring it forward); the browser page while the app cannot start.
+    /// Open the configuration app (or bring it forward); a notice when it cannot start.
     pub fn configure(&mut self) {
         if self.config_app.open(self.server.port, &self.server.token).is_ok() {
             return;
         }
-        let (verb, url) = (ffi::wide("open"), ffi::wide(&self.server.url()));
-        // SAFETY: NUL-terminated strings outlive the call.
-        unsafe { (self.api.shell_execute)(self.hwnd, verb.as_ptr(), url.as_ptr(), std::ptr::null(), std::ptr::null(), 1) };
+        let text = "neo-config.exe is missing or could not start. Extract the release package again, keeping it beside neo-daemon.exe.";
+        self.controller.shared.notice(Notice { title: "Configuration not opened", text: text.into(), error: true });
+        self.refresh();
     }
 
     /// Stop emulation and remove the icon; the caller destroys the window outside the tray borrow.
