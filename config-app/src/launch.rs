@@ -2,8 +2,10 @@
 //! (show: bring the window forward; quit: close it).
 use crate::ffi::{self, HANDLE, PCWSTR};
 use std::ffi::c_void;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use std::thread::JoinHandle;
 
 pub const MUTEX: &str = r"Local\tca-neo-bridge-config-v1";
@@ -62,6 +64,31 @@ pub fn tell(api: &SystemApi, text: &str) {
     let (text, caption) = (ffi::wide(text), ffi::wide("TCA-NEO bridge"));
     // SAFETY: NUL-terminated strings outlive the modal call.
     unsafe { (api.message_box)(0, text.as_ptr(), caption.as_ptr(), MB_INFO) };
+}
+
+/// Where a crash is recorded, in the bridge's data folder beside `neo-daemon.log`.
+pub const CRASH_LOG: &str = "neo-config.log";
+pub const CRASHED: &str = "The configuration window closed after an internal error. The details are in neo-config.log in %LOCALAPPDATA%\\tca-neo-bridge.";
+
+/// Record an internal error (what panicked, and where) at the end of `log` and tell the user, since the window has
+/// no console and would otherwise just vanish.
+pub fn crashed(api: &SystemApi, log: &Path, what: &str) {
+    let _ = log.parent().map(std::fs::create_dir_all);
+    let millis = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
+    let _ = std::fs::OpenOptions::new().create(true).append(true).open(log).and_then(|mut file| writeln!(file, "{millis} {what}"));
+    tell(api, CRASHED);
+}
+
+/// From the first call on, every panic is recorded and reported (after the default report on standard error).
+pub fn report_panics(api: SystemApi, log: PathBuf) {
+    static HOOK: Once = Once::new();
+    HOOK.call_once(move || {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            previous(info);
+            crashed(&api, &log, &info.to_string().replace('\n', " "));
+        }));
+    });
 }
 
 /// Set from the lifecycle thread, read by the window on its next frame.
