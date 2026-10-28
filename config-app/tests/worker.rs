@@ -28,7 +28,8 @@ fn load_reads_the_profile_and_the_saved_profile_names() {
     worker.send(Request::Load);
     let Reply::Loaded(loaded) = next(&worker) else { panic!("not loaded") };
     assert_eq!((loaded.config.status.as_str(), loaded.profiles.unwrap().active.as_deref(), loaded.labels), ("Idle", Some("Attack"), Ok(vec![])));
-    assert_eq!(woken.load(Ordering::SeqCst), 1);
+    // The window is woken right after the reply is queued, so the wake can land a moment after the reply is read.
+    wait_until(|| woken.load(Ordering::SeqCst) == 1);
     assert_eq!(fake.calls(), [("GET".into(), "/api/config".into()), ("GET".into(), "/api/profiles".into()), ("GET".into(), "/api/labels".into())]);
 }
 
