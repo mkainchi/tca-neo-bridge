@@ -10,7 +10,7 @@ use crate::worker::Request;
 use eframe::egui::{self, Align, Align2, Color32, CornerRadius, Layout, Pos2, Rect, RichText, Role, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2, WidgetInfo};
 use crate::view::View;
 use neo_common::config::HatMode;
-use neo_common::models::{TCA_QUADRANT, TCA_STICK};
+use neo_common::models::{DeviceInfo, TCA_QUADRANT, TCA_STICK};
 
 pub const PLATE: Color32 = Color32::from_rgb(0xe2, 0xe8, 0xee);
 const PLATE_GRID: Color32 = Color32::from_rgba_premultiplied(1, 3, 4, 15);
@@ -50,7 +50,7 @@ pub fn page(ui: &mut Ui, saved: &View, map: &mut Map, compact: bool) -> Vec<Requ
     let left = Rect::from_min_size(full.min, Vec2::new(tca, full.height()));
     let right = Rect::from_min_max(Pos2::new(full.right() - side, full.top()), full.max);
     let middle = Rect::from_min_max(Pos2::new(left.right() + gap, full.top()), Pos2::new(right.left() - gap, full.bottom()));
-    panel(ui, left, |ui| tca_panel(ui, saved, map, compact));
+    panel(ui, left, |ui| sources_panel(ui, saved, map, compact));
     panel(ui, middle, |ui| neo_panel(ui, saved, map, &mut requests));
     panel(ui, right, |ui| side_panel(ui, saved, map, &mut requests));
     requests
@@ -179,35 +179,98 @@ fn caption(ui: &mut Ui, rect: Rect, left: &str, right: Option<(&str, Color32)>) 
         painter.text(rect.right_center(), Align2::RIGHT_CENTER, text.to_uppercase(), mono(11.0), color);
     }
 }
-fn tca_panel(ui: &mut Ui, saved: &View, map: &mut Map, compact: bool) {
+/// What one controller takes in the sources panel: a TCA diagram (its share of the room) or a grid of button chips.
+enum Figure {
+    Stick,
+    Quadrant,
+    Buttons(DeviceInfo),
+}
+
+/// The controllers taking part, each as a captioned figure: the TCA pair as diagrams (the sidestick's caption holds
+/// the hand switch), any other controller as its numbered buttons.
+fn sources_panel(ui: &mut Ui, saved: &View, map: &mut Map, compact: bool) {
+    let active: Vec<DeviceInfo> = map.controllers.active().into_iter().cloned().collect();
+    let names: Vec<&str> = active.iter().map(|device| device.name.as_str()).collect();
+    let setup = if names.is_empty() { "No controllers".to_string() } else { names.join(" + ") };
     panel_head(
         ui,
         |ui| {
-            ui.label(widgets::h3("TCA"));
+            ui.label(widgets::h3("Your controllers"));
         },
         |ui| {
-            if let Some(choice) = seg(ui, &[("L", "Left-hand setup", true), ("R", "Right-hand setup", true)], usize::from(map.hand == Hand::Right), None) {
-                map.hand = [Hand::Left, Hand::Right][choice];
-            }
+            ui.add(egui::Label::new(cap(&setup)).truncate());
         },
     );
+    if active.is_empty() {
+        ui.label(help("No controller found. Connect your HOTAS, or tick it on the Controllers page, then reopen Configure from the tray icon."));
+        return;
+    }
     let feeds = map.reverse.map(|neo| sources_for(saved, &map.controllers, neo)).unwrap_or_default();
-    // Two figures share the rest of the panel 56 : 44, each a caption above a room for its plate.
+    let mut figures: Vec<Figure> = Vec::new();
+    figures.extend(active.iter().any(|device| device.id == TCA_STICK).then_some(Figure::Stick));
+    figures.extend(active.iter().any(|device| device.id == TCA_QUADRANT).then_some(Figure::Quadrant));
+    figures.extend(active.iter().filter(|device| device.id != TCA_STICK && device.id != TCA_QUADRANT).cloned().map(Figure::Buttons));
     let rest = ui.available_rect_before_wrap();
     ui.allocate_rect(rest, Sense::hover());
-    let (caption_height, gap) = (16.0, 6.0);
-    let rooms = rest.height() - 2.0 * (caption_height + gap) - 10.0;
-    let stick_top = rest.top();
-    let quad_top = stick_top + caption_height + gap + rooms * 0.56 + 10.0;
-    let setup = if map.hand == Hand::Right { "Right-hand setup" } else { "Left-hand setup" };
-    caption(ui, Rect::from_min_size(Pos2::new(rest.left(), stick_top), Vec2::new(rest.width(), caption_height)), "Sidestick", Some((setup, theme::ACCENT)));
-    let room = Rect::from_min_size(Pos2::new(rest.left(), stick_top + caption_height + gap), Vec2::new(rest.width(), rooms * 0.56));
-    spots(ui, room, diagrams::stick(map.hand), map, &feeds, saved);
-    caption(ui, Rect::from_min_size(Pos2::new(rest.left(), quad_top), Vec2::new(rest.width(), caption_height)), "Quadrant \u{b7} Eng 1&2", (!compact).then_some(("7 \u{b7} 8 = mode selector", theme::DIM)));
-    let room = Rect::from_min_size(Pos2::new(rest.left(), quad_top + caption_height + gap), Vec2::new(rest.width(), rooms * 0.44));
-    spots(ui, room, &diagrams::QUADRANT, map, &feeds, saved);
-}
-/// A TCA diagram and its source hotspots; a click selects the source.
+    let (caption_height, gap) = (26.0, 10.0);
+    let per_line = per_line(rest.width() + 84.0);
+    let chips_height = |device: &DeviceInfo| {
+        let lines = usize::from(device.layout.buttons).div_ceil(per_line).max(1) as f32;
+        28.0 * lines + 4.0 * (lines - 1.0)
+    };
+    // Button grids take what they need; the diagrams share the rest 56 : 44.
+    let fixed: f32 = figures.iter().map(|figure| match figure { Figure::Buttons(device) => chips_height(device), _ => 0.0 }).sum();
+    let diagrams = figures.iter().filter(|figure| !matches!(figure, Figure::Buttons(_))).count();
+    let rooms = (rest.height() - fixed - figures.len() as f32 * (caption_height + gap)).max(0.0);
+    let share = |figure: &Figure| match (figure, diagrams) {
+        (Figure::Stick, 2) => rooms * 0.56,
+        (Figure::Quadrant, 2) => rooms * 0.44,
+        _ => rooms,
+    };
+    let mut top = rest.top();
+    for figure in &figures {
+        let head = Rect::from_min_size(Pos2::new(rest.left(), top), Vec2::new(rest.width(), caption_height));
+        let body_top = head.bottom() + 4.0;
+        match figure {
+            Figure::Stick => {
+                let setup = if map.hand == Hand::Right { "Right-hand setup" } else { "Left-hand setup" };
+                caption(ui, head, "Sidestick", None);
+                ui.scope_builder(UiBuilder::new().max_rect(head).layout(Layout::right_to_left(Align::Center)), |ui| {
+                    if let Some(choice) = seg(ui, &[("L", "Left-hand setup", true), ("R", "Right-hand setup", true)], usize::from(map.hand == Hand::Right), None) {
+                        map.hand = [Hand::Left, Hand::Right][choice];
+                    }
+                    ui.label(RichText::new(setup.to_uppercase()).font(mono(11.0)).color(theme::ACCENT));
+                });
+                let room = Rect::from_min_size(Pos2::new(rest.left(), body_top), Vec2::new(rest.width(), share(figure)));
+                spots(ui, room, diagrams::stick(map.hand), map, &feeds, saved);
+                top = room.bottom() + gap;
+            }
+            Figure::Quadrant => {
+                caption(ui, head, "Quadrant \u{b7} Eng 1&2", (!compact).then_some(("7 \u{b7} 8 = mode selector", theme::DIM)));
+                let room = Rect::from_min_size(Pos2::new(rest.left(), body_top), Vec2::new(rest.width(), share(figure)));
+                spots(ui, room, &diagrams::QUADRANT, map, &feeds, saved);
+                top = room.bottom() + gap;
+            }
+            Figure::Buttons(device) => {
+                let detail = format!("{} buttons \u{b7} {} axes", device.layout.buttons, device.layout.axes.len());
+                caption(ui, head, &device.name, Some((&detail, theme::DIM)));
+                let keys: Vec<String> = (1..=device.layout.buttons).map(|n| format!("{}/b{n}", device.id)).collect();
+                let mut line_top = body_top;
+                for line in keys.chunks(per_line) {
+                    let rect = Rect::from_min_size(Pos2::new(rest.left(), line_top), Vec2::new(rest.width(), 28.0));
+                    ui.scope_builder(UiBuilder::new().max_rect(rect).layout(Layout::left_to_right(Align::Center)), |ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+                        for key in line {
+                            source_chip(ui, key, map, saved, &feeds, false);
+                        }
+                    });
+                    line_top += 32.0;
+                }
+                top = body_top + chips_height(device) + gap;
+            }
+        }
+    }
+}/// A TCA diagram and its source hotspots; a click selects the source.
 fn spots(ui: &mut Ui, room: Rect, diagram: &Diagram, map: &mut Map, feeds: &[String], saved: &View) {
     let plate = plate(ui, room, diagram);
     for (index, &(key, x, y, size)) in diagram.spots.iter().enumerate() {
@@ -258,7 +321,20 @@ fn neo_panel(ui: &mut Ui, saved: &View, map: &mut Map, requests: &mut Vec<Reques
         (theme::ACCENT, theme::over(theme::PANEL, theme::ACCENT, 0.08), Color32::from_rgb(0xdd, 0xf7, 0xff), theme::ACCENT)
     };
     strip(ui, &map.context(saved), 28.0, colours);
-    let rows = chip_rows(ui.available_width());
+    let active: Vec<DeviceInfo> = map.controllers.active().into_iter().cloned().collect();
+    let hatted: Vec<&DeviceInfo> = active.iter().filter(|device| device.layout.hat).collect();
+    let quadrant = active.iter().any(|device| device.id == TCA_QUADRANT);
+    let addons = {
+        let lines = 15usize.div_ceil(per_line(ui.available_width())) as f32;
+        28.0 * lines + 4.0 * (lines - 1.0)
+    };
+    // One hat: its row holds the Camera / Mapped switch. Several: a camera row to choose one, then a row per hat.
+    // Then the quadrant's detents and add-ons when it takes part.
+    let mut rows = vec![36.0];
+    if hatted.len() > 1 {
+        rows.extend(hatted.iter().map(|_| 28.0));
+    }
+    rows.extend(if quadrant { vec![28.0, addons] } else { Vec::new() });
     let below = 32.0 + 10.0 + rows.iter().sum::<f32>() + 10.0 * rows.len() as f32;
     let room = ui.allocate_exact_size(Vec2::new(ui.available_width(), (ui.available_height() - below).max(80.0)), Sense::hover()).0;
     let plate = plate(ui, room, &diagrams::NEO);
@@ -271,16 +347,21 @@ fn neo_panel(ui: &mut Ui, saved: &View, map: &mut Map, requests: &mut Vec<Reques
             map.pick(target.expect("enabled hotspots are targets"));
         }
     }
-    let active = !map.held.is_empty();
-    let colours = if active { (tint(theme::OK, 0.5), theme::GROUND, theme::WHITE, theme::OK) } else { (theme::LINE_2, theme::GROUND, theme::MUTED, theme::OK) };
+    let held = !map.held.is_empty();
+    let colours = if held { (tint(theme::OK, 0.5), theme::GROUND, theme::WHITE, theme::OK) } else { (theme::LINE_2, theme::GROUND, theme::MUTED, theme::OK) };
     strip(ui, &map.sending(), 32.0, colours);
-    let mapped = saved.hat == HatMode::Mapped;
-    let hats: Vec<String> = neo_common::config::HAT_DIRECTIONS.iter().map(|direction| format!("{TCA_STICK}/hat-{direction}")).collect();
-    chip_row(ui, "Hat drives", &hats, rows[0], map, saved, Some(mapped), requests);
-    let detents: Vec<String> = (9..=16).map(|n| format!("{TCA_QUADRANT}/b{n}")).collect();
-    chip_row(ui, "Detents", &detents, rows[1], map, saved, None, requests);
-    let addons: Vec<String> = (17..=31).map(|n| format!("{TCA_QUADRANT}/b{n}")).collect();
-    chip_row(ui, "Add-ons", &addons, rows[2], map, saved, None, requests);
+    camera_row(ui, saved, map, &hatted, requests);
+    let camera = map.controllers.camera(saved).map(str::to_string);
+    for device in hatted.iter().filter(|_| hatted.len() > 1) {
+        let camera_hat = saved.hat == HatMode::Camera && camera.as_deref() == Some(device.id.as_str());
+        chip_row(ui, &hat_title(device), &hat_keys(device), 28.0, map, saved, camera_hat);
+    }
+    if quadrant {
+        let detents: Vec<String> = (9..=16).map(|n| format!("{TCA_QUADRANT}/b{n}")).collect();
+        chip_row(ui, "Detents", &detents, 28.0, map, saved, false);
+        let addons_keys: Vec<String> = (17..=31).map(|n| format!("{TCA_QUADRANT}/b{n}")).collect();
+        chip_row(ui, "Add-ons", &addons_keys, addons, map, saved, false);
+    }
 }
 
 /// Chips per line in a row this wide (after its caption): 28-point chips with 4 points between them.
@@ -288,38 +369,73 @@ fn per_line(width: f32) -> usize {
     (((width - 84.0 + 4.0) / 32.0).floor() as usize).max(1)
 }
 
-/// Heights of the three chip rows for a panel this wide (the add-ons wrap in narrow windows).
-fn chip_rows(width: f32) -> [f32; 3] {
-    let lines = 15usize.div_ceil(per_line(width)) as f32;
-    [36.0, 28.0, 28.0 * lines + 4.0 * (lines - 1.0)]
+fn hat_title(device: &DeviceInfo) -> String {
+    if device.id == TCA_STICK { "Sidestick hat".to_string() } else { format!("{} hat", device.name) }
 }
 
-/// A captioned row of source chips, right-aligned and wrapping in order; the hat row ends with its Camera / Mapped
-/// switch.
-#[allow(clippy::too_many_arguments)]
-fn chip_row(ui: &mut Ui, title: &str, keys: &[String], height: f32, map: &mut Map, saved: &View, hat: Option<bool>, requests: &mut Vec<Request>) {
+fn hat_keys(device: &DeviceInfo) -> Vec<String> {
+    neo_common::config::HAT_DIRECTIONS.iter().map(|direction| format!("{}/hat-{direction}", device.id)).collect()
+}
+
+/// The hat that drives the camera, and whether it does (Camera or Mapped), both saved at once. With one hat its row
+/// holds its own chips; with several, a choice of which one drives the camera.
+fn camera_row(ui: &mut Ui, saved: &View, map: &mut Map, hatted: &[&DeviceInfo], requests: &mut Vec<Request>) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::hover());
+    let title = match hatted {
+        [only] => hat_title(only).to_uppercase(),
+        _ => "CAMERA HAT".to_string(),
+    };
+    ui.painter().text(rect.left_center(), Align2::LEFT_CENTER, title, mono(11.0), theme::DIM);
+    let feeds = map.reverse.map(|neo| sources_for(saved, &map.controllers, neo)).unwrap_or_default();
+    let row = Rect::from_min_max(Pos2::new(rect.left() + 84.0, rect.top()), rect.max);
+    ui.scope_builder(UiBuilder::new().max_rect(row).layout(Layout::right_to_left(Align::Center)), |ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
+        let mapped = usize::from(saved.hat == HatMode::Mapped);
+        let switch = seg(ui, &[("Camera", "Hat drives the camera", true), ("Mapped", "Hat mapped", true)], mapped, None);
+        requests.extend(switch.and_then(|choice| map.set_hat(saved, [HatMode::Camera, HatMode::Mapped][choice])));
+        let camera = map.controllers.camera(saved).map(str::to_string);
+        match hatted {
+            [] => {
+                ui.label(help("No hat"));
+            }
+            [only] => {
+                ui.add_space(4.0);
+                ui.spacing_mut().item_spacing.x = 4.0;
+                for key in hat_keys(only).iter().rev() {
+                    source_chip(ui, key, map, saved, &feeds, saved.hat == HatMode::Camera);
+                }
+            }
+            several => {
+                let options: Vec<(String, String)> = several.iter().map(|device| (device.name.clone(), format!("{} hat drives the camera", device.name))).collect();
+                let choices: Vec<(&str, &str, bool)> = options.iter().map(|(name, label)| (name.as_str(), label.as_str(), true)).collect();
+                let current = several.iter().position(|device| camera.as_deref() == Some(device.id.as_str())).unwrap_or(0);
+                if let Some(index) = seg(ui, &choices, current, None) {
+                    requests.extend(map.set_camera_hat(saved, &several[index].id));
+                }
+            }
+        }
+    });
+}
+
+/// A captioned row of source chips, right-aligned and wrapping in order. The camera hat's chips are disabled while
+/// the hat drives the camera.
+fn chip_row(ui: &mut Ui, title: &str, keys: &[String], height: f32, map: &mut Map, saved: &View, camera_hat: bool) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
     ui.painter().text(Pos2::new(rect.left(), rect.top() + 14.0), Align2::LEFT_CENTER, title.to_uppercase(), mono(11.0), theme::DIM);
     let feeds = map.reverse.map(|neo| sources_for(saved, &map.controllers, neo)).unwrap_or_default();
     let chips = Rect::from_min_max(Pos2::new(rect.left() + 84.0, rect.top()), rect.max);
     let mut top = rect.top();
-    for (index, line) in keys.chunks(per_line(rect.width())).enumerate() {
-        let line_rect = Rect::from_min_size(Pos2::new(chips.left(), top), Vec2::new(chips.width(), if hat.is_some() { 36.0 } else { 28.0 }));
+    for line in keys.chunks(per_line(rect.width())) {
+        let line_rect = Rect::from_min_size(Pos2::new(chips.left(), top), Vec2::new(chips.width(), 28.0));
         top += 32.0;
         ui.scope_builder(UiBuilder::new().max_rect(line_rect).layout(Layout::right_to_left(Align::Center)), |ui| {
             ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
-            if let (Some(mapped), 0) = (hat, index) {
-                let switch = seg(ui, &[("Camera", "Hat drives the camera", true), ("Mapped", "Hat mapped", true)], usize::from(mapped), None);
-                requests.extend(switch.and_then(|choice| map.set_hat(saved, [HatMode::Camera, HatMode::Mapped][choice])));
-                ui.add_space(4.0);
-            }
             for key in line.iter().rev() {
-                source_chip(ui, key, map, saved, &feeds, hat == Some(false));
+                source_chip(ui, key, map, saved, &feeds, camera_hat);
             }
         });
     }
 }
-
 /// One source chip ("9", "Up"); a click selects the source. Hat chips are disabled while the hat drives the camera.
 fn source_chip(ui: &mut Ui, key: &str, map: &mut Map, saved: &View, feeds: &[String], hat_off: bool) {
     let (text, disabled) = match mapping::hat_direction(key) {
@@ -333,7 +449,7 @@ fn source_chip(ui: &mut Ui, key: &str, map: &mut Map, saved: &View, feeds: &[Str
         Spot::Held => ChipState::Held,
         _ => ChipState::Off,
     };
-    let label = if disabled { "Set the hat to Mapped controls to map it".to_string() } else { map.controllers.label(key) };
+    let label = if disabled { "Set the camera hat to Mapped to map it".to_string() } else { map.controllers.label(key) };
     if chip(ui, &text, &label, state).clicked() {
         map.select(saved, key);
     }

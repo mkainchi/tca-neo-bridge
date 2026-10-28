@@ -199,6 +199,15 @@ impl Map {
         Some(Request::SetHat(Box::new(View { hat: mode, ..saved.clone() })))
     }
 
+    /// The hat driving the camera, when the controllers have several: saved at once, like the hat mode.
+    pub fn set_camera_hat(&mut self, saved: &View, id: &str) -> Option<Request> {
+        if self.busy || self.controllers.camera(saved) == Some(id) {
+            return None;
+        }
+        self.busy = true;
+        Some(Request::SetHat(Box::new(View { camera_hat: Some(id.to_string()), ..saved.clone() })))
+    }
+
     pub fn forget(&self, index: usize) -> Request {
         Request::Forget(self.labels.iter().enumerate().filter(|(i, _)| *i != index).map(|(_, entry)| entry.clone()).collect())
     }
