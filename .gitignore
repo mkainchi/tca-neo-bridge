@@ -1,5 +1,7 @@
 # Build output
 /target/
+# Build output from before the Cargo workspace (0.3.x built into daemon/)
+/daemon/target/
 driver/out/
 driver/descriptor.h
 dist/
@@ -7,6 +9,9 @@ dist/
 config-app/tests/snapshots/*.diff.png
 config-app/tests/snapshots/*.new.png
 config-app/tests/snapshots/*.old.png
+
+# ModDB publication drafts, kept locally
+/docs/moddb/
 
 # Tooling
 node_modules/
