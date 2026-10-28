@@ -30,6 +30,16 @@ $stage = Join-Path $root "dist\$name"
 Remove-Item -Recurse -Force $stage, "$stage.zip" -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force (Join-Path $stage 'driver') | Out-Null
 foreach ($exe in 'neo-daemon.exe', 'neo-config.exe') { Copy-Item (Join-Path $root "target\release\$exe") $stage }
+
+# Smoke launch: the shipped app opens its window, finds nothing on the port and closes itself with code 0. A
+# release-only failure (a feature only test builds turn on) stops the build here instead of on a tester's PC.
+$handshake = Join-Path ([IO.Path]::GetTempPath()) 'neo-config-smoke.txt'
+$smokeErr = Join-Path ([IO.Path]::GetTempPath()) 'neo-config-smoke.err'
+Set-Content $handshake ('1 ' + ('0' * 48)) -Encoding ASCII
+$smoke = Start-Process (Join-Path $stage 'neo-config.exe') -RedirectStandardInput $handshake -RedirectStandardError $smokeErr -PassThru
+if (-not $smoke.WaitForExit(60000)) { $smoke.Kill(); throw 'neo-config.exe smoke launch did not close by itself' }
+if ($smoke.ExitCode -ne 0) { throw "neo-config.exe smoke launch failed (0x{0:X}): {1}" -f $smoke.ExitCode, (Get-Content $smokeErr -Raw) }
+Remove-Item $handshake, $smokeErr
 foreach ($file in 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_LICENSES.md', 'SECURITY.md') { Copy-Item (Join-Path $root $file) $stage }
 $package = Join-Path $root 'driver\out\package'
 foreach ($file in 'neohid.dll', 'neohid.inf', 'neohid.cat') { Copy-Item (Join-Path $package $file) (Join-Path $stage 'driver') }

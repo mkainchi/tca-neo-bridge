@@ -171,6 +171,7 @@ Everything is kept per user in `%LOCALAPPDATA%\tca-neo-bridge`:
 - `config.json`: your profile.
 - `label-map.json`: the recorded corrections.
 - `neo-daemon.log`: status changes and errors (never device paths or serial numbers).
+- `neo-config.log`: only if the configuration window closed after an internal error; what failed and where.
 - `driver-install.log`.
 - `hidhide-session.json`: only while emulating; used to restore HidHide after an interruption.
 - `profiles\`: named profiles (`<name>.json`) and `active.txt`, the name of the active one.
@@ -194,6 +195,7 @@ Run `neo-daemon.exe --data <folder>` to use another folder.
 | "Steam Input is on for ACE COMBAT 8" | In Steam, open the game's **Properties › Controller** and choose **Disable Steam Input**. |
 | "Head tracking could not listen on UDP port …" | Another program uses that port. Choose another port in *Head tracking* and in OpenTrack, then start emulation again. |
 | The camera moves the wrong way with head tracking | Turn on **Invert left / right** or **Invert up / down**. |
+| Configure… shows nothing, or the window closes with an *internal error* message | Check `neo-config.log` (see *Files and data*) and attach it to an issue. If Configure… says `neo-config.exe` is missing, extract the release package again, keeping it beside `neo-daemon.exe`. |
 | Something else | Check `neo-daemon.log` and `driver-install.log` (see *Files and data*), then [open an issue](https://github.com/mkainchi/tca-neo-bridge/issues/new) and attach both. |
 
 ## Uninstall

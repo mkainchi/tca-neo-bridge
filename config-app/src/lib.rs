@@ -158,17 +158,21 @@ pub struct Apis {
     pub stdin: fn() -> String,
     pub window: Window,
     pub fonts: PathBuf,
+    /// Where an internal error is recorded.
+    pub log: PathBuf,
 }
 
 impl Apis {
     pub fn real() -> Self {
         let windows = PathBuf::from(std::env::var_os("SystemRoot").unwrap_or(r"C:\Windows".into()));
-        Self { system: SystemApi::real(), stdin: launch::read_stdin, window: native, fonts: windows.join("Fonts") }
+        let data = PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default()).join("tca-neo-bridge");
+        Self { system: SystemApi::real(), stdin: launch::read_stdin, window: native, fonts: windows.join("Fonts"), log: data.join(launch::CRASH_LOG) }
     }
 }
 
 /// Exit codes: 0 closed normally, 2 not started by the daemon, 3 already open, 4 no window.
 pub fn run(apis: Apis) -> i32 {
+    launch::report_panics(apis.system, apis.log);
     let Some(handshake) = launch::handshake(&(apis.stdin)()) else {
         launch::tell(&apis.system, NOT_FROM_TRAY);
         return 2;

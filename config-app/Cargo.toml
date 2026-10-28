@@ -18,6 +18,9 @@ path = "src/main.rs"
 [dependencies]
 neo-common = { path = "../common" }
 eframe = { version = "=0.37.0", default-features = false, features = ["accesskit", "wgpu_no_default_features"] }
+# eframe's wgpu comes without backends; the window draws with Direct3D 12 only. (Test builds also get wgpu's default
+# backends through egui_kittest, so only a build without dev-dependencies shows a missing backend.)
+wgpu = { version = "30", default-features = false, features = ["dx12"] }
 png = "0.18"
 resvg = { version = "0.45", default-features = false, features = ["text"] }
 serde = "1"

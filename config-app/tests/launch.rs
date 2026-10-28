@@ -103,7 +103,12 @@ fn window(options: eframe::NativeOptions, app: Box<dyn FnOnce(&egui::Context) ->
 }
 
 fn apis() -> Apis {
-    Apis { system: system(), stdin, window, fonts: std::env::temp_dir().join("no-fonts-here") }
+    Apis { system: system(), stdin, window, fonts: std::env::temp_dir().join("no-fonts-here"), log: crash_log() }
+}
+
+/// One per test process: the panic hook keeps the path it was installed with.
+fn crash_log() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("neo-config-crash-{}", std::process::id())).join(launch::CRASH_LOG)
 }
 
 #[test]
@@ -179,4 +184,25 @@ fn the_watcher_raises_show_then_quit_and_stops() {
     launch::watch(system(), [61, 62], quiet.clone(), Box::new(|| panic!("no signal expected"))).join().unwrap();
     assert!(!quiet.show.load(Ordering::SeqCst) && !quiet.quit.load(Ordering::SeqCst));
     let _ = (SystemApi::real(), Apis::real());
+}
+
+#[test]
+fn an_internal_error_is_logged_and_reported() {
+    let _g = reset();
+    let _ = std::fs::remove_dir_all(crash_log().parent().unwrap());
+    // Running installs the hook (once): a later panic anywhere is recorded and the user is told.
+    fake().stdin = String::new();
+    neo_config::run(apis());
+    fake().told.clear();
+    assert!(std::thread::spawn(|| panic!("boom at start")).join().is_err());
+    assert_eq!(fake().told, [(launch::CRASHED.to_string(), "TCA-NEO bridge".to_string(), 0x40)]);
+    let log = std::fs::read_to_string(crash_log()).unwrap();
+    // One line: when, where it panicked, and the message.
+    assert_eq!(log.lines().count(), 1, "{log}");
+    assert!(log.contains("panicked at") && log.contains("launch.rs") && log.trim_end().ends_with("boom at start"), "{log}");
+    // A log that cannot be written still leaves the message.
+    fake().told.clear();
+    launch::crashed(&system(), crash_log().parent().unwrap(), "x");
+    assert_eq!(fake().told.len(), 1);
+    std::fs::remove_dir_all(crash_log().parent().unwrap()).unwrap();
 }
