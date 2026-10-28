@@ -96,7 +96,7 @@ impl ConfigApp {
     }
 
     /// Bring the open app to the front, or start it and hand it the port and token. An error means it could not
-    /// start (the caller falls back to the browser page).
+    /// start (the caller shows a notice).
     pub fn open(&mut self, port: u16, token: &str) -> io::Result<()> {
         if let Some(app) = self.alive() {
             // SAFETY: the daemon holds the foreground right after the tray click and passes it on before signalling.

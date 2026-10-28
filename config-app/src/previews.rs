@@ -2,7 +2,7 @@
 //! so what the page shows is what the NEO receives.
 use crate::mapping::short;
 use neo_common::api::Monitor;
-use neo_common::config::{Camera, Config, HatMode, HeadTracking, SplitHighG, Throttle, ThrottleMode, Timing};
+use neo_common::config::{Camera, Config, HatMode, HeadTracking, Lever, SplitHighG, Throttle, ThrottleMode, Timing, YawSource};
 use neo_common::maths::{detent, shape};
 
 /// "+0.40", "−0.40", " 0.00".
@@ -260,4 +260,54 @@ pub fn press_text(key: Option<&str>, presses: &[Press], timing: &Timing, now: f6
         _ => format!("tap: {held} ms"),
     };
     format!("{} \u{b7} {what}", short(key))
+}
+/// One row of the Live page: the axis, its source, the raw input and what the NEO receives (both -1..1). The
+/// throttle reads as the game does (+1 boost), the camera from the hat (and the spare lever).
+pub fn live_rows(monitor: &Monitor, pressed: &[String], config: &Config) -> [(&'static str, &'static str, f64, f64); 6] {
+    let right = config.throttle_lever == Lever::Right;
+    let differential = config.yaw_source == YawSource::LeverDifferential;
+    let travel = if differential { (monitor.levers[0] + monitor.levers[1]) / 2.0 } else { monitor.levers[usize::from(right)] };
+    let held = |key: &str| f64::from(u8::from(pressed.iter().any(|p| p == key)));
+    let hat_x = held("hat-right") - held("hat-left");
+    let spare = 2.0 * monitor.levers[usize::from(!right)] - 1.0;
+    let camera_x = if config.camera.lever && hat_x == 0.0 { spare } else { hat_x };
+    let (yaw_source, yaw) = match config.yaw_source {
+        YawSource::Twist => ("Twist", monitor.yaw),
+        YawSource::Off => ("Off", 0.0),
+        YawSource::LeverDifferential => ("Lever difference", monitor.levers[0] - monitor.levers[1]),
+    };
+    let lever = match (differential, right) {
+        (true, _) => "Both levers",
+        (false, true) => "Right lever",
+        (false, false) => "Left lever",
+    };
+    [
+        ("Roll", "Stick X", monitor.roll, axis_value(monitor.axes[0])),
+        ("Pitch", "Stick Y", monitor.pitch, axis_value(monitor.axes[1])),
+        ("Yaw", yaw_source, yaw, axis_value(monitor.axes[5])),
+        ("Throttle", lever, 2.0 * travel - 1.0, -axis_value(monitor.axes[2])),
+        ("Camera X", if config.camera.lever { "Hat or spare lever" } else { "Hat" }, camera_x, axis_value(monitor.axes[3])),
+        ("Camera Y", "Hat", held("hat-down") - held("hat-up"), axis_value(monitor.axes[4])),
+    ]
+}
+
+/// The Live page's five state tiles: (text, tone).
+pub fn live_states(monitor: Option<&Monitor>, paused: bool, previewing: bool) -> [(&'static str, Tone); 5] {
+    let pick = |on: bool, yes: (&'static str, Tone), no: (&'static str, Tone)| if on { yes } else { no };
+    [
+        pick(monitor.is_none_or(|m| m.armed), ("Throttle armed", Tone::Ok), ("Throttle waiting for centre", Tone::Warn)),
+        pick(monitor.is_some_and(|m| m.precision), ("Precision on", Tone::Warn), ("Precision off", Tone::Plain)),
+        pick(monitor.is_some_and(|m| m.shift), ("Shift held", Tone::Warn), ("Shift off", Tone::Plain)),
+        pick(paused, ("Input paused", Tone::Warn), ("Input live", Tone::Ok)),
+        pick(previewing, ("Previewing unsaved", Tone::Warn), ("Preview off", Tone::Plain)),
+    ]
+}
+
+/// The POV as sent (8 is centred): its name, and its cell in a 3 × 3 grid read left to right, top to bottom.
+pub fn pov(value: u8) -> (String, Option<usize>) {
+    const CELLS: [usize; 8] = [1, 2, 5, 8, 7, 6, 3, 0];
+    match neo_common::maths::HAT_NAMES.get(usize::from(value)) {
+        Some(name) => (format!("POV {name}"), Some(CELLS[usize::from(value)])),
+        None => ("POV centred".into(), None),
+    }
 }

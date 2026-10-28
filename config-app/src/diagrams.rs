@@ -43,28 +43,28 @@ macro_rules! stick {
 
 pub static RIGHT: Diagram = Diagram {
     name: "sidestick-right",
-    svg: include_bytes!("../../daemon/web/device/sidestick-right.svg"),
+    svg: include_bytes!("../assets/device/sidestick-right.svg"),
     view: [-76.0, -8.0, 390.0, 340.0],
     spots: stick!(5 -48 125, 6 -48 153, 7 -48 181, 10 -48 209, 9 -48 237, 8 -48 265, 11 284 125, 12 284 153, 13 284 181, 16 284 209, 15 284 237, 14 284 265, 1 -48 79, 2 -48 43, 3 -13 98, 4 244 99, 17 260 303),
 };
 
 pub static LEFT: Diagram = Diagram {
     name: "sidestick-left",
-    svg: include_bytes!("../../daemon/web/device/sidestick-left.svg"),
+    svg: include_bytes!("../assets/device/sidestick-left.svg"),
     view: [-76.0, -8.0, 390.0, 340.0],
     spots: stick!(11 -48 125, 12 -48 153, 13 -48 181, 16 -48 209, 15 -48 237, 14 -48 265, 5 284 125, 6 284 153, 7 284 181, 10 284 209, 9 284 237, 8 284 265, 1 -48 79, 2 -48 43, 3 -13 98, 4 244 99, 17 260 303),
 };
 
 pub static QUADRANT: Diagram = Diagram {
     name: "quadrant",
-    svg: include_bytes!("../../daemon/web/device/quadrant.svg"),
+    svg: include_bytes!("../assets/device/quadrant.svg"),
     view: [0.0, 0.0, 533.0, 364.0],
     spots: &[("q1", 79.0, 49.0, 30.0), ("q2", 447.0, 65.0, 30.0), ("q3", 473.0, 153.0, 30.0), ("q3", 67.0, 179.0, 30.0), ("q4", 470.0, 204.0, 30.0), ("q5", 58.0, 218.0, 30.0), ("q6", 274.0, 327.0, 30.0), ("q7", 64.0, 308.0, 22.0), ("q8", 86.0, 308.0, 22.0)],
 };
 
 pub static NEO: Diagram = Diagram {
     name: "neo",
-    svg: include_bytes!("../../daemon/web/device/neo.svg"),
+    svg: include_bytes!("../assets/device/neo.svg"),
     view: [0.0, 0.0, 606.0, 726.0],
     spots: &[
         ("b1", 546.0, 159.0, 34.0), ("b2", 278.0, 185.0, 34.0), ("b3", 427.0, 126.0, 34.0), ("b4", 320.0, 165.0, 34.0),

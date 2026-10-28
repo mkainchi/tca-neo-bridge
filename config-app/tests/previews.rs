@@ -121,3 +121,54 @@ fn helper_states_follow_the_draft_and_the_session() {
     assert_eq!(head_state(&tracking, None, true), ("Waiting for OpenTrack on UDP port 4242\u{2026}".into(), Tone::Warn));
     assert_eq!(head_state(&tracking, None, false), ("Starts with emulation".into(), Tone::Warn));
 }
+
+#[test]
+fn live_rows_show_each_axis_raw_and_as_sent() {
+    use neo_common::config::{Lever, YawSource};
+    let mut input = monitor(false, false, true);
+    input.roll = 0.5;
+    input.yaw = 0.25;
+    input.levers = [0.75, 0.25];
+    input.axes = [65535, 0, 0, 65535, 32768, 65535, 32768];
+    let none: Vec<String> = Vec::new();
+    let mut config = defaults();
+    config.throttle_lever = Lever::Right;
+    config.yaw_source = YawSource::Twist;
+    config.camera.lever = false;
+    let rows = live_rows(&input, &none, &config);
+    assert_eq!(rows.map(|(name, source, _, _)| (name, source)), [("Roll", "Stick X"), ("Pitch", "Stick Y"), ("Yaw", "Twist"), ("Throttle", "Right lever"), ("Camera X", "Hat"), ("Camera Y", "Hat")]);
+    assert_eq!(rows.map(|(_, _, raw, sent)| (raw, sent))[..4], [(0.5, 1.0), (0.0, -1.0), (0.25, 1.0), (-0.5, 1.0)]);
+    // The hat moves the camera; with the lever on, the spare lever does while the hat is centred.
+    let held = vec!["hat-up".to_string(), "hat-left".to_string()];
+    assert_eq!(live_rows(&input, &held, &config).map(|(_, _, raw, _)| raw)[4..], [-1.0, -1.0]);
+    config.camera.lever = true;
+    config.throttle_lever = Lever::Left;
+    let rows = live_rows(&input, &none, &config);
+    assert_eq!((rows[3].1, rows[3].2, rows[4].1, rows[4].2), ("Left lever", 0.5, "Hat or spare lever", -0.5));
+    assert_eq!(live_rows(&input, &held, &config)[4].2, -1.0);
+    config.yaw_source = YawSource::Off;
+    let yaw = live_rows(&input, &none, &config)[2];
+    assert_eq!((yaw.1, yaw.2), ("Off", 0.0));
+    config.yaw_source = YawSource::LeverDifferential;
+    let rows = live_rows(&input, &none, &config);
+    assert_eq!((rows[2].1, rows[2].2, rows[3].1, rows[3].2), ("Lever difference", 0.5, "Both levers", 0.0));
+}
+
+#[test]
+fn live_states_name_what_the_bridge_is_doing() {
+    assert_eq!(
+        live_states(None, false, false),
+        [("Throttle armed", Tone::Ok), ("Precision off", Tone::Plain), ("Shift off", Tone::Plain), ("Input live", Tone::Ok), ("Preview off", Tone::Plain)]
+    );
+    assert_eq!(
+        live_states(Some(&monitor(true, true, false)), true, true),
+        [("Throttle waiting for centre", Tone::Warn), ("Precision on", Tone::Warn), ("Shift held", Tone::Warn), ("Input paused", Tone::Warn), ("Previewing unsaved", Tone::Warn)]
+    );
+}
+
+#[test]
+fn the_pov_lights_its_cell() {
+    assert_eq!(pov(0), ("POV up".to_string(), Some(1)));
+    assert_eq!(pov(7), ("POV up-left".to_string(), Some(0)));
+    assert_eq!(pov(8), ("POV centred".to_string(), None));
+}

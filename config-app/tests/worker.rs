@@ -208,3 +208,72 @@ fn settings_save_and_preview_through_the_daemon() {
         assert_eq!(next(&worker), Reply::Fatal(Fatal::Forbidden));
     }
 }
+#[test]
+fn profile_actions_report_what_happened() {
+    let fake = FakeApi::idle();
+    let (worker, _) = start(&fake, SLOW);
+    let defaults = neo_daemon::config::defaults();
+    let done = |running: bool| Ok(json!({"profiles": ["Cruise", "Dog fight"], "active": "Dog fight", "config": defaults, "running": running}).to_string());
+    let listed = neo_common::api::Profiles { profiles: vec!["Cruise".into(), "Dog fight".into()], active: Some("Dog fight".into()) };
+    fake.reply("POST /api/profiles/Dog%20fight/activate", done(true));
+    worker.send(Request::Activate("Dog fight".into()));
+    assert_eq!(next(&worker), Reply::Adopted { config: Box::new(defaults.clone()), profiles: Some(listed.clone()), text: "Switched to Dog fight. Applied to the running emulation.".into() });
+    fake.reply("POST /api/profiles/Dog%20fight/activate", done(false));
+    worker.send(Request::Activate("Dog fight".into()));
+    assert!(matches!(next(&worker), Reply::Adopted { text, .. } if text == "Switched to Dog fight."));
+    fake.reply("PUT /api/profiles/Dog%20fight", done(false));
+    worker.send(Request::SaveAs("Dog fight".into()));
+    assert_eq!(next(&worker), Reply::Listed { profiles: listed.clone(), text: "Saved as Dog fight.".into() });
+    fake.reply("DELETE /api/profiles/Dog%20fight", done(false));
+    worker.send(Request::DeleteProfile("Dog fight".into()));
+    assert_eq!(next(&worker), Reply::Listed { profiles: listed, text: "Deleted Dog fight. The current settings are kept.".into() });
+    assert_eq!(fake.bodies().last(), Some(&("/api/profiles/Dog%20fight".to_string(), "{}".to_string())));
+    // Unknown names fail the same way the daemon says.
+    worker.send(Request::Activate("x".into()));
+    assert_eq!(next(&worker), Reply::ProfileFailed("Not switched: The bridge is not answering.".into()));
+    worker.send(Request::SaveAs("x".into()));
+    assert_eq!(next(&worker), Reply::ProfileFailed("Not saved: The bridge is not answering.".into()));
+    worker.send(Request::DeleteProfile("x".into()));
+    assert_eq!(next(&worker), Reply::ProfileFailed("Not deleted: The bridge is not answering.".into()));
+    // A stale token ends the window whichever action meets it.
+    for (key, request) in [("POST /api/profiles/x/activate", Request::Activate("x".into())), ("PUT /api/profiles/x", Request::SaveAs("x".into())), ("DELETE /api/profiles/x", Request::DeleteProfile("x".into()))] {
+        let fake = FakeApi::idle();
+        fake.reply(key, Err(ApiError::Forbidden));
+        let (worker, _) = start(&fake, SLOW);
+        worker.send(request);
+        assert_eq!(next(&worker), Reply::Fatal(Fatal::Forbidden));
+    }
+}
+
+#[test]
+fn an_import_becomes_the_saved_settings() {
+    let fake = FakeApi::idle();
+    let (worker, _) = start(&fake, SLOW);
+    let defaults = neo_daemon::config::defaults();
+    let profile = json!({"version": 1});
+    worker.send(Request::Import { profile: profile.clone(), name: "old.json".into() });
+    assert_eq!(next(&worker), Reply::Adopted { config: Box::new(defaults), profiles: None, text: "Imported old.json. Save it under a name to keep it as a profile.".into() });
+    assert_eq!(fake.calls()[fake.calls().len() - 2..], [("PUT".into(), "/api/config".into()), ("GET".into(), "/api/config".into())]);
+    fake.reply("PUT /api/config", Ok(json!({"saved": true, "running": true}).to_string()));
+    worker.send(Request::Import { profile: profile.clone(), name: "old.json".into() });
+    assert!(matches!(next(&worker), Reply::Adopted { text, .. } if text == "Imported old.json. Applied to the running emulation. Save it under a name to keep it as a profile."));
+    fake.reply("/api/config", Err(ApiError::Rejected("Busy.".into())));
+    worker.send(Request::Import { profile: profile.clone(), name: "old.json".into() });
+    assert_eq!(next(&worker), Reply::ProfileFailed("Not imported: Busy.".into()));
+    fake.reply("PUT /api/config", Err(ApiError::Rejected("Invalid profile: version.".into())));
+    worker.send(Request::Import { profile: profile.clone(), name: "old.json".into() });
+    assert_eq!(next(&worker), Reply::ProfileFailed("Not imported: Invalid profile: version.".into()));
+    let (stale, _) = start(&fake, SLOW);
+    fake.reply("PUT /api/config", Err(ApiError::Forbidden));
+    stale.send(Request::Import { profile: profile.clone(), name: "old.json".into() });
+    assert_eq!(next(&stale), Reply::Fatal(Fatal::Forbidden));
+    fake.reply("PUT /api/config", Ok(json!({"saved": true, "running": false}).to_string()));
+    fake.reply("/api/config", Err(ApiError::Forbidden));
+    worker.send(Request::Import { profile, name: "old.json".into() });
+    assert_eq!(next(&worker), Reply::Fatal(Fatal::Forbidden));
+}
+
+#[test]
+fn profile_names_are_percent_encoded() {
+    assert_eq!(neo_config::worker::encode("Dog fight_2-b/é"), "Dog%20fight_2-b%2F%C3%A9");
+}

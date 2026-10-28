@@ -31,6 +31,14 @@ pub enum Request {
     Preview(Box<Config>),
     /// Go back to the saved profile in game.
     EndPreview,
+    /// Make a saved profile the active one.
+    Activate(String),
+    /// Save the saved settings under a name (replacing one of that name) and make it active.
+    SaveAs(String),
+    /// Delete a saved profile (the settings themselves stay).
+    DeleteProfile(String),
+    /// A profile file (`name`): the daemon checks and upgrades it, then it becomes the saved settings.
+    Import { profile: serde_json::Value, name: String },
 }
 
 /// Why the window must close.
@@ -72,12 +80,32 @@ pub enum Reply {
     /// The saved profile runs in game again, or why it does not.
     PreviewEnded,
     PreviewEndFailed(String),
+    /// A profile is now the saved settings (switched to, or imported): the reply, and what to say.
+    Adopted { config: Box<Config>, profiles: Option<Profiles>, text: String },
+    /// The saved profile names changed (saved as, deleted), and what to say.
+    Listed { profiles: Profiles, text: String },
+    /// A profile action failed, and what to say.
+    ProfileFailed(String),
     Fatal(Fatal),
 }
 
 #[derive(Deserialize)]
 struct Saved {
     running: bool,
+}
+
+/// The daemon's answer to a profile action: the names, the active one, and the saved settings now.
+#[derive(Deserialize)]
+struct ProfileAction {
+    profiles: Vec<String>,
+    active: Option<String>,
+    config: Config,
+    running: bool,
+}
+
+/// A profile name in a URL path: everything but letters, digits, `_` and `-` percent-encoded.
+pub fn encode(name: &str) -> String {
+    name.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' { char::from(b).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
 #[derive(Deserialize)]
@@ -132,6 +160,35 @@ fn handle(api: &mut dyn Api, request: Request) -> Result<Reply, Fatal> {
         },
         Request::Preview(config) => soft(put::<IgnoredAny>(api, "/api/preview", &config))?.map_or_else(Reply::PreviewFailed, |_| Reply::Previewed),
         Request::EndPreview => soft(understood::<IgnoredAny>(api.call("DELETE", "/api/preview", None)))?.map_or_else(Reply::PreviewEndFailed, |_| Reply::PreviewEnded),
+        Request::Activate(name) => match soft(understood::<ProfileAction>(api.call("POST", &format!("/api/profiles/{}/activate", encode(&name)), None)))? {
+            Ok(done) => {
+                let applied = if done.running { " Applied to the running emulation." } else { "" };
+                Reply::Adopted { config: Box::new(done.config), profiles: Some(Profiles { profiles: done.profiles, active: done.active }), text: format!("Switched to {name}.{applied}") }
+            }
+            Err(error) => Reply::ProfileFailed(format!("Not switched: {error}")),
+        },
+        Request::SaveAs(name) => match soft(put::<ProfileAction>(api, &format!("/api/profiles/{}", encode(&name)), &serde_json::json!({})))? {
+            Ok(done) => Reply::Listed { profiles: Profiles { profiles: done.profiles, active: done.active }, text: format!("Saved as {name}.") },
+            Err(error) => Reply::ProfileFailed(format!("Not saved: {error}")),
+        },
+        Request::DeleteProfile(name) => match soft(understood::<ProfileAction>(api.call("DELETE", &format!("/api/profiles/{}", encode(&name)), None)))? {
+            Ok(done) => Reply::Listed { profiles: Profiles { profiles: done.profiles, active: done.active }, text: format!("Deleted {name}. The current settings are kept.") },
+            Err(error) => Reply::ProfileFailed(format!("Not deleted: {error}")),
+        },
+        Request::Import { profile, name } => {
+            let imported = match soft(put::<Saved>(api, "/api/config", &profile))? {
+                Ok(saved) => soft(get::<ConfigReply>(api, "/api/config"))?.map(|reply| (saved, reply)),
+                Err(error) => Err(error),
+            };
+            match imported {
+                Ok((saved, reply)) => Reply::Adopted {
+                    config: Box::new(reply.config),
+                    profiles: None,
+                    text: format!("Imported {name}.{} Save it under a name to keep it as a profile.", if saved.running { " Applied to the running emulation." } else { "" }),
+                },
+                Err(error) => Reply::ProfileFailed(format!("Not imported: {error}")),
+            }
+        }
     })
 }
 pub struct Worker {

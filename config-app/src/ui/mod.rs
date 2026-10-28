@@ -1,5 +1,7 @@
 //! The one-screen shell: header with status pills, launch warnings, the rail, the page, and the save bar.
+pub mod live;
 pub mod mapping;
+pub mod profiles;
 pub mod settings;
 pub mod widgets;
 
@@ -116,8 +118,9 @@ fn preview_colours() -> (Color32, Color32, Color32, Color32) {
     (tint(theme::WARN, 0.6), tint(theme::WARN, 0.14), theme::WARN_INK, theme::WARN)
 }
 
-fn header(ui: &mut Ui, state: &State, compact: bool) {
+fn header(ui: &mut Ui, state: &mut State, compact: bool) -> Vec<Request> {
     let frame = Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(16, 0));
+    let mut picker = Rect::NOTHING;
     egui::Panel::top("header").frame(frame).exact_size(56.0).show(ui, |ui| {
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
@@ -127,11 +130,8 @@ fn header(ui: &mut Ui, state: &State, compact: bool) {
             ui.label(RichText::new("TCA-NEO BRIDGE").text_style(theme::h1()).color(theme::WHITE).strong());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                // The profile picker opens with the profile actions in a later update; for now it names the profile.
-                Frame::new().fill(theme::GROUND).stroke(Stroke::new(1.0, theme::LINE_2)).corner_radius(3).inner_margin(Margin::symmetric(10, 0)).show(ui, |ui| {
-                    ui.set_height(34.0);
-                    ui.horizontal_centered(|ui| ui.label(RichText::new(state.profile_name()).monospace().color(theme::WHITE).strong()));
-                });
+                profiles::print(ui, state);
+                picker = profiles::picker(ui, state);
                 ui.add_space(8.0);
                 let shown = pills(&state.status, state.links.as_ref());
                 pill(ui, shown.neo.1, tone_colours(shown.neo.0));
@@ -149,6 +149,7 @@ fn header(ui: &mut Ui, state: &State, compact: bool) {
             });
         });
     });
+    profiles::menu(ui.ctx(), state, picker)
 }
 
 fn warnings(ui: &mut Ui, state: &mut State) {
@@ -315,8 +316,9 @@ fn page(ui: &mut Ui, state: &mut State, compact: bool) -> Vec<Request> {
             match (state.page, state.saved.clone()) {
                 (Page::Mapping, Some(saved)) => requests.extend(mapping::page(ui, &saved, &mut state.map, compact)),
                 (page, Some(_)) if page.settings() => requests.extend(settings::page(ui, state, compact)),
-                (page, _) => {
-                    let text = if page == Page::Live { "This page is not in the native app yet." } else { "Loading the profile\u{2026}" };
+                (Page::Live, Some(_)) => live::page(ui, state),
+                _ => {
+                    let text = "Loading the profile\u{2026}";
                     Frame::new().fill(theme::PANEL).stroke(Stroke::new(1.0, theme::LINE)).corner_radius(theme::RADIUS).inner_margin(Margin::same(16)).show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.label(RichText::new(text).color(theme::MUTED));
@@ -331,9 +333,9 @@ fn page(ui: &mut Ui, state: &mut State, compact: bool) -> Vec<Request> {
 /// The whole window for one frame; returns the requests its controls made.
 pub fn shell(ui: &mut Ui, state: &mut State) -> Vec<Request> {
     let compact = ui.ctx().content_rect().width() < COMPACT_BELOW;
-    header(ui, state, compact);
+    let mut requests = header(ui, state, compact);
     warnings(ui, state);
-    let mut requests = footer(ui, state);
+    requests.extend(footer(ui, state));
     requests.extend(rail(ui, state, compact));
     requests.extend(page(ui, state, compact));
     requests

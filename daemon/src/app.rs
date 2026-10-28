@@ -6,7 +6,7 @@ use crate::driver::{DriverApi, DriverManager};
 use crate::emulation::{Controller, Deps, Notify, Source};
 use crate::ffi::{self, HANDLE, MSG, WNDCLASSEXW};
 use crate::hidhide::{self, Hiding, Runner};
-use crate::http::{self, Server};
+use crate::http::Server;
 use crate::protocol;
 use crate::shared::Shared;
 use crate::tca::HidApi;
@@ -124,14 +124,9 @@ pub fn options(args: &[String], default_data: PathBuf) -> Result<Options, String
     Ok(result)
 }
 
-/// Page assets reference each other and the profile validates.
-pub fn assets_ok(profile: &config::Config, index: &str, script: &str, style: &str) -> bool {
-    config::validate(profile).is_ok() && index.contains("app.js") && index.contains("style.css") && !script.is_empty() && !style.is_empty()
-}
-
-/// Embedded page and defaults are consistent (used by the coverage self-test of the real binary).
+/// The built-in defaults validate (used by the coverage self-test of the real binary).
 pub fn self_test() -> bool {
-    assets_ok(&config::defaults(), http::INDEX, http::SCRIPT, http::STYLE)
+    config::validate(&config::defaults()).is_ok()
 }
 
 pub fn token(api: &SystemApi) -> Option<String> {

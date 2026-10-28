@@ -54,7 +54,7 @@ fn the_shell_loads_and_the_rail_switches_pages() {
     let (mut harness, _) = open(&fake, WIDE, SLOW);
     settle(&mut harness, |app| app.state.saved.is_some());
     assert!(harness.query_by_label("Daemon: Idle").is_some());
-    assert!(harness.query_by_label("Unsaved profile").is_some());
+    assert!(harness.query_by_label("Profile: Unsaved profile").is_some());
     assert!(harness.query_by_label("TCA: not open").is_some() && harness.query_by_label("Idle").is_some());
     for page in Page::ALL.iter().rev() {
         harness.get_by_label(page.title()).click();
@@ -147,7 +147,7 @@ fn snapshot_at(size: Vec2, name: &str) {
     fake.reply("/api/profiles", Ok(json!({"profiles": ["Dogfight"], "active": "Dogfight"}).to_string()));
     let (mut harness, _) = open(&fake, size, SLOW);
     settle(&mut harness, |app| app.state.saved.is_some());
-    assert!(harness.query_by_label("Dogfight").is_some());
+    assert!(harness.query_by_label("Profile: Dogfight").is_some());
     harness.snapshot(name);
 }
 
