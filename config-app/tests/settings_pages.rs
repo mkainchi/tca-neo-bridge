@@ -393,6 +393,59 @@ fn leaving_the_settings_or_closing_the_window_ends_a_preview() {
     assert_eq!(fake.count("/api/preview"), 4);
 }
 
+/// Press one key and let the window answer it.
+fn press(harness: &mut Harness<'static, App>, key: Key) {
+    harness.key_press(key);
+    harness.run_ok();
+}
+
+#[test]
+fn the_axis_pickers_work_from_the_keyboard() {
+    let fake = FakeApi::idle();
+    let mut harness = open(&fake, WIDE, SLOW);
+    click(&mut harness, "Flight axes");
+    let pitch = |harness: &Harness<'static, App>| draft(harness).bindings.pitch.map(|binding| binding.axis);
+    let open_list = |harness: &Harness<'static, App>| harness.query_by_label("TCA Sidestick Airbus \u{b7} rz").is_some();
+    harness.get_by_label("Pitch source").focus();
+    harness.run_ok();
+    // ↓ opens the list on the current choice, ↑ past the top stays on "No source", and Enter picks it.
+    press(&mut harness, Key::ArrowDown);
+    assert!(open_list(&harness));
+    for _ in 0..12 {
+        press(&mut harness, Key::ArrowUp);
+    }
+    harness.snapshot("settings-axis-picker-keys-1600x900");
+    press(&mut harness, Key::Enter);
+    assert!(!open_list(&harness));
+    assert_eq!(pitch(&harness), None);
+    // Focus stays on the picker: ↓ opens it again, ↓ moves to the first axis, and past the last one stays there.
+    assert!(harness.get_by_label("Pitch source").is_focused());
+    press(&mut harness, Key::ArrowDown);
+    press(&mut harness, Key::ArrowDown);
+    press(&mut harness, Key::Enter);
+    let first = pitch(&harness);
+    assert!(first.is_some());
+    press(&mut harness, Key::ArrowDown);
+    for _ in 0..30 {
+        press(&mut harness, Key::ArrowDown);
+    }
+    press(&mut harness, Key::Enter);
+    assert!(pitch(&harness).is_some() && pitch(&harness) != first);
+    // Escape closes the list without a choice and leaves focus on the picker.
+    let last = pitch(&harness);
+    press(&mut harness, Key::ArrowDown);
+    press(&mut harness, Key::ArrowUp);
+    press(&mut harness, Key::Escape);
+    assert!(!open_list(&harness) && pitch(&harness) == last);
+    assert!(harness.get_by_label("Pitch source").is_focused());
+    // While Detect waits for an axis, its button turns amber as Cancel.
+    // (The pointer moves off it, so the snapshot shows the resting amber, not the hovered one.)
+    click(&mut harness, "Detect yaw");
+    harness.get_by_label("Pitch source").hover();
+    harness.run_ok();
+    harness.snapshot("settings-detect-waiting-1600x900");
+}
+
 #[test]
 fn detect_binds_the_axis_that_moves() {
     let fake = FakeApi::idle();

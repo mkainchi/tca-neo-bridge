@@ -140,6 +140,8 @@ pub enum Kind {
     Plain,
     Quiet,
     Hazard,
+    /// Waiting for something the player does (Detect while it listens for an axis).
+    Busy,
 }
 
 /// A small button (30 points high); disabled buttons fade and ignore clicks.
@@ -148,14 +150,14 @@ pub fn button(ui: &mut Ui, text: &str, label: &str, kind: Kind, enabled: bool) -
     let size = Vec2::new(galley.size().x + 20.0, 30.0);
     let (rect, response) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
     response.widget_info(|| WidgetInfo::labeled(Role::Button, enabled, label));
-    let hovered = enabled && response.hovered();
-    let (fill, border, ink) = match kind {
+    let hovered = enabled && response.hovered();    let (fill, border, ink) = match kind {
         Kind::Primary if hovered => (theme::ACCENT_HOVER, theme::ACCENT_HOVER, theme::GROUND),
         Kind::Primary => (theme::ACCENT, theme::ACCENT, theme::GROUND),
         Kind::Plain => (theme::RAISE, if hovered { theme::ACCENT } else { theme::LINE_2 }, theme::INK),
         Kind::Quiet => (Color32::TRANSPARENT, if hovered { theme::ACCENT } else { theme::LINE_2 }, theme::INK),
         Kind::Hazard if hovered => (theme::HAZARD, theme::HAZARD, theme::GROUND),
         Kind::Hazard => (theme::RAISE, theme::HAZARD, theme::DANGER_INK),
+        Kind::Busy => (tint(theme::WARN, 0.14), if hovered { theme::WARN } else { tint(theme::WARN, 0.6) }, theme::WARN_INK),
     };
     let fade = |color: Color32| if enabled { color } else { color.gamma_multiply(0.4) };
     ui.painter().rect(rect, CornerRadius::same(theme::RADIUS), fade(fill), Stroke::new(1.0, fade(border)), StrokeKind::Inside);
