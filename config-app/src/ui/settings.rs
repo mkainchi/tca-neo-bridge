@@ -389,19 +389,22 @@ fn axis_picker(ui: &mut Ui, label: &str, current: Option<&Binding>, controllers:
     let mut highlight = ui.ctx().data(|data| data.get_temp::<usize>(id.with("highlight"))).unwrap_or(chosen);
     let mut picked = None;
     let mut by_key = false;
-    // True when the highlight moved (or the list opened), so its row scrolls into view.
+    // True when the highlight moved (or the list opened), so its row scrolls into view; `keyed` when a key moved it,
+    // so keyboard focus (what a screen reader announces) follows it onto the row.
     let mut moved = false;
+    let mut keyed = false;
     if open {
         // Taken before the button sees them, so Enter picks rather than toggling the list.
         ui.input_mut(|input| {
             if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
                 highlight = (highlight + 1).min(axes.len());
-                moved = true;
+                keyed = true;
             }
             if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
                 highlight = highlight.saturating_sub(1);
-                moved = true;
+                keyed = true;
             }
+            moved = keyed;
             if input.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
                 picked = Some(highlight.checked_sub(1).map(|index| axes[index].clone()));
             }
@@ -426,12 +429,15 @@ fn axis_picker(ui: &mut Ui, label: &str, current: Option<&Binding>, controllers:
         // ↑ and ↓ belong to the picker (and Escape only closes its list), so focus stays put.
         ui.memory_mut(|memory| memory.set_focus_lock_filter(response.id, egui::EventFilter { vertical_arrows: true, escape: open, ..Default::default() }));
     }
-    let opens = response.clicked() || (!open && response.has_focus() && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)));
-    if opens {
+    let arrow = !open && response.has_focus() && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown));
+    if response.clicked() || arrow {
         open = !open;
         highlight = chosen;
         moved = true;
+        keyed = arrow;
     }
+    // Whether a row of the list holds keyboard focus (from the keys or Tab), as of the last frame.
+    let mut in_list = ui.ctx().data(|data| data.get_temp::<bool>(id.with("in list"))).unwrap_or(false);
     if open && picked.is_none() {
         let ctx = ui.ctx().clone();
         let window = ctx.content_rect();
@@ -446,21 +452,42 @@ fn axis_picker(ui: &mut Ui, label: &str, current: Option<&Binding>, controllers:
                 ui.spacing_mut().item_spacing.y = 2.0;
                 // A long list (several controllers' axes) scrolls within the window rather than running off it.
                 egui::ScrollArea::vertical().max_height(room.max(96.0)).show(ui, |ui| {
-                    let row =|ui: &mut Ui, index: usize, text: &str, active: bool| {
-                        let response = super::profiles::profile_row(ui, text, active, index == highlight);
-                        if moved && index == highlight {
-                            response.scroll_to_me(None);
+                    // One highlight, whichever moved it last: the keys, Tab (focus) or the mouse. Only the highlighted
+                    // row lights up, so a resting pointer never leaves a second row lit.
+                    let pointer_moved = ui.input(|input| input.pointer.delta() != Vec2::ZERO);
+                    let rows = std::iter::once((empty.to_string(), current.is_none(), None)).chain(axes.iter().enumerate().map(|(index, axis)| (name(axis), index + 1 == chosen, Some(axis.clone()))));
+                    let mut focused = false;
+                    for (index, (text, active, choice)) in rows.enumerate() {
+                        let row = super::profiles::profile_row(ui, &text, active, Some(index == highlight));
+                        if row.has_focus() {
+                            focused = true;
+                            // ↑ and ↓ move the highlight (not egui's own focus), and Escape closes the list.
+                            ui.memory_mut(|memory| memory.set_focus_lock_filter(row.id, egui::EventFilter { vertical_arrows: true, escape: true, ..Default::default() }));
+                            if !keyed && index != highlight {
+                                highlight = index;
+                                ui.ctx().request_repaint();
+                            }
                         }
-                        response.clicked()
-                    };
-                    if row(ui, 0, empty, current.is_none()) {
-                        picked = Some(None);
-                    }
-                    for (index, axis) in axes.iter().enumerate() {
-                        if row(ui, index + 1, &name(axis), index + 1 == chosen) {
-                            picked = Some(Some(axis.clone()));
+                        if row.hovered() && pointer_moved {
+                            highlight = index;
+                            ui.ctx().request_repaint();
+                            if in_list {
+                                row.request_focus();
+                            }
+                        }
+                        if index == highlight {
+                            if keyed {
+                                row.request_focus();
+                            }
+                            if moved {
+                                row.scroll_to_me(None);
+                            }
+                        }
+                        if row.clicked() {
+                            picked = Some(choice);
                         }
                     }
+                    in_list = focused || keyed;
                 });
             });
         });
@@ -468,13 +495,15 @@ fn axis_picker(ui: &mut Ui, label: &str, current: Option<&Binding>, controllers:
         let outside = ctx.input(|input| input.pointer.any_click() && input.pointer.interact_pos().is_some_and(|pos| !inside.contains(pos) && !rect.contains(pos)));
         open = picked.is_none() && !outside;
     }
-    if by_key {
+    // A choice or Escape from the keyboard (or Space on a focused row) hands focus back to the picker.
+    if by_key || (picked.is_some() && in_list) {
         open = false;
         response.request_focus();
     }
     ui.ctx().data_mut(|data| {
         data.insert_temp(id, open);
         data.insert_temp(id.with("highlight"), highlight);
+        data.insert_temp(id.with("in list"), open && in_list);
     });
     picked
 }

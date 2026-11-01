@@ -447,6 +447,43 @@ fn the_axis_pickers_work_from_the_keyboard() {
 }
 
 #[test]
+fn the_axis_picker_highlight_follows_focus_tab_and_the_pointer() {
+    let fake = FakeApi::idle();
+    let mut harness = open(&fake, WIDE, SLOW);
+    click(&mut harness, "Flight axes");
+    let pitch = |harness: &Harness<'static, App>| draft(harness).bindings.pitch.map(|binding| binding.axis);
+    let focused = |harness: &Harness<'static, App>, label: &str| harness.get_by_label(label).is_focused();
+    let [x, rz, slider] = ["x", "rz", "slider"].map(|axis| format!("TCA Sidestick Airbus \u{b7} {axis}"));
+    harness.get_by_label("Pitch source").focus();
+    harness.run_ok();
+    // The keyboard highlight is real focus on its row, so a screen reader announces it.
+    press(&mut harness, Key::ArrowDown);
+    press(&mut harness, Key::ArrowDown);
+    assert!(focused(&harness, &rz));
+    // Tab moves focus, and the highlight with it, so Enter picks the focused row.
+    press(&mut harness, Key::Tab);
+    assert!(focused(&harness, &slider));
+    press(&mut harness, Key::Enter);
+    assert_eq!(pitch(&harness), Some("slider".to_string()));
+    assert!(focused(&harness, "Pitch source"));
+    // With focus in the list, the pointer moves the highlight and focus; Space picks that row and focus returns.
+    press(&mut harness, Key::ArrowDown);
+    harness.get_by_label(&x).hover();
+    harness.run_ok();
+    assert!(focused(&harness, &x));
+    press(&mut harness, Key::Space);
+    assert_eq!(pitch(&harness), Some("x".to_string()));
+    assert!(focused(&harness, "Pitch source"));
+    // Opened with the mouse, the pointer moves the highlight alone (one lit row), and Enter picks it.
+    click(&mut harness, "Pitch source");
+    harness.get_by_label(&rz).hover();
+    harness.run_ok();
+    harness.snapshot("settings-axis-picker-pointer-1600x900");
+    press(&mut harness, Key::Enter);
+    assert_eq!(pitch(&harness), Some("rz".to_string()));
+}
+
+#[test]
 fn detect_binds_the_axis_that_moves() {
     let fake = FakeApi::idle();
     let session = json!({"source": "hotas", "hidden": true, "inputs": 2, "virtual_neo": true});

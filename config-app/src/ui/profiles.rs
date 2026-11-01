@@ -28,11 +28,11 @@ pub fn picker(ui: &mut Ui, state: &mut State) -> Rect {
 }
 
 /// One saved profile in the menu: its name, and "active" beside the active one (also a row of an axis picker's
-/// list, `highlighted` under its keyboard choice).
-pub(super) fn profile_row(ui: &mut Ui, name: &str, active: bool, highlighted: bool) -> egui::Response {
+/// list, lit only while `highlighted` says so; otherwise it lights under the pointer).
+pub(super) fn profile_row(ui: &mut Ui, name: &str, active: bool, highlighted: Option<bool>) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
     response.widget_info(|| WidgetInfo::selected(Role::Button, true, active, name));
-    let fill = if highlighted || response.hovered() { theme::RAISE } else { Color32::TRANSPARENT };
+    let fill = if highlighted.unwrap_or_else(|| response.hovered()) { theme::RAISE } else { Color32::TRANSPARENT };
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::same(3), fill);
     // A long name stops short of the ACTIVE tag (with an ellipsis) rather than running under it.
@@ -45,7 +45,12 @@ pub(super) fn profile_row(ui: &mut Ui, name: &str, active: bool, highlighted: bo
     job.wrap = egui::text::TextWrapping::truncate_at_width(room);
     let galley = painter.layout_job(job);
     painter.galley(Pos2::new(rect.left() + 8.0, rect.center().y - galley.size().y / 2.0), galley, color);
-    widgets::focus_ring(ui, &response, rect);
+    if highlighted.is_none() {
+        widgets::focus_ring(ui, &response, rect);
+    } else if response.has_focus() {
+        // A picker's list scrolls, which would clip a ring drawn outside the row, so it goes inside.
+        painter.rect_stroke(rect, CornerRadius::same(3), Stroke::new(1.5, theme::ACCENT), StrokeKind::Inside);
+    }
     response
 }
 
@@ -67,7 +72,7 @@ pub fn menu(ctx: &egui::Context, state: &mut State, picker: Rect) -> Vec<Request
             }
             for name in names {
                 let active = state.profiles.active.as_deref() == Some(name.as_str());
-                if profile_row(ui, &name, active, false).clicked() {
+                if profile_row(ui, &name, active, None).clicked() {
                     requests.extend(state.activate(&name));
                 }
             }
