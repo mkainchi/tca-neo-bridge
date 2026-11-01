@@ -18,7 +18,7 @@ Every Thrustmaster joystick, throttle or pedal set that Windows lists as a game 
 | TCA Boeing yoke / throttle quadrant | Read like any other controller. |
 | TCA Airbus sidestick + quadrant | Works here too, but the [stable TCA-NEO bridge](https://github.com/mkainchi/tca-neo-bridge/releases) is the tested choice. |
 
-To use another brand's controller, tick it under **Axes and settings → Controllers**. It has had even less testing.
+To use another brand's controller, tick it on the **Controllers** page. It has had even less testing.
 
 ## Before you start
 
@@ -32,7 +32,7 @@ To use another brand's controller, tick it under **Axes and settings → Control
 
 1. Download `any-tm-hotas-experimental-bridge-<version>-x64.zip` from the release marked **Pre-release** on [Releases](https://github.com/mkainchi/tca-neo-bridge/releases). The stable TCA build is a separate download.
 2. Optional: check the download. In PowerShell, run `Get-FileHash` followed by the zip's path, and compare the result with the `.sha256` file next to the zip.
-3. Extract the zip to a folder of its own, for example `C:\Tools\any-tm-hotas-bridge`. Keep `neo-daemon.exe` and the `driver` folder together.
+3. Extract the zip to a folder of its own, for example `C:\Tools\any-tm-hotas-bridge`. Keep `neo-daemon.exe`, `neo-config.exe` and the `driver` folder together.
 4. Right-click `neo-daemon.exe` → **Run as administrator**. A bridge icon appears in the notification area; its tooltip reads "Any-TM-HOTAS bridge".
 5. Right-click the icon → **Install driver…** and approve the Windows prompt. Skip this if you already installed the driver from the stable bridge.
 

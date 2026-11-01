@@ -39,7 +39,7 @@ Your HOTAS ─► Any-TM-HOTAS bridge (tray app) ─► virtual NEO driver ─�
 ## Installation
 
 1. Download `any-tm-hotas-experimental-bridge-<version>-x64.zip` from the **Pre-release** on [Releases](https://github.com/mkainchi/tca-neo-bridge/releases). To check the download, run `Get-FileHash any-tm-hotas-experimental-bridge-<version>-x64.zip` in PowerShell and compare the result with the `.sha256` file next to it.
-2. Extract it to a folder of its own, for example `C:\Tools\any-tm-hotas-bridge`. Keep `neo-daemon.exe` and the `driver` folder together.
+2. Extract it to a folder of its own, for example `C:\Tools\any-tm-hotas-bridge`. Keep `neo-daemon.exe`, `neo-config.exe` and the `driver` folder together.
 3. If the stable TCA-NEO bridge is running, quit it. Only one bridge can emulate at a time.
 4. Right-click `neo-daemon.exe` → **Run as administrator**. Its bridge icon appears in the notification area; the tooltip shows "Any-TM-HOTAS bridge" and the current status.
 5. Right-click the icon → **Install driver…** and approve the Windows prompt. Skip this if you installed the driver with the stable bridge. A notification confirms "Driver installed".
@@ -61,15 +61,15 @@ The icon's badge shows the emulation status: a gray hollow circle when idle, a g
 | Item | What it does |
 | --- | --- |
 | Start emulation / Stop emulation | Hide your controllers and create the virtual NEO, or undo both. |
-| Configure… | Opens the configuration page in your browser (local only). Double-clicking the icon does the same. |
+| Configure… | Opens the configuration window (`neo-config.exe`). Double-clicking the icon does the same; if the window is already open, it comes to the front. Quit closes it. |
 | Pause input / Resume input | While emulating, releases every control and sends a neutral NEO until resumed. A button combo can do the same (see *Buttons & helpers*). |
 | Profile ▸ | Appears once a profile is saved under a name. Choosing one makes it the active profile, even mid-flight; a balloon confirms it. |
 | Install driver… / Reinstall driver… | Installs the driver, or replaces it with a freshly signed copy. Available while not emulating. |
 | Quit | Stops emulation and exits. |
 
-### The configuration page
+### The configuration window
 
-The page fits one desktop window (1280 × 800 and up) without scrolling. The header shows the bridge status and, while emulating, how many controllers are open, whether HidHide hides them and whether the virtual NEO exists, next to the **Profile** menu and **Print cheat sheet**. A rail on the left switches between **Mapping**, **Flight axes**, **Throttle**, **Camera & head**, **Buttons & helpers**, **Controllers** and **Live**. On the settings pages, a bar at the bottom holds **Try in game**, **Discard**, **Reset to defaults** and **Save settings**.
+The configuration window is a native Windows app, marked **Experimental**, that talks only to the bridge on this computer. It fits 1280 × 800 and up without scrolling. The header shows the bridge status and, while emulating, how many controllers are open, whether HidHide hides them and whether the virtual NEO exists, next to the **Profile** menu and **Print cheat sheet**. A rail on the left switches between **Mapping**, **Flight axes**, **Throttle**, **Camera & head**, **Buttons & helpers**, **Controllers** and **Live**. On the settings pages, a bar at the bottom holds **Try in game**, **Discard**, **Reset to defaults** and **Save settings**.
 
 **Every preview is live.** While emulating, each page follows what you do on your HOTAS straight away, through your unsaved settings: the curve dot and meters follow the stick, the throttle needle your throttle, the camera graph your hat hold, the helper states and press timeline your buttons. Test controls appear only when emulation is stopped.
 
@@ -83,7 +83,7 @@ The left panel shows your controllers: the TCA Airbus pair as diagrams, any othe
 - **Press / Long press / Double tap** picks which action the NEO clicks change. Each tile shows its current mapping.
 - **Normal / Shift** switches the layer being mapped once a shift control is set (see *Buttons & helpers*).
 - **With nothing selected,** clicking a NEO control or a row of the NEO buttons table highlights every control that feeds it.
-- **Camera hat** chooses which hat drives the camera, and whether it drives the **Camera** (the NEO mini-stick, the default) or is **Mapped** like buttons. Other hats are always mappable.
+- **Camera hat**: the hat that drives the **Camera** (the NEO mini-stick, the default), or is **Mapped** like buttons. With two or more hats, choose which one drives the camera; the others are always mappable. With one hat, its row holds the Camera / Mapped switch.
 
 ### Settings pages
 
@@ -99,7 +99,7 @@ The left panel shows your controllers: the TCA Airbus pair as diagrams, any othe
 
 ### Live, profiles and the cheat sheet
 
-The **Live** page shows every NEO axis as the raw input above what the NEO receives, the bridge state, the controls being pressed, the 15 NEO buttons as they are sent, and the POV. The **Profile** menu saves the settings under a name, switches between saved profiles, and imports or exports them as JSON. **Print cheat sheet** prints a light A4 page of your controllers' mapping.
+The **Live** page shows every NEO axis as the raw input above what the NEO receives, the bridge state, the controls being pressed, the 15 NEO buttons as they are sent, and the POV. The **Profile** menu saves the settings under a name, switches between saved profiles, and imports or exports them as JSON files you choose. **Print cheat sheet** opens a light A4 page of your controllers' mapping in your browser, ready to print.
 
 If a controller disconnects while emulating, every control is released, the virtual NEO stays and the bridge waits for the same controllers to return, then hides them again. When emulation starts, the bridge warns if Steam was already running or Steam Input is on for ACE COMBAT 8.
 
@@ -138,9 +138,12 @@ Everything is kept per user in `%LOCALAPPDATA%\any-tm-hotas-bridge`:
 - `config.json`: your profile, one mapping per controller set.
 - `label-map.json`: the recorded corrections.
 - `neo-daemon.log`: status changes and errors (never device paths or serial numbers).
+- `neo-config.log`: only if the configuration window closed after an internal error; what failed and where.
 - `driver-install.log`.
 - `probe.txt`: written by `neo-daemon.exe --probe` for test reports.
 - `hidhide-session.json`: only while emulating; used to restore HidHide after an interruption.
+
+**Print cheat sheet** writes `any-tm-hotas-bridge-cheat-sheet.html` to your temporary folder (`%TEMP%`) and opens it there.
 
 Run `neo-daemon.exe --data <folder>` to use another folder.
 
@@ -148,7 +151,8 @@ Run `neo-daemon.exe --data <folder>` to use another folder.
 
 | Symptom | What to do |
 | --- | --- |
-| "Connect a supported Thrustmaster HOTAS (or tick your controllers…)" | Plug your controllers in. For another brand, tick it under **Axes and settings → Controllers**. |
+| "Connect a supported Thrustmaster HOTAS (or tick your controllers…)" | Plug your controllers in. For another brand, tick it on the **Controllers** page. |
+| Configure… shows nothing, or the window closes with an *internal error* message | Check `neo-config.log` (see *Files and data*) and attach it to a test report. If Configure… says `neo-config.exe` is missing, extract the release package again, keeping it beside `neo-daemon.exe`. |
 | "HidHide must detect the selected controllers" | Reconnect them, close HidHide's configuration client, and start emulation again. |
 | Other HidHide errors | Install HidHide, close its configuration client, remove Steam from its application list, turn *inverse application cloak* off. |
 | "The virtual NEO could not start / did not appear" | Use **Install driver…** (or **Reinstall driver…**) and make sure the app runs as administrator. |

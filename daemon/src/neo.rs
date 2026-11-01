@@ -1,9 +1,10 @@
 //! NEO report 01 encoding and the controller-to-NEO mapping (port of tca_to_neo.py / contract_probe.py,
 //! generalised from the TCA pair to any set of joysticks).
-use crate::config::{AxisTuning, Binding, Config, Control, Direction, HatMode, Mode, Profile, SplitHighG, Target, Throttle, ThrottleMode, YawSource};
+use crate::config::{AxisTuning, Binding, Config, Control, Direction, HatMode, Mode, Profile, SplitHighG, Target, ThrottleMode, YawSource};
 use crate::hid::InputState;
 use crate::models::DeviceInfo;
-use serde::Serialize;
+pub use neo_common::api::Monitor;
+pub use neo_common::maths::{detent, shape, unit16, ARM_BAND, HAT_NAMES};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -27,11 +28,6 @@ pub fn input_report(axes: [u16; 7], buttons: u16, hat: u8) -> Report {
 
 pub fn neutral() -> Report {
     input_report([32768; 7], 0, 8)
-}
-
-/// Python round() parity: ties to even.
-pub fn unit16(value: f64) -> u16 {
-    ((value.clamp(-1.0, 1.0) + 1.0) * 65535.0 / 2.0).round_ties_even() as u16
 }
 
 /// Last meaningful movement wins; simultaneous moves keep ownership; the last axis owns it at start (app/model.py).
@@ -63,7 +59,6 @@ impl ThrottleSelector {
     }
 }
 
-pub const HAT_NAMES: [&str; 8] = ["up", "up-right", "right", "down-right", "down", "down-left", "left", "up-left"];
 
 /// One lever at or above the forward threshold and the other at or below the back threshold, in either order.
 pub fn split(rule: &SplitHighG, levers: [f64; 2]) -> bool {
@@ -95,37 +90,6 @@ pub fn axes(devices: &[DeviceInfo], inputs: &[Option<InputState>]) -> BTreeMap<S
         .collect()
 }
 
-/// Throttle values this close to centre (or a move across it) arm a safe start.
-pub const ARM_BAND: f64 = 0.05;
-
-/// One axis value in -1..1 through deadzone, saturation, curve and anti-deadzone (smoothing is stateful, in the Mapper).
-pub fn shape(value: f64, tuning: &AxisTuning) -> f64 {
-    let value = value.clamp(-1.0, 1.0);
-    if value.abs() <= tuning.deadzone {
-        return 0.0;
-    }
-    let travel = ((value.abs() - tuning.deadzone) / (tuning.saturation - tuning.deadzone)).min(1.0);
-    let k = tuning.curve;
-    let curved = if k >= 0.0 { (1.0 - k) * travel + k * travel.powi(3) } else { (1.0 + k) * travel - k * travel.cbrt() };
-    (tuning.anti_deadzone + (1.0 - tuning.anti_deadzone) * curved).copysign(value)
-}
-
-/// Detent throttle: throttle travel (0 idle, 1 forward) to -1 full brake, 0 cruise, +1 full boost.
-pub fn detent(travel: f64, throttle: &Throttle) -> f64 {
-    let (low, high) = (throttle.cruise - throttle.band, throttle.cruise + throttle.band);
-    if travel <= throttle.idle {
-        -1.0
-    } else if travel < low {
-        (travel - throttle.idle) / (low - throttle.idle) - 1.0
-    } else if travel <= high {
-        0.0
-    } else if travel < throttle.boost {
-        (travel - high) / (throttle.boost - high)
-    } else {
-        1.0
-    }
-}
-
 /// Side effects the emulation loop applies; the report itself stays a pure function of the inputs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
@@ -135,30 +99,6 @@ pub enum Event {
 
 /// Button combos and the event each raises when completed.
 const COMBO_EVENTS: [Event; 2] = [Event::TogglePause, Event::NextProfile];
-
-/// Raw inputs next to what the NEO receives, for the page's live previews. Flight inputs are -1..1 as bound (before
-/// inversion); throttle travel and the split levers run from 0 at idle to 1 fully forward.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub struct Monitor {
-    pub roll: f64,
-    pub pitch: f64,
-    pub yaw: f64,
-    /// Travel of the throttle input in control (the forward lever while split); None without a throttle axis.
-    pub throttle: Option<f64>,
-    /// The camera lever's position, -1..1 after its inversion.
-    pub camera_lever: Option<f64>,
-    pub levers: Option<[f64; 2]>,
-    pub axes: [u16; 7],
-    pub armed: bool,
-    pub precision: bool,
-    /// The shift control is held.
-    pub shift: bool,
-    /// NEO buttons 1..15 as bits 0..14, and the POV (8 when centred), as sent.
-    pub buttons: u16,
-    pub pov: u8,
-    /// The head-tracking sample (degrees) the camera used this frame.
-    pub head: Option<[f64; 2]>,
-}
 
 #[derive(Debug, Clone, Copy, Default)]
 struct SourceState {
