@@ -377,10 +377,37 @@ fn axes(ui: &mut Ui, full: Rect, s: &mut Settings, inputs: &Inputs, defaults: &V
 
 /// A controller-axis picker: `empty` (no source) and every axis of the controllers taking part, listed under the
 /// button while it is open. Some(choice) when one is picked; Escape or a click elsewhere closes the list.
+/// From the keyboard, ↓ opens the focused picker, ↑ and ↓ move through the list and Enter picks; focus then stays on
+/// the picker.
 fn axis_picker(ui: &mut Ui, label: &str, current: Option<&Binding>, controllers: &Controllers, empty: &str, width: f32) -> Option<Option<Binding>> {
     let name = |binding: &Binding| format!("{} \u{b7} {}", controllers.name(&binding.device), binding.axis);
     let id = ui.make_persistent_id(("axis picker", label));
     let mut open = ui.ctx().data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
+    // The list: `empty` first, then every axis; the current choice is where the highlight starts.
+    let axes = controllers.axes();
+    let chosen = current.and_then(|current| axes.iter().position(|axis| current.same_axis(axis))).map_or(0, |index| index + 1);
+    let mut highlight = ui.ctx().data(|data| data.get_temp::<usize>(id.with("highlight"))).unwrap_or(chosen);
+    let mut picked = None;
+    let mut by_key = false;
+    // True when the highlight moved (or the list opened), so its row scrolls into view.
+    let mut moved = false;
+    if open {
+        // Taken before the button sees them, so Enter picks rather than toggling the list.
+        ui.input_mut(|input| {
+            if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+                highlight = (highlight + 1).min(axes.len());
+                moved = true;
+            }
+            if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                highlight = highlight.saturating_sub(1);
+                moved = true;
+            }
+            if input.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
+                picked = Some(highlight.checked_sub(1).map(|index| axes[index].clone()));
+            }
+            by_key = picked.is_some() || input.key_pressed(egui::Key::Escape);
+        });
+    }
     // The button leads with the axis, so a narrow picker still shows which one is bound.
     let text = current.map_or(empty.to_string(), |binding| format!("{} \u{b7} {}", binding.axis, controllers.name(&binding.device)));
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 30.0), Sense::click());
@@ -395,31 +422,60 @@ fn axis_picker(ui: &mut Ui, label: &str, current: Option<&Binding>, controllers:
     let chevron = Pos2::new(rect.right() - 14.0, rect.center().y);
     painter.line(vec![chevron + Vec2::new(-3.0, -1.5), chevron + Vec2::new(0.0, 1.5), chevron + Vec2::new(3.0, -1.5)], Stroke::new(1.6, theme::MUTED));
     widgets::focus_ring(ui, &response, rect);
-    if response.clicked() {
-        open = !open;
+    if response.has_focus() {
+        // ↑ and ↓ belong to the picker (and Escape only closes its list), so focus stays put.
+        ui.memory_mut(|memory| memory.set_focus_lock_filter(response.id, egui::EventFilter { vertical_arrows: true, escape: open, ..Default::default() }));
     }
-    let mut picked = None;
-    if open {
+    let opens = response.clicked() || (!open && response.has_focus() && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)));
+    if opens {
+        open = !open;
+        highlight = chosen;
+        moved = true;
+    }
+    if open && picked.is_none() {
         let ctx = ui.ctx().clone();
-        let list = egui::Area::new(id.with("list")).order(egui::Order::Foreground).fixed_pos(rect.left_bottom() + Vec2::new(0.0, 4.0)).show(&ctx, |ui| {
+        let window = ctx.content_rect();
+        // Below the picker, unless the list doesn't fit there and there's more room above (a picker low on the page).
+        let (below, above) = (window.bottom() - rect.bottom() - 28.0, rect.top() - window.top() - 28.0);
+        let upward = below < ((axes.len() as f32 + 1.0) * 32.0 + 12.0).min(above);
+        let (anchor, pivot, room) = if upward { (rect.left_top() - Vec2::new(0.0, 4.0), Align2::LEFT_BOTTOM, above) } else { (rect.left_bottom() + Vec2::new(0.0, 4.0), Align2::LEFT_TOP, below) };
+        let list = egui::Area::new(id.with("list")).order(egui::Order::Foreground).pivot(pivot).fixed_pos(anchor).show(&ctx, |ui| {
             egui::Frame::new().fill(theme::PANEL).stroke(Stroke::new(1.0, theme::LINE_2)).corner_radius(theme::RADIUS).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
-                ui.set_width(rect.width() - 12.0);
+                // Wider than a narrow button where the window allows, so "Device · axis" fits beside the ACTIVE tag.
+                ui.set_width(rect.width().max(320.0).min(window.right() - rect.left() - 16.0) - 12.0);
                 ui.spacing_mut().item_spacing.y = 2.0;
-                if super::profiles::profile_row(ui, empty, current.is_none()) {
-                    picked = Some(None);
-                }
-                for axis in controllers.axes() {
-                    if super::profiles::profile_row(ui, &name(&axis), current.is_some_and(|current| current.same_axis(&axis))) {
-                        picked = Some(Some(axis));
+                // A long list (several controllers' axes) scrolls within the window rather than running off it.
+                egui::ScrollArea::vertical().max_height(room.max(96.0)).show(ui, |ui| {
+                    let row =|ui: &mut Ui, index: usize, text: &str, active: bool| {
+                        let response = super::profiles::profile_row(ui, text, active, index == highlight);
+                        if moved && index == highlight {
+                            response.scroll_to_me(None);
+                        }
+                        response.clicked()
+                    };
+                    if row(ui, 0, empty, current.is_none()) {
+                        picked = Some(None);
                     }
-                }
+                    for (index, axis) in axes.iter().enumerate() {
+                        if row(ui, index + 1, &name(axis), index + 1 == chosen) {
+                            picked = Some(Some(axis.clone()));
+                        }
+                    }
+                });
             });
         });
         let inside = list.response.rect;
         let outside = ctx.input(|input| input.pointer.any_click() && input.pointer.interact_pos().is_some_and(|pos| !inside.contains(pos) && !rect.contains(pos)));
-        open = picked.is_none() && !outside && !ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        open = picked.is_none() && !outside;
     }
-    ui.ctx().data_mut(|data| data.insert_temp(id, open));
+    if by_key {
+        open = false;
+        response.request_focus();
+    }
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(id, open);
+        data.insert_temp(id.with("highlight"), highlight);
+    });
     picked
 }
 /// A small Invert box beside a picker, named for its axis; disabled without a source.
@@ -432,8 +488,8 @@ fn invert_box(ui: &mut Ui, label: &str, on: bool, enabled: bool) -> bool {
 
 /// Detect (or Cancel while waiting for that axis to move).
 fn detect_button(ui: &mut Ui, s: &mut Settings, target: Bind, what: &str) {
-    let text = if s.detecting == Some(target) { "Cancel" } else { "Detect" };
-    if widgets::button(ui, text, &format!("{text} {what}"), Button::Quiet, true) {
+    let (text, kind) = if s.detecting == Some(target) { ("Cancel", Button::Busy) } else { ("Detect", Button::Quiet) };
+    if widgets::button(ui, text, &format!("{text} {what}"), kind, true) {
         s.start_detect(target);
     }
 }
@@ -617,7 +673,8 @@ fn throttle(ui: &mut Ui, full: Rect, s: &mut Settings, inputs: &Inputs, requests
         }
         if toggle(ui, rule.reverse, "Forward is the high raw value (most non-TCA throttles)", false, ui.available_width()) {
             requests.extend(s.set_reverse(!rule.reverse));
-        }        egui::Frame::new().fill(theme::GROUND).stroke(Stroke::new(1.0, theme::LINE_2)).corner_radius(3).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+        }
+        egui::Frame::new().fill(theme::GROUND).stroke(Stroke::new(1.0, theme::LINE_2)).corner_radius(3).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 8.0;
             match inputs.levers {

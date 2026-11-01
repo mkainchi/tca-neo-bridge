@@ -1,7 +1,7 @@
 //! The Mapping page with controllers other than the TCA pair: a T.16000M stick and a TWCS throttle.
 mod common;
 use common::{devices_reply, t16000m, twcs, FakeApi};
-use eframe::egui::Vec2;
+use eframe::egui::{Key, Vec2};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
 use neo_common::config::HatMode;
@@ -103,4 +103,28 @@ fn one_hat_or_none_offers_no_choice() {
     empty.reply("/api/devices", Ok(devices_reply(json!({"devices": [], "active": [], "setup": ""}))));
     let harness = open(&empty, WIDE);
     assert!(harness.query_by_label("No controller found. Connect your HOTAS, or tick it on the Controllers page, then reopen Configure from the tray icon.").is_some());
+}
+
+#[test]
+fn a_low_axis_picker_opens_upward_within_the_window() {
+    let mut harness = open(&stick_and_throttle(), NARROW);
+    click(&mut harness, "Camera & head");
+    click(&mut harness, "Camera from the hat and a lever");
+    harness.get_by_label("Camera lever").focus();
+    harness.run_ok();
+    // Too low on the page for the list below, so it opens above; down to the last axis of both controllers, the
+    // highlighted row stays in the window.
+    harness.key_press(Key::ArrowDown);
+    harness.run_ok();
+    for _ in 0..30 {
+        harness.key_press(Key::ArrowDown);
+        harness.run_ok();
+    }
+    let last = "TWCS Throttle \u{b7} slider";
+    assert!(harness.get_by_label(last).rect().bottom() <= NARROW.y);
+    harness.snapshot("any-controller-axis-list-1280x800");
+    harness.key_press(Key::Enter);
+    harness.run_ok();
+    let lever = harness.state().state.settings.draft.clone().unwrap().camera_lever.unwrap();
+    assert_eq!((lever.device.as_str(), lever.axis.as_str()), ("twcs", "slider"));
 }

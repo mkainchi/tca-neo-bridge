@@ -27,19 +27,26 @@ pub fn picker(ui: &mut Ui, state: &mut State) -> Rect {
     rect
 }
 
-/// One saved profile in the menu: its name, and "active" beside the active one. True when clicked.
-pub(super) fn profile_row(ui: &mut Ui, name: &str, active: bool) -> bool {
+/// One saved profile in the menu: its name, and "active" beside the active one (also a row of an axis picker's
+/// list, `highlighted` under its keyboard choice).
+pub(super) fn profile_row(ui: &mut Ui, name: &str, active: bool, highlighted: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
     response.widget_info(|| WidgetInfo::selected(Role::Button, true, active, name));
-    let fill = if response.hovered() { theme::RAISE } else { Color32::TRANSPARENT };
+    let fill = if highlighted || response.hovered() { theme::RAISE } else { Color32::TRANSPARENT };
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::same(3), fill);
-    painter.text(Pos2::new(rect.left() + 8.0, rect.center().y), Align2::LEFT_CENTER, name, mono(12.0), if active { theme::ACCENT } else { theme::INK });
+    // A long name stops short of the ACTIVE tag (with an ellipsis) rather than running under it.
+    let mut room = rect.width() - 16.0;
     if active {
-        painter.text(Pos2::new(rect.right() - 8.0, rect.center().y), Align2::RIGHT_CENTER, "ACTIVE", mono(10.0), theme::OK_INK);
+        room -= painter.text(Pos2::new(rect.right() - 8.0, rect.center().y), Align2::RIGHT_CENTER, "ACTIVE", mono(10.0), theme::OK_INK).width() + 10.0;
     }
+    let color = if active { theme::ACCENT } else { theme::INK };
+    let mut job = egui::text::LayoutJob::single_section(name.to_string(), egui::TextFormat::simple(mono(12.0), color));
+    job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+    let galley = painter.layout_job(job);
+    painter.galley(Pos2::new(rect.left() + 8.0, rect.center().y - galley.size().y / 2.0), galley, color);
     widgets::focus_ring(ui, &response, rect);
-    response.clicked()
+    response
 }
 
 /// The menu under the picker; closes on Escape or a click outside it.
@@ -60,7 +67,7 @@ pub fn menu(ctx: &egui::Context, state: &mut State, picker: Rect) -> Vec<Request
             }
             for name in names {
                 let active = state.profiles.active.as_deref() == Some(name.as_str());
-                if profile_row(ui, &name, active) {
+                if profile_row(ui, &name, active, false).clicked() {
                     requests.extend(state.activate(&name));
                 }
             }
